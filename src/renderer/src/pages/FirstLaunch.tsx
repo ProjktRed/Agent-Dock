@@ -5,6 +5,7 @@ import { connectionMeta } from "../lib/format";
 import { Spinner, St } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { AddProjectDialog } from "./projects/AddProjectDialog";
+import { EngineGuardrails } from "./Settings";
 
 const REQUIREMENTS: { label: string; kinds: CliKind[]; why: string }[] = [
   { label: "Implementation worker", kinds: ["cline"], why: "Cline CLI edits the repository" },
@@ -122,6 +123,9 @@ export function FirstLaunch() {
         <div className="num-c">3</div>
         <div className="stack" style={{ gap: 12 }}>
           <div><h2 className="h2">Review agents and safety defaults</h2><div className="sub">Default agents mirror the engine: Cline + local model implements, the orchestrator plans and verifies. The worker tool guard is on.</div></div>
+          <div className="well" style={{ padding: "4px 16px" }}>
+            <EngineGuardrails />
+          </div>
           <div className="row wrap" style={{ gap: 12 }}>
             <button className="btn" onClick={() => go("agents")}>Review agents</button>
             <button className="btn" onClick={() => go("settings")}>Execution &amp; safety</button>

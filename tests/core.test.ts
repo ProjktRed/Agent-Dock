@@ -97,7 +97,7 @@ describe("engine launch args", () => {
     const list = agents().map((a) => (a.role === "assessment" ? { ...a, cliId: "claude" } : a));
     const plan = buildEngineArgs({ project: project({ objective: " " }), agents: list, clis: clis(), settings: settings() });
     expect(plan.problems.join(" ")).toMatch(/objective/);
-    expect(plan.problems.join(" ")).toMatch(/same orchestrator/);
+    expect(plan.problems.join(" ")).toMatch(/one orchestrator CLI/);
   });
   it("honours project role overrides and workflow overrides", () => {
     const list = [...agents(), { ...agents()[0], id: "local2", name: "Local 2", provider: "ollama" as const, model: "qwen3-coder:30b" }];
@@ -125,6 +125,35 @@ describe("engine launch args", () => {
     expect(plan.problems.some((p) => p.includes("“sonnet” is not a Codex model"))).toBe(true);
     expect(plan.problems.some((p) => p.includes("Elevation agent"))).toBe(true);
     expect(plan.args).not.toContain("--qa-model");
+  });
+});
+
+describe("engine guardrails", () => {
+  const mixed = () => agents().map((a) => (a.role === "assessment" ? { ...a, cliId: "claude", model: "sonnet", reasoning: "high" } : a));
+  it("on: a role on another orchestrator CLI blocks the start", () => {
+    const plan = buildEngineArgs({ project: project(), agents: mixed(), clis: clis(), settings: settings() });
+    expect(plan.problems.some((p) => p.includes("Assessment agent"))).toBe(true);
+    expect(plan.args).not.toContain("--assessment-cli");
+  });
+  it("off: the role runs on its own CLI with its model; the mismatch is only a warning", () => {
+    const s = settings();
+    s.advanced.engineGuardrails = false;
+    const plan = buildEngineArgs({ project: project(), agents: mixed(), clis: clis(), settings: s });
+    const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
+    expect(plan.problems).toEqual([]);
+    expect(plan.warnings.some((w) => w.includes("Assessment agent"))).toBe(true);
+    expect([flag("--orchestrator"), flag("--assessment-cli"), flag("--resolver-cli")]).toEqual(["codex", "claude", "claude"]);
+    expect([flag("--assessment-model"), flag("--assessment-effort")]).toEqual(["sonnet", "high"]);
+    expect(plan.summary.orchestrator).toContain("mixed roles");
+  });
+  it("off: a model from another CLI is passed as typed, with a warning", () => {
+    const s = settings();
+    s.advanced.engineGuardrails = false;
+    const list = agents().map((a) => (a.role === "qa" ? { ...a, model: "sonnet" } : a));
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: s });
+    expect(plan.problems).toEqual([]);
+    expect(plan.warnings.some((w) => w.includes("“sonnet” is not a Codex model"))).toBe(true);
+    expect(plan.args[plan.args.indexOf("--qa-model") + 1]).toBe("sonnet");
   });
 });
 

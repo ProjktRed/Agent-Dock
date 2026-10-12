@@ -75,7 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   context: { warnThresholdPercent: 80 },
   safety: { protectedPaths: [".git/", ".env*", "secrets/"] },
   usage: { manualBudgets: [], codexPollMinutes: 5, claudeProbeMinutes: 0 },
-  advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd" },
+  advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
   updates: { autoCheck: true, autoInstall: false, source: "", branch: "" },
   onboardingComplete: false,

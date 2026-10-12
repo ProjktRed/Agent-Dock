@@ -27,9 +27,13 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   useEffect(() => setDraft(agent), [agent]);
   const orchestrator = draft.role === "qa" || draft.role === "assessment" || draft.role === "elevation";
   const implementation = draft.role === "implementation";
+  const custom = draft.role === "custom";
+  const guarded = snap.settings.advanced.engineGuardrails !== false;
   const cliOptions = snap.clis.filter((c) => (implementation ? c.kind === "cline" : orchestrator ? c.kind === "codex" || c.kind === "claude" : true));
   const cli = snap.clis.find((c) => c.id === draft.cliId);
-  const providerCli = implementation ? snap.clis.find((c) => c.kind === draft.provider) : null;
+  // Custom roles get the same pickers as the built-in role their CLI matches (saved; the engine does not run them).
+  const local = implementation || (custom && cli?.kind === "cline");
+  const providerCli = local ? snap.clis.find((c) => c.kind === (draft.provider ?? "llamacpp")) : null;
   // Local models: the list collected from the provider (CLIs › Models) wins over the live health check.
   const collected = providerCli?.collected?.models ?? [];
   const discovered: { id: string; detail: string; thinking?: boolean | null }[] = collected.length ? collected : providerCli ? healths[providerCli.id]?.models ?? [] : [];
@@ -37,13 +41,14 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const catalog = useModelCatalog();
   const roleKey = draft.role === "elevation" ? "elevate" : draft.role;
   const kind = cli?.kind === "claude" || cli?.kind === "codex" ? cli.kind : null;
-  const list = orchestrator && kind ? catalog?.[kind] ?? null : null;
+  const cloud = (orchestrator || custom) && kind !== null;
+  const list = cloud && kind ? catalog?.[kind] ?? null : null;
   const current = list?.models.find((m) => m.id === draft.model);
   const refreshing = kind ? catalog?.refreshing[kind] : false;
   const changeCli = (cliId: string) => {
     const next = snap.clis.find((c) => c.id === cliId);
     const nextKind = next?.kind === "claude" || next?.kind === "codex" ? next.kind : null;
-    if (!orchestrator || !nextKind || nextKind === kind) return set("cliId", cliId);
+    if (!(orchestrator || custom) || !nextKind || nextKind === kind) return setDraft({ ...draft, cliId, provider: custom && next?.kind === "cline" ? draft.provider ?? "llamacpp" : draft.provider });
     const nextList = catalog?.[nextKind];
     setDraft(withModel({ ...draft, cliId, reasoning: "medium", fast: false }, nextList, defaultModelId(nextList, snap.engine.orchestratorModels[nextKind][roleKey])));
   };
@@ -84,21 +89,21 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           <select className="sel" value={draft.cliId} onChange={(e) => changeCli(e.target.value)}>
             {cliOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{healths[c.id] && healths[c.id].state !== "connected" ? ` (${connectionMeta[healths[c.id].state].label})` : ""}</option>)}
           </select>
-          {orchestrator && <span className="hint">The engine runs one orchestrator: QA and Assessment must use the same CLI.</span>}
+          {orchestrator && <span className="hint">{guarded ? "The engine runs one orchestrator: QA, Assessment and Elevation use the same CLI. Turn off engine guardrails (Settings › Advanced) to mix." : "Engine guardrails are off: this role may use its own CLI."}</span>}
         </label>
-        {implementation && (
+        {local && (
           <label className="field">
-            <span className="row" style={{ gap: 8 }}>Local provider<Support kind="engine" /></span>
-            <select className="sel" value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Agent["provider"], model: e.target.value === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel })}>
+            <span className="row" style={{ gap: 8 }}>Local provider{custom ? <Support kind="saved" /> : <Support kind="engine" />}</span>
+            <select className="sel" value={draft.provider ?? "llamacpp"} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Agent["provider"], model: e.target.value === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel })}>
               <option value="llamacpp">llama.cpp (OpenAI-compatible)</option>
               <option value="ollama">Ollama</option>
             </select>
           </label>
         )}
         <div className="field">
-          <span className="row" style={{ gap: 8 }}>Model{orchestrator ? <Support kind="engine" /> : implementation ? <Support kind="engine" /> : <Support kind="saved" />}
-            {implementation && discovered.length > 0 && <button className="btn ghost sm" style={{ height: 20, padding: 0, marginLeft: "auto" }} onClick={() => setManual(!manual)}>{manual ? "Choose discovered" : "Enter manually"}</button>}
-            {orchestrator && kind && (
+          <span className="row" style={{ gap: 8 }}>Model{custom ? <Support kind="saved" /> : <Support kind="engine" />}
+            {local && discovered.length > 0 && <button className="btn ghost sm" style={{ height: 20, padding: 0, marginLeft: "auto" }} onClick={() => setManual(!manual)}>{manual ? "Choose discovered" : "Enter manually"}</button>}
+            {cloud && kind && (
               <span className="row" style={{ gap: 6, marginLeft: "auto" }}>
                 {list?.ok && <button className="btn ghost sm" style={{ height: 20, padding: 0 }} onClick={() => setManual(!manual)}>{manual ? "Choose from list" : "Enter manually"}</button>}
                 <button className="btn ghost sm icon" style={{ height: 20, width: 20 }} disabled={refreshing} onClick={() => window.api.refreshModels(kind).catch((e) => toast("error", cleanError(e)))} aria-label="Refresh model list" title="Ask the CLI for its model list again">
@@ -107,7 +112,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
               </span>
             )}
           </span>
-          {orchestrator ? (
+          {cloud ? (
             list?.ok && list.models.length && !manual ? (
               <>
                 <select className="sel" value={draft.model} onChange={(e) => setDraft(withModel(draft, list, e.target.value))}>
@@ -129,7 +134,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
                 </span>
               </>
             )
-          ) : implementation && discovered.length && !manual ? (
+          ) : local && discovered.length && !manual ? (
             <>
               <select className="sel" value={draft.model} onChange={(e) => set("model", e.target.value)}>
                 {!localModel && <option value={draft.model}>{draft.model} (not listed by {providerCli?.name})</option>}
@@ -144,7 +149,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             <>
               <input className="input mono" value={draft.model} onChange={(e) => set("model", e.target.value)} placeholder="model identifier" />
               <span className="hint">
-                {implementation ? (
+                {local ? (
                   <>
                     No model list from {providerCli?.name ?? "the provider"} yet. <a onClick={() => go("clis")}>Collect it in CLIs › Models</a>, or type the exact identifier.
                   </>
@@ -156,8 +161,8 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           )}
         </div>
         <div className="field">
-          <span className="row" style={{ gap: 8 }}>{implementation ? "Thinking" : "Reasoning effort"}{(orchestrator || implementation) && <Support kind="engine" />}</span>
-          {orchestrator ? (
+          <span className="row" style={{ gap: 8 }}>{local ? "Thinking" : "Reasoning effort"}{custom ? <Support kind="saved" /> : (orchestrator || implementation) && <Support kind="engine" />}</span>
+          {cloud ? (
             current && current.efforts.length === 0 ? (
               <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>{current.displayName} has no effort setting</div>
             ) : (
@@ -170,7 +175,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
                 <span className="hint">{current ? `Levels ${current.displayName} supports, as reported by ${cli?.name}` : "Model not in the CLI's list: common levels shown"}</span>
               </>
             )
-          ) : implementation ? (
+          ) : local ? (
             <>
               <select className="sel" value={draft.reasoning ?? "none"} onChange={(e) => set("reasoning", e.target.value)}>
                 {["none", "low", "medium", "high", "xhigh"].map((level) => (
@@ -190,22 +195,23 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>Not used by this role</div>
           )}
         </div>
-        {implementation && (
+        {local && (
           <div className="field">
             <span>Speed</span>
             <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }} title="Local speed comes from your hardware and llama.cpp / Ollama server settings">Not applicable for local models</div>
           </div>
         )}
-        {orchestrator && (
+        {cloud && (
           <div className="field">
-            <span className="row" style={{ gap: 8 }}>Speed<Support kind="engine" /></span>
+            <span className="row" style={{ gap: 8 }}>Speed{custom ? <Support kind="saved" /> : <Support kind="engine" />}</span>
             <Tabs
               label="Speed"
               value={draft.fast ? "fast" : "standard"}
               onChange={(v) => set("fast", v === "fast")}
               options={[
                 { value: "standard", label: "Standard" },
-                { value: "fast", label: "Fast", disabled: !current?.fast || (Boolean(list?.fastBlockedReason) && !draft.fast) },
+                // Guardrails off: Fast can be chosen even when the model or account doesn't report it.
+                { value: "fast", label: "Fast", disabled: guarded && (!current?.fast || (Boolean(list?.fastBlockedReason) && !draft.fast)) },
               ]}
             />
             <span className="hint">
@@ -216,6 +222,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
                   : list?.fastBlockedReason
                     ? `Fast unavailable: ${list.fastBlockedReason}`
                     : `Fast: ${current.fastDescription ?? "faster output"}`}
+              {!guarded && (!current?.fast || list?.fastBlockedReason) ? " · Guardrails off: Fast is sent anyway." : ""}
             </span>
           </div>
         )}

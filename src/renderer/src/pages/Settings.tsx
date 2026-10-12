@@ -307,6 +307,44 @@ function Safety() {
   );
 }
 
+/** Engine guardrails switch (Settings › Advanced and first setup). Turning it off asks for confirmation. */
+export function EngineGuardrails() {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const [confirm, setConfirm] = useState(false);
+  const on = snap.settings.advanced.engineGuardrails !== false;
+  return (
+    <>
+      <SetRow
+        title="Engine guardrails"
+        desc={on ? "On: QA, Assessment and Elevation share one orchestrator CLI, models must come from that CLI, and Fast only where the CLI reports it." : "Off: each role may use its own CLI (Codex or Claude Code) and any model, effort or speed. Mismatches are shown as warnings and the run starts anyway."}
+        support="app"
+      >
+        <Toggle on={on} onChange={(v) => (v ? patch("advanced", { engineGuardrails: true }) : setConfirm(true))} label="Engine guardrails" />
+      </SetRow>
+      {confirm && (
+        <Modal label="Turn off engine guardrails" onClose={() => setConfirm(false)}>
+          <div>
+            <h2 className="h2">Turn off engine guardrails?</h2>
+            <p className="sub" style={{ margin: "6px 0 0" }}>For users who know what each choice does. The engine's safety checks stay on either way: only QA commits, scope and HEAD are verified, unsafe states stop for you.</p>
+          </div>
+          <ul className="sub" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+            <li>QA, Assessment and Elevation may run on different CLIs; the engine routes each role to its own CLI.</li>
+            <li>Any model id is passed as typed, even one the CLI doesn't list or that belongs to another CLI. A wrong id fails that role's call.</li>
+            <li>Fast is sent even when the model or account doesn't report it.</li>
+            <li>Launch checks become warnings instead of stopping the start.</li>
+          </ul>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="grow" />
+            <button className="btn ghost" onClick={() => setConfirm(false)}>Keep on</button>
+            <button className="btn primary" onClick={() => { void patch("advanced", { engineGuardrails: false }); setConfirm(false); }}>Turn off</button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function Advanced() {
   const { snap, saveSettings, toast } = useApp();
   const ad = snap.settings.advanced;
@@ -316,6 +354,7 @@ function Advanced() {
     <div className="stack" style={{ gap: 20 }}>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Engine</h2>
+        <EngineGuardrails />
         <SetRow title="Engine folder" desc={<span className="mono">{snap.engine.dir}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.engine.dir)}>Open</button></SetRow>
         <SetRow title="Node runtime" desc="Runs engine/src/cli.mjs. System Node is used when found on PATH; otherwise Electron's bundled runtime" support="app">
           <select className="sel" value={ad.nodeRuntime} onChange={(e) => patch("advanced", { nodeRuntime: e.target.value as typeof ad.nodeRuntime })} aria-label="Node runtime"><option value="system">System Node (PATH)</option><option value="electron">Electron's bundled Node</option></select>

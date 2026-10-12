@@ -156,6 +156,12 @@ export interface Settings {
     nodeRuntime: "system" | "electron";
     debug: boolean;
     llamaCppLauncher: string;
+    /**
+     * On: the app keeps agents inside what the engine is built for (one orchestrator CLI for QA,
+     * Assessment and Elevation; models the CLI lists). Off: any CLI and model per role, checks
+     * become warnings. For users who know the consequences.
+     */
+    engineGuardrails: boolean;
   };
   skills: {
     enabled: Record<string, boolean>;

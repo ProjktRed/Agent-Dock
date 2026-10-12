@@ -20,6 +20,8 @@ export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" |
 
 export interface LaunchCheck {
   problems: string[];
+  /** Engine guardrails off: what the guardrails would have blocked. The start goes ahead. */
+  warnings: string[];
   summary: { implementation: string; orchestrator: string };
   args: string[];
 }

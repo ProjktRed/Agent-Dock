@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 
 import { CodexWorker, useOrchestratorModels, useRoleOverrides } from "./codex-worker.mjs";
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
+import { buildMixedOrchestrator, isMixed, roleClis, useMixedDefaults } from "./mixed-orchestrator.mjs";
 import { resolveCodexCommand, preflightCodex } from "./codex-command.mjs";
 import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
 import { runManualElevate } from "./manual-elevate.mjs";
@@ -31,12 +32,17 @@ try {
     launcher = await resolveCodexCommand({ explicitCommand: options["codex-command"] ?? options["codex-exe"] });
     await preflightCodex(launcher);
   }
+  const clis = roleClis(options);
+  const mixed = isMixed(clis);
+  if (mixed) useMixedDefaults(clis);
   useRoleOverrides(options.roleOverrides);
   const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true });
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
   const additionalWritableDirs = outside ? [gitCommonDir] : [];
-  const codex = useClaude
+  const codex = mixed
+    ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs })
+    : useClaude
     ? new ClaudeWorker({ stateDir, workspace, claudeCommand: options["claude-command"] ?? "claude", additionalWritableDirs })
     : new CodexWorker({ stateDir, workspace, launcher, windowsSandbox: options["codex-windows-sandbox"], additionalWritableDirs });
   launchReady = true;

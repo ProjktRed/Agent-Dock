@@ -5,6 +5,7 @@ import { clock, connectionMeta } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../components/ui";
 import { AddCliDialog } from "./AddCliDialog";
+import { effortLabel, useModelCatalog } from "../../lib/models";
 
 type DetailTab = "connection" | "models" | "caps" | "env" | "logs";
 
@@ -53,6 +54,46 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
         </div>
       </div>
       <div className="row"><span className="sub grow">{dirty ? "Unsaved changes" : ""}</span><button className="btn ghost" disabled={!dirty} onClick={() => { setDraft(cli); setSecret(null); }}>Revert</button><button className="btn primary" disabled={!dirty} onClick={save}>Save</button></div>
+    </div>
+  );
+}
+
+/** Codex CLI / Claude Code: the models the CLI itself reports (model/list, initialize). */
+function CloudModels({ kind, name }: { kind: "codex" | "claude"; name: string }) {
+  const { toast } = useApp();
+  const catalog = useModelCatalog();
+  const list = catalog?.[kind];
+  const busy = catalog?.refreshing[kind];
+  return (
+    <div className="stack fade-in" style={{ gap: 12 }}>
+      <div className="row" style={{ gap: 10 }}>
+        <span className="sub grow">{list ? `${list.models.length} models · ${list.source} · ${clock(list.fetchedAt)}` : `No list from ${name} yet`}</span>
+        <button className="btn sm" disabled={busy} onClick={() => window.api.refreshModels(kind).catch((e) => toast("error", cleanError(e)))}>{busy ? <Spinner /> : <Icon name="refresh" size="sm" />}Refresh</button>
+      </div>
+      {list?.error && <div className="banner"><Icon name="warn" className="warn" /><span>{list.error}</span></div>}
+      {list?.fastBlockedReason && <div className="banner"><Icon name="warn" className="warn" /><span>Fast: {list.fastBlockedReason}</span></div>}
+      <div className="well" style={{ padding: 6 }}>
+        {list?.models.length ? (
+          <ul className="list">
+            {list.models.map((m) => (
+              <li key={m.id} style={{ padding: "4px 8px", alignItems: "flex-start" }}>
+                <div className="grow stack" style={{ gap: 2 }}>
+                  <span className="row" style={{ gap: 8 }}>
+                    <b style={{ fontWeight: 600 }}>{m.displayName}</b>
+                    <span className="mono mut" style={{ fontSize: 11.5 }}>{m.resolved ?? m.id}</span>
+                    {m.isDefault && <span className="chip info" style={{ height: 18, fontSize: 10.5 }}>CLI default</span>}
+                    {m.fast && <span className="chip" style={{ height: 18, fontSize: 10.5 }} title={m.fastDescription ?? ""}>Fast</span>}
+                  </span>
+                  <span className="sub">{m.description}{m.efforts.length ? ` · effort ${m.efforts.map(effortLabel).join(", ")}` : " · no effort setting"}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="empty">{busy ? `Asking ${name}…` : `Press Refresh to ask ${name} for its models.`}</div>
+        )}
+      </div>
+      <span className="hint">Pick a model, effort and speed per agent in Agents. Reading the list is free: no prompt is sent.</span>
     </div>
   );
 }
@@ -124,6 +165,11 @@ export function ClisPage() {
   const { snap, healths, setClis, toast, statuses } = useApp();
   const [selId, setSelId] = useState(snap.clis.find((c) => healths[c.id] && healths[c.id].state !== "connected")?.id ?? snap.clis[0]?.id);
   const [tab, setTab] = useState<DetailTab>("connection");
+  const catalog = useModelCatalog();
+  const modelCount = (c: CliConnection) => {
+    const n = c.kind === "codex" || c.kind === "claude" ? catalog?.[c.kind]?.models.length : c.collected?.models.length;
+    return n ? `${n} models` : null;
+  };
   const [adding, setAdding] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -175,7 +221,7 @@ export function ClisPage() {
                       <td><button className="rowbtn" aria-pressed={c.id === sel.id}><span className="name" style={{ fontWeight: 600 }}>{c.name}</span><span className="mono mut ellipsis" style={{ fontSize: 11, maxWidth: 260 }}>{hh?.resolvedPath ?? c.location}</span></button></td>
                       <td><span className={`row ${meta.tone}`} style={{ gap: 6 }}><Dot tone="" live={!hh} />{meta.label}</span>{hh && hh.state === "connected" && hh.auth.state === "required" && <span className="sub">Sign-in required</span>}</td>
                       <td className="mono">{hh?.version ?? "—"}</td>
-                      <td className="sub">{hh?.models.length ? `${hh.models.length} discovered` : "—"}</td>
+                      <td className="sub">{modelCount(c) ?? (hh?.models.length ? `${hh.models.length} discovered` : "—")}</td>
                     </tr>
                   );
                 })}
@@ -204,7 +250,11 @@ export function ClisPage() {
             ]} />
             {tab === "connection" && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
             {tab === "models" && (sel.kind === "llamacpp" || sel.kind === "ollama") && <LocalModels key={sel.id} cli={sel} />}
-            {tab === "models" && sel.kind !== "llamacpp" && sel.kind !== "ollama" && (
+            {tab === "models" && (sel.kind === "codex" || sel.kind === "claude") && <CloudModels kind={sel.kind} name={sel.name} />}
+            {tab === "models" && sel.kind === "cline" && (
+              <div className="well pad sub fade-in">Cline runs the model set on the agent that uses it, served by llama.cpp or Ollama. Their Models tabs list what is available.</div>
+            )}
+            {tab === "models" && !["llamacpp", "ollama", "codex", "claude", "cline"].includes(sel.kind) && (
               <div className="stack fade-in" style={{ gap: 12 }}>
                 <div className="row"><span className="sub grow">{h?.models.length ? `${h.models.length} models discovered` : "No models discovered"}</span><button className="btn sm" onClick={() => check(sel.id)}>Refresh</button></div>
                 <div className="well" style={{ padding: 6 }}>

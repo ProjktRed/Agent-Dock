@@ -100,6 +100,7 @@ tests/           vitest unit tests for the main-process logic
 | llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` → launcher `-ModelsDir` |
 | QA agent's CLI (Codex or Claude Code) | `--orchestrator codex\|claude` (+ `--codex-exe` / `--claude-command` for a custom path) |
 | QA, Assessment, Elevation agents: model, reasoning effort, speed (Resolver follows Assessment) | `--qa-model` / `--qa-effort` / `--qa-fast`, `--assessment-*`, `--resolver-*`, `--elevate-*` |
+| Engine guardrails off: Assessment or Elevation on another CLI than QA | `--assessment-cli` / `--resolver-cli` / `--elevate-cli codex\|claude` |
 | Automatic elevation (and Elevation agent enabled) | `--sol-reassessment` |
 | Worker tool guard | `--tool-guard` |
 | Attached task file | `--task` (validated with the engine's own `validateTask`, used once) |
@@ -152,12 +153,19 @@ or quitting the app can leave it running safely; the app reattaches on the next 
 - **Capabilities**: detected from each CLI's own `--help` output, never assumed.
 - Every setting carries a label: **Enforced by engine**, **Applied by app**, or **Saved only**
   (stored for future engine support).
+- **Engine guardrails** (Settings › Advanced, and the last setup step; on by default): keep QA,
+  Assessment and Elevation on one orchestrator CLI with models that CLI lists. Off (asks for
+  confirmation): each role may use its own CLI and any model, effort or speed. The engine then
+  routes each role to its own worker (Codex or Claude Code, one shared lock so calls stay
+  sequential), and launch checks become warnings. The engine's safety checks (QA-only commits,
+  scope and HEAD verification, stops on unsafe state) are unaffected.
 
 ## Known limitations
 
 - The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
   whichever model runs the role.
-- QA and Assessment must share one orchestrator CLI.
+- With engine guardrails on, QA, Assessment and Elevation share one orchestrator CLI.
+- Custom roles can pick a CLI, model, effort and speed, but the engine has no slot that runs them.
 - Custom roles, agent custom instructions, extra skills and protected paths are saved only;
   the engine does not read them yet.
 - The llama.cpp auto-start launcher path is fixed in the engine

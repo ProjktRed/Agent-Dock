@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { ClineCliWorker } from "./cline-cli-worker.mjs";
 import { CodexWorker, ROLE_EFFORT, ROLE_FAST, roleModel, useOrchestratorModels, useRoleOverrides } from "./codex-worker.mjs";
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
+import { buildMixedOrchestrator, isMixed, roleClis, useMixedDefaults } from "./mixed-orchestrator.mjs";
 import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
 import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
 import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
@@ -68,8 +69,11 @@ if (useClaude) {
   const codexPreflight = await preflightCodex(codexLauncher);
   console.log(JSON.stringify({ codexCommand: codexPreflight.command, codexVersion: codexPreflight.version }));
 }
+const clis = roleClis(options);
+const mixed = isMixed(clis);
+if (mixed) useMixedDefaults(clis);
 useRoleOverrides(options.roleOverrides);
-console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
+console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { cli: clis[role], model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
 const state = new DashboardState({ stateDir });
 const worker = new ClineCliWorker({
   toolGuard: options.toolGuard,
@@ -90,7 +94,9 @@ const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute"
 });
 const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
 const gitCommonIsOutsideWorkspace = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
-const codex = useClaude
+const codex = mixed
+  ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs: gitCommonIsOutsideWorkspace ? [gitCommonDir] : [] })
+  : useClaude
   ? new ClaudeWorker({
       stateDir,
       workspace,

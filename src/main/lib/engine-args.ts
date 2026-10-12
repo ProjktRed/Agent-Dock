@@ -31,14 +31,19 @@ export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
 
 export interface EngineLaunchPlan {
   args: string[];
+  /** Block the start. */
   problems: string[];
+  /** Shown, but the start goes ahead (engine guardrails off). */
+  warnings: string[];
   summary: { implementation: string; orchestrator: string };
 }
 
 /**
  * Translate app configuration into the engine CLI (engine/src/cli.mjs) flags.
- * The engine runs one orchestrator (codex or claude) for QA, Assessment, Resolver and Elevation,
- * so those roles must share a CLI. Implementation always runs through Cline.
+ * With engine guardrails on (default) QA, Assessment, Resolver and Elevation share one orchestrator
+ * CLI and models must belong to it. With guardrails off each role may use its own CLI
+ * (--<role>-cli; the engine routes each role to its worker) and those checks become warnings.
+ * Implementation always runs through Cline.
  */
 export function buildEngineArgs(input: {
   project: Project;
@@ -48,8 +53,16 @@ export function buildEngineArgs(input: {
 }): EngineLaunchPlan {
   const { project, agents, clis, settings } = input;
   const problems: string[] = [];
+  const warnings: string[] = [];
+  const guarded = settings.advanced.engineGuardrails !== false;
+  /** A guardrail: blocks with guardrails on, warns with them off. */
+  const guard = (message: string) => (guarded ? problems : warnings).push(message);
   const workflow = effectiveWorkflow(settings, project);
   const cliOf = (agent: Agent | null) => (agent ? clis.find((c) => c.id === agent.cliId) ?? null : null);
+  const orchestratorKind = (agent: Agent | null) => {
+    const kind = cliOf(agent)?.kind;
+    return kind === "codex" || kind === "claude" ? kind : null;
+  };
 
   if (!project.objective.trim()) problems.push("Set a project objective before starting.");
 
@@ -57,22 +70,18 @@ export function buildEngineArgs(input: {
   const implCli = cliOf(impl);
   if (!impl) problems.push("No enabled Implementation agent.");
   else if (!impl.enabled) problems.push(`Implementation agent “${impl.name}” is disabled.`);
-  else if (implCli?.kind !== "cline") problems.push(`Implementation agent “${impl.name}” must use a Cline CLI connection.`);
+  else if (implCli?.kind !== "cline") problems.push(`Implementation agent “${impl.name}” must use a Cline CLI connection (the engine implements only through Cline).`);
   else if (!impl.provider) problems.push(`Implementation agent “${impl.name}” has no local provider (llama.cpp or Ollama).`);
 
   const qa = agentForRole("qa", project, agents);
   const qaCli = cliOf(qa);
   if (!qa || !qa.enabled) problems.push("No enabled QA agent.");
-  else if (!qaCli || !["codex", "claude"].includes(qaCli.kind)) problems.push(`QA agent “${qa.name}” must use Codex CLI or Claude Code.`);
+  else if (!orchestratorKind(qa)) problems.push(`QA agent “${qa.name}” must use Codex CLI or Claude Code.`);
 
   const assessment = agentForRole("assessment", project, agents);
-  const assessmentCli = cliOf(assessment);
-  if (assessment && assessmentCli && qaCli && assessmentCli.kind !== qaCli.kind) {
-    problems.push("Assessment and QA must use the same orchestrator CLI: the engine runs one orchestrator for both.");
-  }
-
   const elevation = agentForRole("elevation", project, agents);
   const automaticElevation = workflow.automaticElevation && Boolean(elevation?.enabled);
+  const orchestrator = orchestratorKind(qa) ?? "codex";
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
   if (impl && implCli?.kind === "cline" && impl.provider) {
@@ -85,22 +94,31 @@ export function buildEngineArgs(input: {
     if (impl.provider === "llamacpp" && providerConn?.modelsDir) args.push("--llamacpp-models-dir", providerConn.modelsDir);
     const collected = providerConn?.collected?.models ?? [];
     if (collected.length && !collected.some((m) => m.id === impl.model)) {
-      problems.push(`Implementation model “${impl.model}” is not in the list collected from ${providerConn!.name}. Pick a model in Agents, or refresh the list in CLIs › Models.`);
+      guard(`Implementation model “${impl.model}” is not in the list collected from ${providerConn!.name}. Pick a model in Agents, or refresh the list in CLIs › Models.`);
     }
   }
-  const orchestrator = qaCli?.kind === "claude" ? "claude" : "codex";
   args.push("--orchestrator", orchestrator);
-  if (qaCli && qaCli.location && qaCli.location !== qaCli.kind) {
-    args.push(orchestrator === "claude" ? "--claude-command" : "--codex-exe", qaCli.location);
-  }
-  // Per-role model, effort and speed. Resolver follows the Assessment agent (the app has no Resolver role).
-  const roles: [string[], Agent | null][] = [[["qa"], qa], [["assessment", "resolver"], assessment], [["elevate"], elevation?.enabled ? elevation : null]];
-  for (const [flags, agent] of roles) {
-    if (!agent || cliOf(agent)?.kind !== orchestrator) continue;
+
+  // Per-role CLI, model, effort and speed. Resolver follows the Assessment agent (the app has no Resolver role).
+  const roles: [string, string[], Agent | null][] = [
+    ["QA", ["qa"], qa],
+    ["Assessment", ["assessment", "resolver"], assessment],
+    ["Elevation", ["elevate"], elevation?.enabled ? elevation : null],
+  ];
+  const usedKinds = new Set<"codex" | "claude">([orchestrator]);
+  for (const [label, flags, agent] of roles) {
+    const kind = orchestratorKind(agent);
+    if (!agent || !kind) continue;
+    if (kind !== orchestrator) {
+      guard(`${label} agent “${agent.name}” uses ${cliOf(agent)!.name} but QA uses ${qaCli?.name}: the engine is built to run one orchestrator CLI.`);
+      if (guarded) continue;
+      usedKinds.add(kind);
+      for (const flag of flags) args.push(`--${flag}-cli`, kind);
+    }
     const model = agent.model.trim();
-    if (model && wrongProviderModel(orchestrator, model)) {
-      problems.push(`${agent.name}: “${model}” is not a ${orchestrator === "claude" ? "Claude Code" : "Codex"} model. Pick a model in Agents.`);
-      continue;
+    if (model && wrongProviderModel(kind, model)) {
+      guard(`${agent.name}: “${model}” is not a ${kind === "claude" ? "Claude Code" : "Codex"} model.`);
+      if (guarded) continue;
     }
     for (const flag of flags) {
       if (model) args.push(`--${flag}-model`, model);
@@ -108,8 +126,10 @@ export function buildEngineArgs(input: {
       args.push(`--${flag}-fast`, String(Boolean(agent.fast)));
     }
   }
-  if (elevation?.enabled && qaCli && cliOf(elevation) && cliOf(elevation)!.kind !== orchestrator) {
-    problems.push(`Elevation agent “${elevation.name}” must use the same orchestrator CLI as QA (${qaCli.name}).`);
+  // Custom executable locations for every orchestrator CLI in use.
+  for (const kind of usedKinds) {
+    const conn = clis.find((c) => c.kind === kind);
+    if (conn?.location && conn.location !== kind) args.push(kind === "claude" ? "--claude-command" : "--codex-exe", conn.location);
   }
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
@@ -118,9 +138,10 @@ export function buildEngineArgs(input: {
   return {
     args,
     problems,
+    warnings,
     summary: {
       implementation: impl ? `${impl.name} · Cline → ${impl.provider ?? "?"} · ${impl.model}` : "none",
-      orchestrator: qaCli ? `${qaCli.name} (${orchestrator})` : "none",
+      orchestrator: qaCli ? `${qaCli.name} (${orchestrator})${usedKinds.size > 1 ? " + mixed roles" : ""}` : "none",
     },
   };
 }

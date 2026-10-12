@@ -340,7 +340,9 @@ function registerIpc() {
   handle("engine:control", async (id: string, action: ControlAction) => {
     const p = project(id);
     const check = launchCheck(p);
-    if (["start", "resume", "resolve"].includes(action) && !engine.isAlive(id) && check.problems.length) throw new Error(check.problems.join(" "));
+    const starting = ["start", "resume", "resolve"].includes(action) && !engine.isAlive(id);
+    if (starting && check.problems.length) throw new Error(check.problems.join(" "));
+    if (starting && check.warnings.length) notice({ kind: "warning", message: `Engine guardrails are off: ${check.warnings.join(" ")}` });
     const wasAlive = engine.isAlive(id);
     await engine.control(p, action, check.args);
     if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
