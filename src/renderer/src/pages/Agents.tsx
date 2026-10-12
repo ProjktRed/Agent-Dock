@@ -6,6 +6,7 @@ import { agentForRoleClient } from "../lib/agents";
 import { defaultModelId, effortLabel, useModelCatalog, withModel } from "../lib/models";
 import { Icon } from "../components/Icon";
 import { Disclosure, Dot, Empty, Modal, Spinner, St, Support, Tabs, Toggle } from "../components/ui";
+import { stageLabel } from "./Workflow";
 
 const ROLE_EVENTS: Record<string, RegExp> = {
   implementation: /^cline-/,
@@ -29,10 +30,11 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const implementation = draft.role === "implementation";
   const custom = draft.role === "custom";
   const guarded = snap.settings.advanced.engineGuardrails !== false;
-  const cliOptions = snap.clis.filter((c) => (implementation ? c.kind === "cline" : orchestrator ? c.kind === "codex" || c.kind === "claude" : true));
+  // Implementation: Cline (local provider), Codex or Claude Code. Workflow roles and orchestrator roles: Codex or Claude Code.
+  const cliOptions = snap.clis.filter((c) => (implementation ? ["cline", "codex", "claude"].includes(c.kind) : c.kind === "codex" || c.kind === "claude" || c.id === draft.cliId));
   const cli = snap.clis.find((c) => c.id === draft.cliId);
-  // Custom roles get the same pickers as the built-in role their CLI matches (saved; the engine does not run them).
-  const local = implementation || (custom && cli?.kind === "cline");
+  const local = (implementation || custom) && cli?.kind === "cline";
+  const workflowRole = custom ? snap.roles.find((r) => r.id === draft.customRole || r.name.toLowerCase() === (draft.customRole ?? "").trim().toLowerCase()) ?? null : null;
   const providerCli = local ? snap.clis.find((c) => c.kind === (draft.provider ?? "llamacpp")) : null;
   // Local models: the list collected from the provider (CLIs › Models) wins over the live health check.
   const collected = providerCli?.collected?.models ?? [];
@@ -41,16 +43,21 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const catalog = useModelCatalog();
   const roleKey = draft.role === "elevation" ? "elevate" : draft.role;
   const kind = cli?.kind === "claude" || cli?.kind === "codex" ? cli.kind : null;
-  const cloud = (orchestrator || custom) && kind !== null;
+  const cloud = (orchestrator || custom || implementation) && kind !== null;
   const list = cloud && kind ? catalog?.[kind] ?? null : null;
   const current = list?.models.find((m) => m.id === draft.model);
   const refreshing = kind ? catalog?.refreshing[kind] : false;
   const changeCli = (cliId: string) => {
     const next = snap.clis.find((c) => c.id === cliId);
     const nextKind = next?.kind === "claude" || next?.kind === "codex" ? next.kind : null;
-    if (!(orchestrator || custom) || !nextKind || nextKind === kind) return setDraft({ ...draft, cliId, provider: custom && next?.kind === "cline" ? draft.provider ?? "llamacpp" : draft.provider });
+    if (implementation && next?.kind === "cline") {
+      // Back to a local provider: the cloud model, effort and speed don't apply.
+      const provider = draft.provider ?? "llamacpp";
+      return setDraft({ ...draft, cliId, provider, ...(kind ? { model: provider === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel, reasoning: "none", fast: false } : {}) });
+    }
+    if (!(orchestrator || custom || implementation) || !nextKind || nextKind === kind) return setDraft({ ...draft, cliId, provider: custom && next?.kind === "cline" ? draft.provider ?? "llamacpp" : draft.provider });
     const nextList = catalog?.[nextKind];
-    setDraft(withModel({ ...draft, cliId, reasoning: "medium", fast: false }, nextList, defaultModelId(nextList, snap.engine.orchestratorModels[nextKind][roleKey])));
+    setDraft(withModel({ ...draft, cliId, provider: undefined, reasoning: "medium", fast: false }, nextList, defaultModelId(nextList, implementation ? undefined : snap.engine.orchestratorModels[nextKind][roleKey])));
   };
   const modelMax = providerCli ? healths[providerCli.id]?.contextMax : undefined;
   const dirty = JSON.stringify(draft) !== JSON.stringify(agent);
@@ -73,27 +80,37 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
       <div className="grid-f">
         <label className="field"><span>Display name</span><input className="input" value={draft.name} onChange={(e) => set("name", e.target.value)} /></label>
         <label className="field">
-          <span>Workflow role</span>
+          <span>Role</span>
           <select className="sel" value={draft.role} onChange={(e) => {
             const role = e.target.value as Role;
-            const kind = role === "implementation" ? "cline" : role === "custom" ? null : "codex";
-            const nextCli = kind ? snap.clis.find((c) => c.kind === kind)?.id ?? draft.cliId : draft.cliId;
-            setDraft({ ...draft, role, cliId: nextCli, provider: role === "implementation" ? draft.provider ?? "llamacpp" : undefined });
+            const kind = role === "implementation" ? "cline" : "codex";
+            const nextCli = snap.clis.find((c) => c.kind === kind)?.id ?? draft.cliId;
+            setDraft({ ...draft, role, cliId: nextCli, provider: role === "implementation" ? draft.provider ?? "llamacpp" : undefined, customRole: role === "custom" ? draft.customRole || snap.roles[0]?.id || "" : draft.customRole });
           }}>
             {(["implementation", "qa", "assessment", "elevation", "custom"] as Role[]).map((r) => <option key={r} value={r}>{roleLabel[r]}</option>)}
           </select>
         </label>
-        {draft.role === "custom" && <label className="field"><span>Custom role name</span><input className="input" value={draft.customRole ?? ""} onChange={(e) => set("customRole", e.target.value)} /></label>}
+        {draft.role === "custom" && (
+          <label className="field">
+            <span className="row" style={{ gap: 8 }}>Workflow role<Support kind="engine" /><a style={{ marginLeft: "auto" }} onClick={() => go("workflow")}>Edit roles</a></span>
+            <select className="sel" value={workflowRole?.id ?? draft.customRole ?? ""} onChange={(e) => set("customRole", e.target.value)}>
+              {!workflowRole && <option value={draft.customRole ?? ""}>{draft.customRole ? `${draft.customRole} (no such role)` : "Choose a role"}</option>}
+              {snap.roles.map((r) => <option key={r.id} value={r.id}>{r.name} · {stageLabel(r.stage)}{r.gate ? " · gate" : ""}</option>)}
+            </select>
+            <span className="hint">{snap.roles.length ? "This agent runs the role. Create and edit roles in the Workflow tab." : "No workflow roles yet: create one in the Workflow tab."}</span>
+          </label>
+        )}
         <label className="field">
           <span>CLI connection</span>
           <select className="sel" value={draft.cliId} onChange={(e) => changeCli(e.target.value)}>
             {cliOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{healths[c.id] && healths[c.id].state !== "connected" ? ` (${connectionMeta[healths[c.id].state].label})` : ""}</option>)}
           </select>
+          {implementation && kind && <span className="hint">{cli?.name} implements in the project folder. While it runs, file changes are limited to each task's paths{kind === "codex" ? " (by a scope hook the engine adds)" : ""}{snap.settings.workflow.toolGuard ? " and the shell to the task's checks (tool guard)" : ""}. It never commits; scope checks and QA still apply.</span>}
           {orchestrator && <span className="hint">{guarded ? "The engine runs one orchestrator: QA, Assessment and Elevation use the same CLI. Turn off engine guardrails (Settings › Advanced) to mix." : "Engine guardrails are off: this role may use its own CLI."}</span>}
         </label>
         {local && (
           <label className="field">
-            <span className="row" style={{ gap: 8 }}>Local provider{custom ? <Support kind="saved" /> : <Support kind="engine" />}</span>
+            <span className="row" style={{ gap: 8 }}>Local provider<Support kind="engine" /></span>
             <select className="sel" value={draft.provider ?? "llamacpp"} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Agent["provider"], model: e.target.value === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel })}>
               <option value="llamacpp">llama.cpp (OpenAI-compatible)</option>
               <option value="ollama">Ollama</option>
@@ -101,7 +118,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           </label>
         )}
         <div className="field">
-          <span className="row" style={{ gap: 8 }}>Model{custom ? <Support kind="saved" /> : <Support kind="engine" />}
+          <span className="row" style={{ gap: 8 }}>Model<Support kind="engine" />
             {local && discovered.length > 0 && <button className="btn ghost sm" style={{ height: 20, padding: 0, marginLeft: "auto" }} onClick={() => setManual(!manual)}>{manual ? "Choose discovered" : "Enter manually"}</button>}
             {cloud && kind && (
               <span className="row" style={{ gap: 6, marginLeft: "auto" }}>
@@ -161,7 +178,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           )}
         </div>
         <div className="field">
-          <span className="row" style={{ gap: 8 }}>{local ? "Thinking" : "Reasoning effort"}{custom ? <Support kind="saved" /> : (orchestrator || implementation) && <Support kind="engine" />}</span>
+          <span className="row" style={{ gap: 8 }}>{local ? "Thinking" : "Reasoning effort"}<Support kind="engine" /></span>
           {cloud ? (
             current && current.efforts.length === 0 ? (
               <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>{current.displayName} has no effort setting</div>
@@ -203,7 +220,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         )}
         {cloud && (
           <div className="field">
-            <span className="row" style={{ gap: 8 }}>Speed{custom ? <Support kind="saved" /> : <Support kind="engine" />}</span>
+            <span className="row" style={{ gap: 8 }}>Speed<Support kind="engine" /></span>
             <Tabs
               label="Speed"
               value={draft.fast ? "fast" : "standard"}
@@ -228,12 +245,12 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         )}
         {implementation && (
           <>
-            <label className="field">
+            {local && <label className="field">
               <span className="row" style={{ gap: 8 }}>Maximum context (tokens)<Support kind="engine" /></span>
               <input className="input" inputMode="numeric" value={draft.contextTokens} onChange={(e) => set("contextTokens", Number(e.target.value.replace(/\D/g, "")) || 0)} />
               <span className="hint">{modelMax?.value ? `${modelMax.source}: ${modelMax.value.toLocaleString()}` : "Model maximum not reported"}{modelMax?.value && draft.contextTokens > modelMax.value ? " · exceeds the model maximum" : ""}</span>
-            </label>
-            <label className="field"><span className="row" style={{ gap: 8 }}>Maximum output tokens<Support kind="engine" /></span><input className="input" inputMode="numeric" value={draft.maxOutputTokens} onChange={(e) => set("maxOutputTokens", Number(e.target.value.replace(/\D/g, "")) || 0)} /></label>
+            </label>}
+            {local && <label className="field"><span className="row" style={{ gap: 8 }}>Maximum output tokens<Support kind="engine" /></span><input className="input" inputMode="numeric" value={draft.maxOutputTokens} onChange={(e) => set("maxOutputTokens", Number(e.target.value.replace(/\D/g, "")) || 0)} /></label>}
             <label className="field"><span className="row" style={{ gap: 8 }}>Execution timeout (minutes)<Support kind="engine" /></span><input className="input" inputMode="numeric" value={Math.round(draft.timeoutSeconds / 60)} onChange={(e) => set("timeoutSeconds", (Number(e.target.value.replace(/\D/g, "")) || 1) * 60)} /></label>
           </>
         )}
@@ -277,15 +294,16 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
 }
 
 function AgentActivity({ agent }: { agent: Agent }) {
-  const { activeStatus: s, activeProject } = useApp();
+  const { activeStatus: s, activeProject, snap } = useApp();
   const [usage, setUsage] = useState<TokenRecord[]>([]);
   useEffect(() => {
     if (activeProject) void window.api.usage(activeProject.id).then((u) => setUsage(u.records));
   }, [activeProject]);
-  if (agent.role === "custom") return <Empty title="Custom roles are not run by the engine yet" icon="agent" />;
-  const pattern = ROLE_EVENTS[agent.role];
-  const events = (s?.events ?? []).filter((e) => pattern.test(e.type));
-  const roleName = roleLabel[agent.role];
+  // A workflow role agent: its own role's events (role-started / role-result / role-error carry roleName).
+  const workflowRole = agent.role === "custom" ? snap.roles.find((r) => r.id === agent.customRole) ?? null : null;
+  const pattern = ROLE_EVENTS[agent.role] ?? /^role-/;
+  const events = (s?.events ?? []).filter((e) => pattern.test(e.type) && (!workflowRole || e.roleName === workflowRole.name));
+  const roleName = workflowRole ? workflowRole.name : roleLabel[agent.role];
   const active = s?.processAlive && s.activeRole === roleName;
   const records = usage.filter((r) => r.role === agent.role);
   const sum = (k: "input" | "output" | "cached") => records.reduce((n, r) => n + r[k], 0);
@@ -345,24 +363,26 @@ export function AgentsPage() {
     const cli = snap.clis.find((c) => c.kind === (role === "implementation" ? "cline" : "codex"));
     const agent: Agent = {
       id: uid("agent"),
-      name: role === "custom" ? "Custom agent" : `New ${roleLabel[role]} agent`,
+      name: role === "custom" ? "Workflow role agent" : `New ${roleLabel[role]} agent`,
       role,
-      customRole: role === "custom" ? "Documentation" : undefined,
+      customRole: role === "custom" ? snap.roles[0]?.id ?? "" : undefined,
       cliId: cli?.id ?? snap.clis[0].id,
       provider: role === "implementation" ? "llamacpp" : undefined,
       model: role === "implementation" ? snap.engine.defaults.llamacppModel : "",
-      contextTokens: role === "implementation" ? snap.engine.defaults.contextTokens : 0,
-      maxOutputTokens: snap.engine.defaults.maxOutputTokens,
+      contextTokens: role === "implementation" ? snap.settings.tuning.defaultContextTokens ?? snap.engine.defaults.contextTokens : 0,
+      maxOutputTokens: snap.settings.tuning.defaultMaxOutputTokens ?? snap.engine.defaults.maxOutputTokens,
       timeoutSeconds: snap.engine.defaults.timeoutSeconds,
       instructions: "",
       skills: [],
-      enabled: role !== "custom",
+      enabled: role !== "custom" || snap.roles.length > 0,
     };
     setAgents(await window.api.saveAgent(agent));
     setSelId(agent.id);
     setTab("config");
   };
   const cliOf = (a: Agent) => snap.clis.find((c) => c.id === a.cliId);
+  const roleName = (a: Agent) => snap.roles.find((r) => r.id === a.customRole)?.name ?? (a.customRole || "Workflow role");
+  const selRole = sel?.role === "custom" ? snap.roles.find((r) => r.id === sel.customRole || r.name.toLowerCase() === (sel.customRole ?? "").toLowerCase()) : null;
 
   return (
     <>
@@ -386,7 +406,7 @@ export function AgentsPage() {
             );
           })}
           <button className="opt" style={{ flex: 1, minWidth: 160, justifyContent: "center", alignItems: "center", boxShadow: "none", border: "1.5px dashed rgba(148,168,191,.35)", background: "transparent", color: "var(--t2)" }} onClick={() => addAgent("custom")}>
-            <Icon name="plus" />Custom role
+            <Icon name="plus" />Workflow role agent
           </button>
         </div>
       </section>
@@ -401,7 +421,7 @@ export function AgentsPage() {
               const h = cli ? healths[cli.id] : undefined;
               return (
                 <button key={a.id} className={`item ${sel.id === a.id ? "on" : ""} ${a.enabled ? "" : "off"}`} onClick={() => setSelId(a.id)} aria-pressed={sel.id === a.id}>
-                  <div className="row"><span className="name" style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</span><span className="chip">{a.role === "custom" ? a.customRole || "Custom" : roleLabel[a.role]}</span><span className="grow" /><span className={`sub ${a.enabled ? "" : "mut"}`}>{a.enabled ? "" : "Disabled"}</span></div>
+                  <div className="row"><span className="name" style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</span><span className="chip">{a.role === "custom" ? roleName(a) : roleLabel[a.role]}</span><span className="grow" /><span className={`sub ${a.enabled ? "" : "mut"}`}>{a.enabled ? "" : "Disabled"}</span></div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 6 }}><span>{cli?.name ?? "No CLI"}</span>{a.provider && <><span>·</span><span>{a.provider === "llamacpp" ? "llama.cpp" : "Ollama"}</span></>}</div>
                   <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.model || "—"}</span>{a.reasoning && a.role !== "implementation" && <span className="sub">{effortLabel(a.reasoning)}</span>}{a.fast && <span className="chip">Fast</span>}</div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 12 }}>
@@ -414,10 +434,12 @@ export function AgentsPage() {
           </div>
           <section className="card pad stack fade-in" style={{ gap: 18 }} key={sel.id} aria-label="Agent detail">
             <div className="row wrap" style={{ gap: 12 }}>
-              <div className="grow"><div className="row"><h2 className="h1">{sel.name}</h2><span className="chip">{sel.role === "custom" ? sel.customRole || "Custom" : roleLabel[sel.role]}</span></div><div className="sub">{cliOf(sel)?.name}{sel.provider ? ` · ${sel.provider}` : ""}</div></div>
+              <div className="grow"><div className="row"><h2 className="h1">{sel.name}</h2><span className="chip">{sel.role === "custom" ? roleName(sel) : roleLabel[sel.role]}</span></div><div className="sub">{cliOf(sel)?.name}{sel.provider ? ` · ${sel.provider}` : ""}</div></div>
               <label className="row" style={{ gap: 10 }}><span className="sub">{sel.enabled ? "Enabled" : "Disabled"}</span><Toggle on={sel.enabled} onChange={(v) => save({ ...sel, enabled: v })} label="Agent enabled" /></label>
             </div>
-            {sel.role === "custom" && <div className="banner"><Icon name="warn" className="warn" /><span>The current engine runs only Implementation, QA, Assessment and Elevation. Custom-role agents are saved for future engine support and are not launched.</span></div>}
+            {sel.role === "custom" && (selRole
+              ? <div className="banner"><Icon name="workflow" className="info" /><span>Runs the workflow role <b>{selRole.name}</b> ({stageLabel(selRole.stage).toLowerCase()}{selRole.gate ? ", gate" : ""}){selRole.enabled ? "" : ", which is disabled"}. <a onClick={() => go("workflow")}>Open in Workflow</a></span></div>
+              : <div className="banner warnb"><Icon name="warn" className="warn" /><span>Not linked to a workflow role, so the engine doesn't run it. Pick a role below or create one in <a onClick={() => go("workflow")}>Workflow</a>.</span></div>)}
             <Tabs label="Agent sections" small value={tab} onChange={setTab} options={[{ value: "config", label: "Configuration" }, { value: "activity", label: "Activity" }]} />
             {tab === "config" ? <AgentForm agent={sel} onSaved={save} onDelete={() => setDeleting(true)} /> : <AgentActivity agent={sel} />}
           </section>

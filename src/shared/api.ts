@@ -14,6 +14,7 @@ import type {
   SkillInfo,
   UpdateStatus,
   UsageSummary,
+  WorkflowRole,
 } from "./types";
 
 export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve";
@@ -24,7 +25,24 @@ export interface LaunchCheck {
   warnings: string[];
   summary: { implementation: string; orchestrator: string };
   args: string[];
+  /** Workflow roles the engine will run (written to <state>/workflow-roles.json at start). */
+  roles: EngineRoleEntry[];
 }
+
+/** One entry of the engine's --roles-file. */
+export interface EngineRoleEntry {
+  id: string;
+  name: string;
+  stage: WorkflowRole["stage"];
+  gate: boolean;
+  cli: "codex" | "claude";
+  model?: string;
+  effort?: string;
+  fast: boolean;
+  instructions: string;
+}
+
+export type RoleDraft = Omit<WorkflowRole, "dir" | "warnings" | "id"> & { id?: string };
 
 export interface HistoryEntry {
   taskId: string;
@@ -70,6 +88,10 @@ export interface DesktopApi {
   engineLog(projectId: string): Promise<string>;
   skills(): Promise<SkillInfo[]>;
   importSkillFolder(): Promise<SkillInfo[]>;
+  roles(): Promise<WorkflowRole[]>;
+  saveRole(role: RoleDraft): Promise<WorkflowRole[]>;
+  deleteRole(id: string): Promise<WorkflowRole[]>;
+  importRoleFolder(): Promise<{ roles: WorkflowRole[]; imported: number }>;
   openPath(target: string): Promise<void>;
   limits(): Promise<LimitsState>;
   refreshLimits(provider: "codex" | "claude"): Promise<LimitsState>;

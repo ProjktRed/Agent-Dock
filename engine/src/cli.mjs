@@ -12,6 +12,8 @@ import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { prepareClineRuntime } from "./cline-runtime-config.mjs";
+import { TUNING, useTuning } from "./engine-tuning.mjs";
+import { createCloudImplementation, createRoles } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 
@@ -28,34 +30,45 @@ const pollMs = Number(options["poll-seconds"] ?? 2) * 1000;
 if (!Number.isFinite(pollMs) || pollMs < 100) throw new Error("Invalid polling interval");
 const initialTask = options.task ? JSON.parse(await readFile(path.resolve(options.task), "utf8")) : null;
 if (initialTask) validateTask(initialTask);
-const requestedProvider = options.provider;
-const requestedModel = options.model;
-const clineRuntime = await prepareClineRuntime({
-  stateDir,
-  provider: requestedProvider,
-  model: requestedModel,
-  contextTokens: options.clineContextTokens,
-  maxOutputTokens: options.clineMaxOutputTokens,
-  timeoutSeconds: options.timeoutSeconds,
-  llamaCppModelsDir: options.llamacppModelsDir,
-  ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
-  thinking: options.clineThinking,
-});
-const provider = clineRuntime.provider;
-const model = clineRuntime.model;
-console.log(JSON.stringify({
-  localModelRuntime: {
-    requestedProvider: clineRuntime.requestedProvider,
-    effectiveProvider: provider,
-    endpoint: clineRuntime.baseUrl ?? null,
-    port: clineRuntime.port ?? null,
-    model,
+useTuning(options.tuning);
+console.log(JSON.stringify({ tuning: TUNING }));
+// Implementation: Cline (local provider) by default, or Codex / Claude Code (--implementation-cli).
+const cloudImplementation = await createCloudImplementation(options, { stateDir, workspace });
+let clineRuntime = null;
+let provider;
+let model;
+if (cloudImplementation) {
+  provider = cloudImplementation.provider;
+  model = cloudImplementation.model;
+  console.log(JSON.stringify({ implementation: options.implementation }));
+} else {
+  clineRuntime = await prepareClineRuntime({
+    stateDir,
+    provider: options.provider,
+    model: options.model,
     contextTokens: options.clineContextTokens,
     maxOutputTokens: options.clineMaxOutputTokens,
-    startedServer: clineRuntime.startedServer ?? false,
-    fallback: false,
-  },
-}));
+    timeoutSeconds: options.timeoutSeconds,
+    llamaCppModelsDir: options.llamacppModelsDir,
+    ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
+    thinking: options.clineThinking,
+  });
+  provider = clineRuntime.provider;
+  model = clineRuntime.model;
+  console.log(JSON.stringify({
+    localModelRuntime: {
+      requestedProvider: clineRuntime.requestedProvider,
+      effectiveProvider: provider,
+      endpoint: clineRuntime.baseUrl ?? null,
+      port: clineRuntime.port ?? null,
+      model,
+      contextTokens: options.clineContextTokens,
+      maxOutputTokens: options.clineMaxOutputTokens,
+      startedServer: clineRuntime.startedServer ?? false,
+      fallback: false,
+    },
+  }));
+}
 const useClaude = options.orchestrator === "claude";
 if (options.orchestrator && !["codex", "claude"].includes(options.orchestrator)) throw new Error("--orchestrator must be codex or claude");
 let codexLauncher = null;
@@ -75,8 +88,10 @@ const mixed = isMixed(clis);
 if (mixed) useMixedDefaults(clis);
 useRoleOverrides(options.roleOverrides);
 console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { cli: clis[role], model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
+const { roles, runRole } = await createRoles(options, { stateDir, workspace });
+if (roles.length) console.log(JSON.stringify({ workflowRoles: roles.map(({ instructions: _text, ...role }) => role) }));
 const state = new DashboardState({ stateDir });
-const worker = new ClineCliWorker({
+const worker = cloudImplementation?.worker ?? new ClineCliWorker({
   toolGuard: options.toolGuard,
   thinking: options.clineThinking,
   stateDir, workspace, clineJs: options["cline-js"],
@@ -132,6 +147,7 @@ try {
     onTask: (task) => state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }),
     onEvent: (event) => state.record(event),
     readControl: () => state.readControl(), pendingCodex,
+    roles, runRole,
   });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), result);
   console.log(JSON.stringify(result));

@@ -281,7 +281,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .colb { flex: 1; display: flex; flex-direction: column-reverse; gap: 2px; min-width: 6px; height: 100%; justify-content: flex-start; }
 .colb i { display: block; border-radius: 3px; }
 .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
-.c1 { background: #82a9e8; } .c2 { background: #ad9ada; } .c3 { background: #70c7a5; } .c4 { background: #dab777; } .c5 { background: #e8a87c; }
+.c1 { background: #82a9e8; } .c2 { background: #ad9ada; } .c3 { background: #70c7a5; } .c4 { background: #dab777; } .c5 { background: #e8a87c; } .c6 { background: #d98291; }
 .ctx { position: relative; height: 10px; border-radius: 5px; background: var(--b); box-shadow: var(--in-s); }
 .ctx .cfg { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: rgba(130, 169, 232, 0.25); }
 .ctx .cap { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--t); border-radius: 1px; }
@@ -338,3 +338,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .main { padding: 16px; }
   .grid-f { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Workflow pipeline */
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.flow-step { display: flex; flex-direction: column; gap: 3px; min-width: 132px; max-width: 200px; padding: 10px 14px; border: 0; border-radius: 12px; background: var(--b); box-shadow: var(--out-s); color: var(--t); text-align: left; }
+.flow-step b { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-step.custom { cursor: pointer; box-shadow: var(--out-s), inset 0 0 0 1.5px color-mix(in srgb, var(--a) 55%, transparent); }
+.flow-step.custom:hover b { color: var(--a); }
+.flow-step.custom.on { box-shadow: var(--in-s), var(--ring); }
+.flow-step.custom.off { opacity: 0.55; }
+.flow-step.end { box-shadow: none; border: 1.5px dashed rgba(148, 168, 191, 0.35); background: transparent; }
+.flow-arrow { align-self: center; color: var(--t2); font-size: 15px; }

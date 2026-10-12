@@ -6,6 +6,9 @@ import { readNdjsonTail } from "./json-file";
 /** Role of one orchestrator invocation, from the opening line the engine writes into prompt.txt. */
 export function classifyPrompt(prompt: string): TokenRecord["role"] {
   const head = prompt.slice(0, 240);
+  // Checked first: role names are user text and may contain words like "QA".
+  if (/^You are the implementation worker/i.test(head)) return "implementation";
+  if (/^You are .{1,120}?, a custom workflow role/i.test(head)) return "custom";
   if (/^You are Resolver/i.test(head)) return "resolver";
   if (/reassessment|^You are Sol\b|Elevation|Astra/i.test(head)) return "elevation";
   if (/\bQA\b/.test(head)) return "qa";

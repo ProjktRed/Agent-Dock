@@ -38,7 +38,7 @@ export interface Agent {
   role: Role;
   customRole?: string;
   cliId: string;
-  /** Implementation agents only: the local provider Cline is pointed at. */
+  /** Implementation agents on Cline only: the local provider Cline is pointed at. Codex / Claude Code implementation agents use model, reasoning and fast instead. */
   provider?: "llamacpp" | "ollama";
   model: string;
   reasoning?: string;
@@ -152,6 +152,8 @@ export interface Settings {
     /** Claude Code get_usage polling (free). Replaces the old paid-probe interval claudeProbeMinutes. */
     claudePollMinutes: number;
   };
+  /** Applied only with engine guardrails off. */
+  tuning: EngineTuning;
   advanced: {
     nodeRuntime: "system" | "electron";
     debug: boolean;
@@ -359,7 +361,7 @@ export interface ProjectStatus {
 
 export interface TokenRecord {
   timestamp: string;
-  role: "implementation" | "qa" | "assessment" | "elevation" | "resolver";
+  role: "implementation" | "qa" | "assessment" | "elevation" | "resolver" | "custom";
   provider: string;
   model: string | null;
   input: number;
@@ -374,6 +376,37 @@ export interface UsageSummary {
   compactions: number;
   sessionStartedAt: string | null;
   limit: { message: string | null; retryAt: string | null };
+}
+
+/** Where a custom workflow role runs in the loop. Roles are read-only. */
+export type RoleStage = "before-implementation" | "before-qa" | "after-pass";
+
+/** A user-defined workflow role (ROLE.md under <userData>/roles/<id>). Agents with role "custom" and customRole = id run it. */
+export interface WorkflowRole {
+  id: string;
+  name: string;
+  description: string;
+  stage: RoleStage;
+  /** Before QA only: a "changes-needed" verdict sends the change back for correction instead of to QA. */
+  gate: boolean;
+  enabled: boolean;
+  instructions: string;
+  dir: string;
+  warnings: string[];
+}
+
+/** Loop limits that are fixed with engine guardrails on. Defaults equal the engine's built-in values. */
+export interface EngineTuning {
+  elevationAfter: number;
+  resolverMaxStrategies: number;
+  /** 0 = no limit. */
+  maxCorrections: number;
+  taskMaxFiles: number;
+  taskMaxNewLines: number;
+  taskMaxReadFiles: number;
+  /** Used for new Implementation agents; null = the engine default. */
+  defaultContextTokens: number | null;
+  defaultMaxOutputTokens: number | null;
 }
 
 export interface SkillInfo {
@@ -398,6 +431,7 @@ export interface AppSnapshot {
   clis: CliConnection[];
   settings: Settings;
   engine: EngineInfo;
+  roles: WorkflowRole[];
   paths: { config: string; projectState: string };
   /** package.json version of the running app, e.g. 0.13.0 */
   version: string;

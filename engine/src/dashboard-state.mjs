@@ -102,7 +102,9 @@ export class DashboardState {
       next.activeReasoningModel=event.model;
       next.assessmentRunning=next.activeReasoningRole==='Assessment';
     }
-    if(['codex-finished','codex-qa-finished','sol-reassessment-finished','resolver-finished','resolver-error','blocked','waiting-for-codex'].includes(event.type)) {
+    if(event.type==='role-started'){next.activeReasoningRole=event.roleName??'Workflow role';next.activeReasoningModel=event.model;next.assessmentRunning=false;}
+    if(event.type==='role-result'||event.type==='role-error')(next.roleResults??=[]).push({roleName:event.roleName,stage:event.stage,verdict:event.verdict??null,summary:event.summary??event.message??'',error:event.type==='role-error',at:new Date().toISOString()}),next.roleResults=next.roleResults.slice(-20);
+    if(['codex-finished','codex-qa-finished','sol-reassessment-finished','resolver-finished','resolver-error','blocked','waiting-for-codex','role-finished','role-error'].includes(event.type)) {
       next.activeReasoningRole=null;next.assessmentRunning=false;
     }
     if (event.attempt !== undefined) next.attempt = event.attempt;
@@ -157,7 +159,7 @@ export class DashboardState {
       next.qaStatus = "fail";
       next.manualReview = false;
     }
-    if (["codex-finished", "codex-qa-finished", "sol-reassessment-finished", "resolver-finished"].includes(event.type) && event.codexOperation?.status === "completed") {
+    if (["codex-finished", "codex-qa-finished", "sol-reassessment-finished", "resolver-finished", "role-finished"].includes(event.type) && event.codexOperation?.status === "completed") {
       next.codexOperation = event.codexOperation;
     } else if (["codex-assessing", "codex-qa-started", "cline-started", "qa-pass", "manual-review", "loop-complete"].includes(event.type)) {
       next.codexOperation = null;
@@ -179,6 +181,7 @@ export class DashboardState {
       "qa-evidence-started": ["codex-qa", "idle", "running", false],
       "qa-evidence-finished": ["codex-qa", "idle", "running", false],
       "qa-fail": ["fail", "idle", "fail", false],
+      "role-gate-failed": ["fail", "idle", "fail", false],
       retry: ["retry", "idle", "waiting", false],
       "qa-pass": ["pass", "idle", "pass", false],
       "manual-review": [recoveryClassification({output:event.qa,manualReviewCause:event.manualReviewCause})==='blocked'?'BLOCKED':'USER_ATTENTION', "idle", "fail", false],

@@ -7,7 +7,8 @@ agents, CLI connections and settings, and monitor runs with progress, usage and 
 
 The automation itself is the Codex ↔ Cline loop engine, vendored in
 [`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)), extended with
-per-role model, reasoning effort and speed flags. The app launches it as
+per-role model, reasoning effort and speed flags, implementation through Codex or Claude Code,
+custom workflow roles and adjustable loop limits. The app launches it as
 a separate process per project and reads the engine's `.state` files. It never re-implements
 the loop.
 
@@ -84,10 +85,11 @@ src/main/        Electron main process (Node)
   engine.ts      spawns engine/src/cli.mjs per project, control (pause/resume/stop/elevate/resolve)
   store.ts       JSON config in %APPDATA%\Agent Dock\config, secrets via safeStorage (DPAPI)
   projects.ts    register / clone / create workspaces, task history from activity.ndjson
+  roles.ts       workflow roles: ROLE.md files under %APPDATA%\Agent Dock\roles
   lib/           pure logic: engine-args, status mapping, plan parser, git, CLI checks, usage
 src/preload/     contextBridge API (window.api), typed by src/shared/api.ts
 src/renderer/    React UI: Overview (Progress, Usage limits, Token consumption), Projects,
-                 Agents, CLIs, Settings, first-launch setup
+                 Workflow, Agents, CLIs, Settings, first-launch setup
 src/shared/      types and defaults shared by all three
 engine/          vendored engine (+ per-role model flags), its tests, skills and fixtures
 tests/           vitest unit tests for the main-process logic
@@ -100,6 +102,9 @@ tests/           vitest unit tests for the main-process logic
 | Project path, objective, state folder | `--workspace`, `--objective`, `--state-dir` |
 | Implementation agent: provider, model, context, max output, timeout | `--provider`, `--model`, `--cline-context-tokens`, `--cline-max-output-tokens`, `--timeout-seconds` |
 | Implementation agent: thinking (Cline `--thinking`) | `--cline-thinking none\|low\|medium\|high\|xhigh` |
+| Implementation agent on Codex CLI or Claude Code: model, effort, speed, timeout | `--implementation-cli codex\|claude`, `--implementation-model`, `--implementation-effort`, `--implementation-fast`, `--timeout-seconds` |
+| Workflow roles (Workflow tab) with an enabled agent | `--roles-file <state>\workflow-roles.json` (written at start) |
+| Engine guardrails off: loop limits (Settings › Workflow rules, Context limits) that differ from the defaults | `--elevation-after`, `--max-corrections`, `--resolver-max-strategies`, `--task-max-files`, `--task-max-new-lines`, `--task-max-read-files` |
 | llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` → launcher `-ModelsDir` |
 | QA agent's CLI (Codex or Claude Code) | `--orchestrator codex\|claude` (+ `--codex-exe` / `--claude-command` for a custom path) |
 | QA, Assessment, Elevation agents: model, reasoning effort, speed (Resolver follows Assessment) | `--qa-model` / `--qa-effort` / `--qa-fast`, `--assessment-*`, `--resolver-*`, `--elevate-*` |
@@ -160,20 +165,57 @@ or quitting the app can leave it running safely; the app reattaches on the next 
 - Every setting carries a label: **Enforced by engine**, **Applied by app**, or **Saved only**
   (stored for future engine support).
 - **Engine guardrails** (Settings › Advanced, and the last setup step; on by default): keep QA,
-  Assessment and Elevation on one orchestrator CLI with models that CLI lists. Off (asks for
-  confirmation): each role may use its own CLI and any model, effort or speed. The engine then
-  routes each role to its own worker (Codex or Claude Code, one shared lock so calls stay
-  sequential), and launch checks become warnings. The engine's safety checks (QA-only commits,
-  scope and HEAD verification, stops on unsafe state) are unaffected.
+  Assessment and Elevation on one orchestrator CLI with models that CLI lists, and keep the
+  engine's loop limits fixed. Off (asks for confirmation): each role may use its own CLI and any
+  model, effort or speed (the engine routes each role to its own worker, one shared lock so calls
+  stay sequential), the loop limits become editable, and launch checks become warnings. The
+  engine's safety checks (QA-only commits, scope and HEAD verification, stops on unsafe state)
+  are unaffected.
+- **Loop limits** (editable with guardrails off; the defaults are the engine's built-in values):
+  automatic Elevation after 3 attempted corrections; no correction limit (with one, the loop stops
+  for you after that many corrections on a task, and Resume allows another round); 3 Resolver
+  strategies per task; Assessment's task sizing for the worker (1 file per task, new files under
+  about 200 lines, at most 3 files to read); default context and output for new Cline agents.
+- **Implementation on any CLI**: the Implementation agent can use Cline (llama.cpp or Ollama),
+  Codex CLI or Claude Code. File changes are limited to the task's allowed paths while the worker
+  runs, not only checked afterwards:
+  - **Claude Code**: `dontAsk` permissions with `Edit`/`Write` allowed only for the task's paths.
+  - **Codex**: a `PreToolUse` hook the engine writes for each run (`codex-scope-hook.mjs`) blocks
+    any patch outside the task's paths. Because the engine generates that hook itself, Codex is
+    started with `--dangerously-bypass-hook-trust` for it; every decision is logged next to the
+    prompt, and an attempt in which Codex used tools without the hook running is refused.
+
+  With the tool guard on, the shell is also limited to the task's check command, lint/typecheck and
+  read-only commands (with it off, the shell is open, so shell commands could still write files).
+  The worker is told never to commit, git write commands are denied, and Node's scope and HEAD
+  checks plus independent QA still gate every change. An interrupted implementation is never
+  replayed (the same rule as for Cline).
+- **Workflow roles** (Workflow tab): your own read-only roles at three points in the loop.
+  - **Before implementation**: runs once per task; its guidance is added to every worker prompt
+    for that task.
+  - **Before QA**: reviews each finished attempt; QA and Assessment read its findings. As a
+    **gate**, "changes needed" sends the attempt back for correction instead of to QA, and a gate
+    that cannot run blocks the task rather than letting the change through unreviewed.
+  - **After QA passes**: writes a report to `role-reports.ndjson` in the project's state folder.
+
+  Each role is a `ROLE.md` (frontmatter `name`, `description`, `stage`, `gate`, `enabled`, then the
+  instructions) under `%APPDATA%\Agent Dock\roles\<id>`; import a folder of them from the Workflow
+  tab. A role runs on the agent assigned to it: an agent with the role "Workflow role" on Codex CLI
+  or Claude Code, with its own model, effort and speed. Roles go through the orchestrator lock, are
+  checkpointed like other engine operations (a resumed run never repeats a finished role), wait on
+  usage limits like QA, and never edit files, commit or change HEAD. A role without an enabled
+  agent is skipped, with a warning at start.
 
 ## Known limitations
 
 - The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
   whichever model runs the role.
 - With engine guardrails on, QA, Assessment and Elevation share one orchestrator CLI.
-- Custom roles can pick a CLI, model, effort and speed, but the engine has no slot that runs them.
-- Custom roles, agent custom instructions, extra skills and protected paths are saved only;
-  the engine does not read them yet.
+- Workflow roles are read-only reviewers and planners; they cannot edit files.
+- Agent custom instructions, extra skills and protected paths are saved only; the engine does not
+  read them yet.
+- A usage limit hit during a Codex or Claude Code implementation stops that attempt. Because an
+  interrupted implementation is never replayed, the task then needs Resolve or your decision.
 - llama.cpp is only started automatically when a launcher script is set (Settings › Advanced ›
   llama.cpp launcher; passed as `--llamacpp-launcher`). Router mode and thinking expect the
   launcher to accept `-ModelsDir`, `-Reasoning` and `-ReasoningEffort` and pass them on to

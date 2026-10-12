@@ -1,5 +1,7 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Agent, CliConnection, Project, Settings } from "@shared/types";
+import type { Agent, CliConnection, Project, Settings, WorkflowRole } from "@shared/types";
+import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
 import { buildStatus, cycleStage, deriveRunState } from "../src/main/lib/status";
 import { agentForRole, buildEngineArgs } from "../src/main/lib/engine-args";
@@ -355,5 +357,54 @@ describe("provider limits", () => {
     expect(r.windows.map((w) => [w.label, w.usedPercent])).toEqual([["5-hour window", 96], ["Weekly", 38]]);
     expect(r.extras).toEqual([{ label: "Overage", value: "Not available" }]);
     expect(lastRateLimitEvent('{"type":"result"}')).toBeNull();
+  });
+});
+
+describe("workflow roles, cloud implementation and loop limits", () => {
+  const role = (over: Partial<WorkflowRole> = {}): WorkflowRole => ({ id: "security-review", name: "Security review", description: "", stage: "before-qa", gate: true, enabled: true, instructions: "Look for injection.", dir: "", warnings: [], ...over });
+  const flag = (args: string[], name: string) => args[args.indexOf(name) + 1];
+
+  it("runs Implementation on Codex or Claude Code with its model, effort and speed", () => {
+    const list = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: "claude", provider: undefined, model: "sonnet", reasoning: "high", fast: true } : a));
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    expect(plan.problems).toEqual([]);
+    expect([flag(plan.args, "--implementation-cli"), flag(plan.args, "--implementation-model"), flag(plan.args, "--implementation-effort"), flag(plan.args, "--implementation-fast")]).toEqual(["claude", "sonnet", "high", "true"]);
+    expect(plan.args).not.toContain("--provider");
+    expect(plan.summary.implementation).toMatch(/Claude Code · sonnet/);
+    const wrong = buildEngineArgs({ project: project(), agents: list.map((a) => (a.role === "implementation" ? { ...a, model: "gpt-6.1-sol" } : a)), clis: clis(), settings: settings() });
+    expect(wrong.problems.join(" ")).toMatch(/not a Claude Code model/);
+  });
+
+  it("passes enabled roles with an agent as a roles file and skips the rest with a warning", () => {
+    const list: Agent[] = [...agents(), { ...agents().find((a) => a.role === "qa")!, id: "sec", name: "Security agent", role: "custom", customRole: "security-review", model: "gpt-6.1-sol", reasoning: "high" }];
+    const roles = [role(), role({ id: "docs", name: "Docs", stage: "after-pass", gate: false }), role({ id: "off", name: "Off", enabled: false })];
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles });
+    expect(plan.roles).toEqual([{ id: "security-review", name: "Security review", stage: "before-qa", gate: true, cli: "codex", model: "gpt-6.1-sol", effort: "high", fast: false, instructions: "Look for injection." }]);
+    expect(flag(plan.args, "--roles-file")).toBe(path.join("C:\\state\\p1", "workflow-roles.json"));
+    expect(plan.warnings.join(" ")).toMatch(/“Docs” has no enabled agent/);
+    expect(plan.problems).toEqual([]);
+    const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings(), roles: [] });
+    expect(none.args).not.toContain("--roles-file");
+  });
+
+  it("passes loop limits only with guardrails off, and only those that differ from the engine defaults", () => {
+    const s = settings();
+    s.tuning = { ...s.tuning, elevationAfter: 5, maxCorrections: 8, taskMaxFiles: 1 };
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args).not.toContain("--elevation-after");
+    s.advanced.engineGuardrails = false;
+    const args = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect([flag(args, "--elevation-after"), flag(args, "--max-corrections")]).toEqual(["5", "8"]);
+    expect(args).not.toContain("--task-max-files");
+  });
+
+  it("ROLE.md round-trips, ids come from names, and a gate only applies before QA", () => {
+    const text = serializeRole({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: true, enabled: true, instructions: "Look for injection.\n" });
+    const parsed = parseRoleFile(text, "security-review", "dir");
+    expect(parsed).toMatchObject({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: false, enabled: true, instructions: "Look for injection.", warnings: [] });
+    expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: true }), "x", "d").gate).toBe(true);
+    expect(parseRoleFile("---\nname: X\nstage: sometime\n---\nDo it", "x", "d").warnings[0]).toMatch(/Unknown stage/);
+    expect(roleSlug("Security Review (strict)!")).toBe("security-review-strict");
+    expect(classifyPrompt("You are Strict QA bot, a custom workflow role in a bounded automation loop")).toBe("custom");
+    expect(classifyPrompt("You are the implementation worker in a bounded automation loop.")).toBe("implementation");
   });
 });

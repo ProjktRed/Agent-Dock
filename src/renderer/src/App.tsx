@@ -4,6 +4,7 @@ import { Sidebar, StatusBar, TitleBar, Toasts } from "./components/Shell";
 import { OverviewPage } from "./pages/overview/Overview";
 import { ProjectsPage } from "./pages/projects/Projects";
 import { AgentsPage } from "./pages/Agents";
+import { WorkflowPage } from "./pages/Workflow";
 import { ClisPage } from "./pages/clis/Clis";
 import { SettingsPage } from "./pages/Settings";
 import { FirstLaunch } from "./pages/FirstLaunch";
@@ -54,6 +55,7 @@ export function App() {
             <>
               {route === "overview" && <OverviewPage />}
               {route === "projects" && <ProjectsPage />}
+              {route === "workflow" && <WorkflowPage />}
               {route === "agents" && <AgentsPage />}
               {route === "clis" && <ClisPage />}
               {route === "settings" && <SettingsPage />}

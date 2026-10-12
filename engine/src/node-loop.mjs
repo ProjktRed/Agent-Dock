@@ -50,8 +50,9 @@ export async function runRecoverableCodex({
     operationId: record.operationId ?? randomUUID(),
     status: record.status ?? "pending",
   };
-  const startType = operation === "resolver" ? "resolver-started" : operation === "qa" ? "codex-qa-started" : operation === "elevate" ? "sol-reassessment-started" : "codex-assessing";
-  const finishType = operation === "resolver" ? "resolver-finished" : operation === "qa" ? "codex-qa-finished" : operation === "elevate" ? "sol-reassessment-finished" : "codex-finished";
+  const customRole = operation.startsWith("role:");
+  const startType = customRole ? "role-started" : operation === "resolver" ? "resolver-started" : operation === "qa" ? "codex-qa-started" : operation === "elevate" ? "sol-reassessment-started" : "codex-assessing";
+  const finishType = customRole ? "role-finished" : operation === "resolver" ? "resolver-finished" : operation === "qa" ? "codex-qa-finished" : operation === "elevate" ? "sol-reassessment-finished" : "codex-finished";
   let waitBeforeInvoke = Boolean(pending?.limit);
   let waitingResumeGeneration = pending?.waitingResumeGeneration;
 
@@ -72,7 +73,8 @@ export async function runRecoverableCodex({
         diffByteCount: inputs.diff?.bytes ?? 0,
         commands: inputs.qaEvidence?.command?.command ? [inputs.qaEvidence.command.command] : [],
       } : operation === "elevate" ? { startedAt: new Date(operationStarted).toISOString(), model: roleModel("elevate"), reasoningEffort: ROLE_EFFORT.elevate } : {};
-      await emit(startType, { ...qaTelemetry, operation, startedAt:new Date(operationStarted).toISOString(), model: roleModel(role), reasoningEffort: ROLE_EFFORT[role], automatic: context.automatic, triggeredBy: context.triggeredBy, operationId: record.operationId });
+      if (customRole) await emit(startType, { operation, roleName: context.roleName, stage: context.roleStage, model: context.roleModel ?? null, startedAt: new Date(operationStarted).toISOString(), operationId: record.operationId });
+      else await emit(startType, { ...qaTelemetry, operation, startedAt:new Date(operationStarted).toISOString(), model: roleModel(role), reasoningEffort: ROLE_EFFORT[role], automatic: context.automatic, triggeredBy: context.triggeredBy, operationId: record.operationId });
       let result;
       try {
         result = await invoke(inputs);

@@ -6,8 +6,8 @@ import { agentForRoleClient } from "../../lib/agents";
 import { Bar, Empty, ProvenanceChip, Tabs, Toggle } from "../../components/ui";
 
 type Range = "task" | "session" | "day" | "week" | "month";
-const ROLES: TokenRecord["role"][] = ["implementation", "qa", "assessment", "elevation", "resolver"];
-const SW: Record<TokenRecord["role"], string> = { implementation: "c1", qa: "c2", assessment: "c3", elevation: "c4", resolver: "c5" };
+const ROLES: TokenRecord["role"][] = ["implementation", "qa", "assessment", "elevation", "resolver", "custom"];
+const SW: Record<TokenRecord["role"], string> = { implementation: "c1", qa: "c2", assessment: "c3", elevation: "c4", resolver: "c5", custom: "c6" };
 
 function bucketise(records: TokenRecord[], range: Range, since: number) {
   const span = Date.now() - since;
@@ -78,6 +78,7 @@ export function TokensTab() {
     if (r.role === "implementation") return r.rs.at(-1)?.model ?? impl?.model ?? "—";
     const recorded = r.rs.at(-1)?.model;
     if (recorded) return recorded;
+    if (r.role === "custom") return "Per role";
     const configured = agentForRoleClient(r.role === "resolver" ? "assessment" : r.role, activeProject, snap.agents)?.model;
     if (configured) return configured;
     const models = r.rs.at(-1)?.provider.startsWith("Anthropic") ? snap.engine.orchestratorModels.claude : snap.engine.orchestratorModels.codex;

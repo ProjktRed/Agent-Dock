@@ -10,6 +10,14 @@ const paths: Record<string, JSX.Element> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  workflow: (
+    <>
+      <rect x="3" y="4" width="6" height="5" rx="1.5" />
+      <rect x="15" y="4" width="6" height="5" rx="1.5" />
+      <rect x="9" y="15" width="6" height="5" rx="1.5" />
+      <path d="M9 6.5h6M18 9v2.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 11.5V9M12 13v2" />
+    </>
+  ),
   agent: (
     <>
       <rect x="4" y="8" width="16" height="11" rx="3" />

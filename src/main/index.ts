@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
 import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, Project, ProjectStatus, Settings, UsageSummary } from "@shared/types";
@@ -11,6 +11,7 @@ import { buildEngineArgs } from "./lib/engine-args";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { addProject, inspectDirectory, taskHistory } from "./projects";
 import { listSkills } from "./skills";
+import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
@@ -22,6 +23,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(app.getAppPath(), "engine");
 const store = new AppStore(app.getPath("userData"));
 const stateRoot = path.join(app.getPath("userData"), "projects");
+const roles = new RolesService(path.join(app.getPath("userData"), "roles"));
 let engineInfo: EngineInfo;
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -126,7 +128,16 @@ function osNotify(title: string, body: string) {
 }
 
 function launchCheck(p: Project): LaunchCheck {
-  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis, settings: store.data.settings });
+  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis, settings: store.data.settings, roles: roles.roles });
+}
+
+/** Engine arguments for a start; writes the workflow roles the engine reads (--roles-file) into the project's state folder. */
+async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]> {
+  if (check.roles.length) {
+    await mkdir(p.stateDir, { recursive: true });
+    await writeFile(path.join(p.stateDir, "workflow-roles.json"), JSON.stringify(check.roles, null, 2));
+  }
+  return check.args;
 }
 
 // ---------- status polling, notifications and app-enforced workflow rules ----------
@@ -140,7 +151,7 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA after ${event.attempt ?? "?"} attempt(s).`);
       const workflow = { ...settings.workflow, ...p.workflowOverrides };
       // Automatic continuation off: hold at the next task boundary (the engine's Pause After Task).
-      if (!workflow.autoContinue && next.processAlive) await engine.control(p, "pause", launchCheck(p).args).catch(() => {});
+      if (!workflow.autoContinue && next.processAlive) await engine.control(p, "pause", await launchArgs(p)).catch(() => {});
     }
     if (event.type === "cline-message" && /^auto-compact(ed|ing)$/.test(String(event.message ?? "")) && settings.attention.informational === "windows") {
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");
@@ -257,7 +268,7 @@ function createTray() {
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, paths: { config: store.dir, projectState: stateRoot }, version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot }, version: app.getVersion() };
 }
 
 async function usage(projectId: string | null): Promise<UsageSummary> {
@@ -384,9 +395,9 @@ function registerIpc() {
     const check = launchCheck(p);
     const starting = ["start", "resume", "resolve"].includes(action) && !engine.isAlive(id);
     if (starting && check.problems.length) throw new Error(check.problems.join(" "));
-    if (starting && check.warnings.length) notice({ kind: "warning", message: `Engine guardrails are off: ${check.warnings.join(" ")}` });
+    if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
     const wasAlive = engine.isAlive(id);
-    await engine.control(p, action, check.args);
+    await engine.control(p, action, await launchArgs(p, check));
     if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
       // The attached task is a one-shot first task.
       store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
@@ -405,6 +416,14 @@ function registerIpc() {
       await store.saveSettings();
     }
     return listSkills(engineDir, store.data.settings.skills.importedDirs);
+  });
+  handle("roles:list", () => roles.load());
+  handle("roles:save", (role: Parameters<RolesService["save"]>[0]) => roles.save(role));
+  handle("roles:delete", (id: string) => roles.remove(id));
+  handle("roles:import", async () => {
+    const result = await dialog.showOpenDialog(win!, { title: "Import workflow role (folder with ROLE.md)", properties: ["openDirectory"] });
+    if (result.canceled) return { roles: roles.roles, imported: 0 };
+    return roles.importFolder(result.filePaths[0]);
   });
   handle("limits:get", () => limits.state);
   handle("limits:refresh", (provider: "codex" | "claude") => limits.refresh(provider, true));
@@ -431,7 +450,7 @@ async function resumeAfterRestart() {
     const midRun = ["running", "pausing", "stopping"].includes(status.runState) || ["current-task", "cline-working", "cline-complete", "codex-qa", "retry"].includes(status.stage);
     if (!midRun) continue;
     if (mode === "auto") {
-      await engine.control(p, "resume", launchCheck(p).args).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
+      await engine.control(p, "resume", await launchArgs(p)).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
     } else if (mode === "ask") {
       const choice = await dialog.showMessageBox({
         type: "question",
@@ -441,7 +460,7 @@ async function resumeAfterRestart() {
         message: `${p.name} was mid-task when the engine stopped.`,
         detail: `Stage: ${status.stage}. Resuming continues from the engine's saved state.`,
       });
-      if (choice.response === 0) await engine.control(p, "resume", launchCheck(p).args).catch((e) => notice({ kind: "error", message: e.message }));
+      if (choice.response === 0) await engine.control(p, "resume", await launchArgs(p)).catch((e) => notice({ kind: "error", message: e.message }));
     }
   }
 }
@@ -468,7 +487,7 @@ app.on("before-quit", (event) => {
     })
     .then(async ({ response }) => {
       if (response === 2) return;
-      if (response === 1) for (const p of running) await engine.control(p, "stop", launchCheck(p).args).catch(() => {});
+      if (response === 1) for (const p of running) await engine.control(p, "stop", await launchArgs(p)).catch(() => {});
       quitting = true;
       app.quit();
     });
@@ -480,6 +499,7 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   await store.load();
+  await roles.load();
   engineInfo = await engine.info();
   const resolveOrchestrator = async (kind: "codex" | "claude") => {
     const conn = store.data.clis.find((c) => c.kind === kind);

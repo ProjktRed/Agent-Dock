@@ -1,16 +1,18 @@
 import path from 'node:path';
-import {readFile,rm} from 'node:fs/promises';
+import {appendFile,readFile,rm} from 'node:fs/promises';
 import {readWorkerCapabilities} from './cline-tool-guard.mjs';
 import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {captureGitBaseline} from './qa-runner.mjs';
 import {prepareQaPacket,collectGitEvidence,classifyQaCommand} from './qa-packet.mjs';
-import {buildInitialPrompt,buildCorrectionPrompt} from './workflow.mjs';
+import {buildInitialPrompt,buildCorrectionPrompt,describeAllowedPaths} from './workflow.mjs';
 import {readPendingCodex,runRecoverableCodex,validateTask,verifyReview} from './node-loop.mjs';
 import {ELEVATE_MODEL} from './codex-worker.mjs';
 import {correctionText,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
+import {TUNING} from './engine-tuning.mjs';
+import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReason:value.runResult?.finishReason??null,text:String(value.summary??value.runResult?.summary??value.runResult?.text??'No structured summary provided.').slice(0,2000)}});
@@ -25,9 +27,10 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
   readControl,onEvent,onTask=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
-  knowledgeFile,
+  knowledgeFile,roles=[],runRole=null,
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
+  const stageRoles=stage=>runRole?roles.filter(role=>role.stage===stage):[];
   if((await readControl()).stopAfterSafePoint){await emit('stopped');return{status:'stopped'};}
   knowledgeFile ??= path.resolve(stateDir,'..','LOCAL_WORKER_ISSUES.md');
   const file=path.join(stateDir,'current-task.json');
@@ -64,6 +67,30 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
     if(!result.stopped)pending=null;
     return result;
   };
+  // Workflow roles run read-only through the orchestrator lock. Each result is checkpointed in the
+  // recovery record, so a resumed run never repeats a finished role. An advisory role that fails to
+  // run is recorded and skipped; a gate that cannot run blocks (the change would go unreviewed).
+  const runStageRoles=async(stage,input,suffix='')=>{
+    const results=[];
+    for(const role of stageRoles(stage)){
+      const key=`${stage}:${role.id}${suffix}`;
+      r.roleResults??={};
+      if(!r.roleResults[key]){
+        let op;
+        try{op=await operation('role:'+role.id,input,value=>runRole(role,value),{roleName:role.name,roleStage:stage,roleModel:role.model});}
+        catch(error){
+          if(role.gate)throw new Error(`Workflow role ${role.name} could not run: ${error.message}`);
+          await emit('role-error',{roleId:role.id,roleName:role.name,stage,message:error.message});
+          r.roleResults[key]={error:error.message};await save();continue;
+        }
+        if(op.stopped)return{stopped:true};
+        r.roleResults[key]={result:op.result};r.lastAppliedOperationId=op.operationId;await save(true);
+        await emit('role-result',{roleId:role.id,roleName:role.name,stage,verdict:op.result.verdict,summary:op.result.summary,findings:op.result.findings});
+      }
+      if(r.roleResults[key].result)results.push({id:role.id,name:role.name,gate:role.gate,result:r.roleResults[key].result});
+    }
+    return{results};
+  };
   try {
     if(suppliedTaskChanged)return block('Cannot reconcile changed task definition with existing recovery');
     // Legacy review migration never repeats completed implementation. Recover the
@@ -86,7 +113,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       }
       if(r.phase==='blocked') return block(r.blockedReason??'Recovery is blocked');
       if(r.phase==='worker-launching'||r.phase==='worker-running') return block('Cannot reconcile interrupted local worker; implementation must not be replayed');
-      if(!['worker','evidence','qa','decision','correction-assessment','elevation','passed'].includes(r.phase))return block('Malformed recovery phase');
+      if(!['worker','evidence','review','qa','decision','correction-assessment','elevation','passed'].includes(r.phase))return block('Malformed recovery phase');
       const completedPass=(pending?.operation==='qa'&&pending.status==='completed'&&pending.result?.status==='pass')?pending.result:(r.phase==='decision'&&r.failure?.status==='pass'?r.failure:null);
       if(completedPass)await verify({workspace,baselineHead:r.baselineSha,decision:completedPass,task});
       else if(r.phase!=='passed') await reconcile(task,r.baselineSha);
@@ -141,17 +168,28 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             r.elevationFingerprint=recoveryFingerprint({task,baseline:r.baselineSha,diff:r.qaPacket.diff,failure:r.failure,corrections:r.correctionHistory});
             if(!r.elevations.includes(r.elevationFingerprint)){r.phase='elevation';r.elevationAutomatic=false;await save();}
           }
-          if(r.phase==='passed')return{status:'passed',attempts:r.attempt,qa:r.failure,history:r.history};
+          if(r.phase==='passed') {
+            if(!r.afterPassDone&&stageRoles('after-pass').length) {
+              const reports=await runStageRoles('after-pass',{task,commit:r.failure?.commit??null,qaOutput:r.failure?.output??'',attempts:r.attempt,changedFiles:r.qaPacket?.changedFiles??[]});
+              if(reports.stopped)return{status:'stopped'};
+              for(const report of reports.results)await appendFile(path.join(stateDir,'role-reports.ndjson'),JSON.stringify({at:new Date().toISOString(),taskId:task.id,role:report.name,...report.result})+'\n');
+              r.afterPassDone=true;await save();
+            }
+            return{status:'passed',attempts:r.attempt,qa:r.failure,history:r.history};
+          }
           if(r.phase==='worker') {
+            const guidance=await runStageRoles('before-implementation',{objective,task,fileStatus:describeAllowedPaths(task,workspace)});
+            if(guidance.stopped)return{status:'stopped'};
             if(codex.activeCount!==0)throw new Error('Cannot launch local worker while Codex is alive');
             await codex.assertIdle?.();
             r.scratchBaseline=await captureScratchBaseline(workspace);await save();
             const knowledge=await selectKnowledge(knowledgeFile,task.prompt+' '+(r.failure?.output??''));
             await emit('known-issues-selected',{knownIssues:[...knowledge.matchAll(/^## (.+)$/gm)].map(m=>m[1])});
-            r.promptWithKnowledge=r.prompt+(knowledge?'\n\n'+knowledge:'');
+            const roleText=roleGuidanceText(guidance.results);
+            r.promptWithKnowledge=r.prompt+(roleText?'\n\n'+roleText:'')+(knowledge?'\n\n'+knowledge:'');
             r.phase='worker-launching';await save();
             const started=Date.now();await emit('cline-started',{attempt:r.attempt,startedAt:new Date(started).toISOString()});
-            r.workerResult=compactWorkerResult(await worker.run(r.promptWithKnowledge,{
+            r.workerResult=compactWorkerResult(await worker.run(r.promptWithKnowledge,{task,
               onStart:async({pid})=>{
                 // A correction counts only once the owned worker has actually started.
                 if(r.currentCorrection&&!r.currentCorrection.attempted){r.currentCorrection.attempted=true;r.currentCorrection.attempt=r.attempt;
@@ -167,7 +205,21 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const checks={tests:'NOT RUN',typecheck:'NOT RUN',lint:'NOT RUN',build:'NOT RUN',scopeCheck:'RUNNING'},category=classifyQaCommand(task.qaCommand);if(category)checks[category]='RUNNING';
             await emit('qa-evidence-started',{attempt:r.attempt,qaChecks:checks});
             r.qaPacket=await prepareQa({task,attempt:r.attempt,baselineSha:r.baselineSha,workerResult:r.workerResult});
-            r.phase='qa';await save();await emit('qa-evidence-finished',{attempt:r.attempt,qaChecks:r.qaPacket.qaEvidence.categories,changedFileCount:r.qaPacket.changedFiles.length,diffByteCount:r.qaPacket.diff.bytes,commands:[task.qaCommand],durationMs:r.qaPacket.qaEvidence.durationMs});
+            r.phase=stageRoles('before-qa').length?'review':'qa';await save();await emit('qa-evidence-finished',{attempt:r.attempt,qaChecks:r.qaPacket.qaEvidence.categories,changedFileCount:r.qaPacket.changedFiles.length,diffByteCount:r.qaPacket.diff.bytes,commands:[task.qaCommand],durationMs:r.qaPacket.qaEvidence.durationMs});
+          }
+          if(r.phase==='review') {
+            if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');
+            const reviews=await runStageRoles('before-qa',{task,attempt:r.attempt,baselineSha:r.baselineSha,diff:r.qaPacket.diff,changedFiles:r.qaPacket.changedFiles,qaEvidence:r.qaPacket.qaEvidence,workerSummary:r.qaPacket.clineSummary??null},':'+r.attempt);
+            if(reviews.stopped)return{status:'stopped'};
+            // Reviews travel with the packet: QA and Assessment read them.
+            r.qaPacket.roleReviews=reviews.results.map(x=>({role:x.name,gate:x.gate,...x.result}));
+            const gate=reviews.results.find(x=>x.gate&&x.result.verdict==='changes-needed');
+            if(gate) {
+              r.failure={status:'fail',output:gateFailureText(gate),correction:'',commit:'',manualReviewCause:null,gateRole:gate.name};
+              await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
+              r.history.push({attempt:r.attempt,prompt:r.prompt,workerResult:r.workerResult,qa:r.failure});
+              r.phase='decision';await save();await emit('role-gate-failed',{attempt:r.attempt,roleName:gate.name,qa:r.failure.output});
+            } else {r.phase='qa';await save();}
           }
           if(r.phase==='qa') {
             if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');
@@ -193,7 +245,14 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const control=await readControl();
             const manual=manualElevation || Number(control.elevateGeneration??0)>Number(r.elevateGeneration??0);
             if(manual)r.elevateGeneration=control.elevateGeneration;
-            const auto=solReassessmentEnabled&&r.correctionCount-r.lastElevationCount>=3&&!r.elevations.includes(fingerprint);
+            const auto=solReassessmentEnabled&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
+            // Optional correction limit: stop for the user; Resume grants another round of corrections.
+            if(!manual&&!auto&&TUNING.maxCorrections>0&&r.correctionCount-(r.correctionLimitBase??0)>=TUNING.maxCorrections) {
+              r.correctionLimitBase=r.correctionCount;r.phase='correction-assessment';r.elevationAutomatic=false;r.elevationFingerprint=fingerprint;manualElevation=false;await save();
+              const reason=`Correction limit reached (${TUNING.maxCorrections} without success). Resume for another ${TUNING.maxCorrections}, or Elevate.`;
+              await emit('correction-limit',{correctionCount:r.correctionCount,limit:TUNING.maxCorrections});await emit('user-attention',{qa:reason});
+              return{status:'user-attention',output:reason};
+            }
             r.phase=manual||auto?'elevation':'correction-assessment';r.elevationAutomatic=!manual;r.elevationFingerprint=fingerprint;manualElevation=false;await save();
           }
           if(['correction-assessment','elevation'].includes(r.phase)) {

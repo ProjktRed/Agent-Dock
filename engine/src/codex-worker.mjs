@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
+import { TUNING, taskSizingText } from "./engine-tuning.mjs";
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -312,7 +313,7 @@ export class CodexWorker {
       "You are Codex performing one assessment operation. Inspect this repository and its instructions.",
       managerHandoffSkill(),
       "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
-      "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): one file per task where possible, splitting implementation and tests into sequential tasks, each new file under about 200 lines. State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most 3, with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
+      "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
       "Before returning a task, verify that allowedPaths are sufficient for every implementation change reasonably required to make qaCommand pass. Do not create a task whose required contract change predictably breaks typed fixtures or callers that the task forbids Cline to update.",
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",
@@ -342,7 +343,7 @@ export class CodexWorker {
       'Read only INPUT. Do not edit files, delete/move files, commit, change HEAD, grant permissions, launch workers or expand allowedPaths.',
       'Only Node may preserve verified current-run scratch files outside the repository. Unknown/pre-existing/modified/tracked files and Git/state/security/permission failures remain blocked.',
       'For an operational Cline editing-guard rejection with unchanged HEAD and no unexpected paths, recommend one materially different bounded tool strategy using workerCapabilities. Never authorize the rejected command, relax guards or expand scope. Supply exact allowed alternatives and preserve all prior QA findings. Assessment drafts the correction; QA still independently accepts it.',
-      'For scope failures, return correction only when verifiedScratch and headMatches support safe preservation. Otherwise diagnose the block without claiming it solved. Review previousResolverStrategies: do not repeat them. At most three different recovery strategies may be applied.',
+      'For scope failures, return correction only when verifiedScratch and headMatches support safe preservation. Otherwise diagnose the block without claiming it solved. Review previousResolverStrategies: do not repeat them. At most '+TUNING.resolverMaxStrategies+' different recovery strategies may be applied.',
       'For unsafe or unresolved conditions return blocked or insufficient-evidence, with the exact needed manual action. Never call a scope violation QA PASS.',
       'Give concise nextWorkerInstructions, including direct edits and no repository scratch/helper files. Preserve correct existing work. Return JSON and exit completely.',
       'workerCapabilities.nativeTools is the observed runtime tool list, not a wish list. An empty list is unverified. Do not prescribe absent tools. Inspect editFailures for actual failed inputs/results and current source excerpts. When the tool guard is active (workerCapabilities present), require fresh reads, unique small matches and at most 2000 characters per editor field. A broken file this task created may be overwritten completely instead of patched. Verify helper/property paths in the supplied source evidence; do not invent them.',

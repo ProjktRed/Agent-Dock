@@ -1,4 +1,7 @@
-import type { Agent, CliConnection, Project, Role, Settings, WorkflowSettings } from "@shared/types";
+import type { Agent, CliConnection, EngineTuning, Project, Role, Settings, WorkflowRole, WorkflowSettings } from "@shared/types";
+import path from "node:path";
+import type { EngineRoleEntry } from "@shared/api";
+import { DEFAULT_SETTINGS } from "@shared/defaults";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -29,8 +32,25 @@ export function wrongProviderModel(orchestrator: "codex" | "claude", model: stri
 /** Cline CLI --thinking levels (engine --cline-thinking). */
 export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
 
+/** Engine flags for loop limits that differ from the engine defaults (passed only with guardrails off). */
+export const TUNING_FLAGS: [keyof EngineTuning, string][] = [
+  ["elevationAfter", "--elevation-after"],
+  ["resolverMaxStrategies", "--resolver-max-strategies"],
+  ["maxCorrections", "--max-corrections"],
+  ["taskMaxFiles", "--task-max-files"],
+  ["taskMaxNewLines", "--task-max-new-lines"],
+  ["taskMaxReadFiles", "--task-max-read-files"],
+];
+
+/** The agent running a workflow role: an enabled agent with role "custom" whose customRole is the role's id (or its name). */
+export function agentForWorkflowRole(role: WorkflowRole, agents: Agent[]): Agent | null {
+  const name = role.name.trim().toLowerCase();
+  return agents.find((a) => a.role === "custom" && a.enabled && (a.customRole === role.id || a.customRole?.trim().toLowerCase() === name)) ?? null;
+}
+
 export interface EngineLaunchPlan {
   args: string[];
+  roles: EngineRoleEntry[];
   /** Block the start. */
   problems: string[];
   /** Shown, but the start goes ahead (engine guardrails off). */
@@ -43,15 +63,17 @@ export interface EngineLaunchPlan {
  * With engine guardrails on (default) QA, Assessment, Resolver and Elevation share one orchestrator
  * CLI and models must belong to it. With guardrails off each role may use its own CLI
  * (--<role>-cli; the engine routes each role to its worker) and those checks become warnings.
- * Implementation always runs through Cline.
+ * Implementation runs through Cline (local provider), Codex or Claude Code. Enabled workflow roles
+ * with an agent are passed as a roles file; loop limits only with guardrails off.
  */
 export function buildEngineArgs(input: {
   project: Project;
   agents: Agent[];
   clis: CliConnection[];
   settings: Settings;
+  roles?: WorkflowRole[];
 }): EngineLaunchPlan {
-  const { project, agents, clis, settings } = input;
+  const { project, agents, clis, settings, roles: workflowRoles = [] } = input;
   const problems: string[] = [];
   const warnings: string[] = [];
   const guarded = settings.advanced.engineGuardrails !== false;
@@ -70,8 +92,8 @@ export function buildEngineArgs(input: {
   const implCli = cliOf(impl);
   if (!impl) problems.push("No enabled Implementation agent.");
   else if (!impl.enabled) problems.push(`Implementation agent “${impl.name}” is disabled.`);
-  else if (implCli?.kind !== "cline") problems.push(`Implementation agent “${impl.name}” must use a Cline CLI connection (the engine implements only through Cline).`);
-  else if (!impl.provider) problems.push(`Implementation agent “${impl.name}” has no local provider (llama.cpp or Ollama).`);
+  else if (!implCli || !["cline", "codex", "claude"].includes(implCli.kind)) problems.push(`Implementation agent “${impl.name}” must use Cline, Codex CLI or Claude Code.`);
+  else if (implCli.kind === "cline" && !impl.provider) problems.push(`Implementation agent “${impl.name}” has no local provider (llama.cpp or Ollama).`);
 
   const qa = agentForRole("qa", project, agents);
   const qaCli = cliOf(qa);
@@ -98,6 +120,17 @@ export function buildEngineArgs(input: {
       guard(`Implementation model “${impl.model}” is not in the list collected from ${providerConn!.name}. Pick a model in Agents, or refresh the list in CLIs › Models.`);
     }
   }
+  const implKind = implCli?.kind === "codex" || implCli?.kind === "claude" ? implCli.kind : null;
+  if (impl && implKind) {
+    args.push("--implementation-cli", implKind, "--timeout-seconds", String(impl.timeoutSeconds));
+    const model = impl.model.trim();
+    // The implementation worker passes the model as given (no mapping of Codex default labels on Claude).
+    const wrongModel = Boolean(model) && (implKind === "claude" ? /^(gpt-|o\d|codex-)/i.test(model) : wrongProviderModel("codex", model));
+    if (wrongModel) guard(`${impl.name}: “${model}” is not a ${implKind === "claude" ? "Claude Code" : "Codex"} model.`);
+    if (model && !(guarded && wrongModel)) args.push("--implementation-model", model);
+    if (impl.reasoning && impl.reasoning !== "none") args.push("--implementation-effort", impl.reasoning);
+    args.push("--implementation-fast", String(Boolean(impl.fast)));
+  }
   args.push("--orchestrator", orchestrator);
 
   // Per-role CLI, model, effort and speed. Resolver follows the Assessment agent (the app has no Resolver role).
@@ -107,6 +140,7 @@ export function buildEngineArgs(input: {
     ["Elevation", ["elevate"], elevation?.enabled ? elevation : null],
   ];
   const usedKinds = new Set<"codex" | "claude">([orchestrator]);
+  if (implKind) usedKinds.add(implKind);
   for (const [label, flags, agent] of roles) {
     const kind = orchestratorKind(agent);
     if (!agent || !kind) continue;
@@ -127,6 +161,30 @@ export function buildEngineArgs(input: {
       args.push(`--${flag}-fast`, String(Boolean(agent.fast)));
     }
   }
+  // Workflow roles: read-only reviews run by the agent assigned to each role (Codex or Claude Code).
+  const roleEntries: EngineRoleEntry[] = [];
+  for (const role of workflowRoles.filter((r) => r.enabled)) {
+    if (!role.instructions.trim()) { warnings.push(`Workflow role “${role.name}” has no instructions and is skipped.`); continue; }
+    const agent = agentForWorkflowRole(role, agents);
+    const kind = orchestratorKind(agent);
+    if (!agent) { warnings.push(`Workflow role “${role.name}” has no enabled agent (Workflow › ${role.name} › Runs on) and is skipped.`); continue; }
+    if (!kind) { warnings.push(`Workflow role “${role.name}”: agent “${agent.name}” must use Codex CLI or Claude Code; the role is skipped.`); continue; }
+    const model = agent.model.trim();
+    if (model && wrongProviderModel(kind, model)) {
+      guard(`${agent.name}: “${model}” is not a ${kind === "claude" ? "Claude Code" : "Codex"} model.`);
+      if (guarded) continue;
+    }
+    usedKinds.add(kind);
+    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
+  }
+  if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
+  // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
+  if (!guarded) {
+    for (const [key, flag] of TUNING_FLAGS) {
+      const value = settings.tuning?.[key];
+      if (typeof value === "number" && value !== DEFAULT_SETTINGS.tuning[key]) args.push(flag, String(value));
+    }
+  }
   // Custom executable locations for every orchestrator CLI in use.
   for (const kind of usedKinds) {
     const conn = clis.find((c) => c.kind === kind);
@@ -138,10 +196,11 @@ export function buildEngineArgs(input: {
 
   return {
     args,
+    roles: roleEntries,
     problems,
     warnings,
     summary: {
-      implementation: impl ? `${impl.name} · Cline → ${impl.provider ?? "?"} · ${impl.model}` : "none",
+      implementation: impl ? (implKind ? `${impl.name} · ${implCli!.name} · ${impl.model || "CLI default"}` : `${impl.name} · Cline → ${impl.provider ?? "?"} · ${impl.model}`) : "none",
       orchestrator: qaCli ? `${qaCli.name} (${orchestrator})${usedKinds.size > 1 ? " + mixed roles" : ""}` : "none",
     },
   };

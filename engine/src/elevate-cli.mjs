@@ -13,6 +13,8 @@ import { verifyReview, runNodeLoop } from "./node-loop.mjs";
 import { ClineCliWorker } from "./cline-cli-worker.mjs";
 import { prepareClineRuntime } from "./cline-runtime-config.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
+import { useTuning } from "./engine-tuning.mjs";
+import { createCloudImplementation, createRoles } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 const exec = promisify(execFile);
@@ -23,6 +25,7 @@ const state = new DashboardState({ stateDir });
 let launchReady = false;
 
 try {
+  useTuning(options.tuning);
   const useClaude = options.orchestrator === "claude";
   let launcher = null;
   if (useClaude) {
@@ -45,9 +48,11 @@ try {
     : useClaude
     ? new ClaudeWorker({ stateDir, workspace, claudeCommand: options["claude-command"] ?? "claude", additionalWritableDirs })
     : new CodexWorker({ stateDir, workspace, launcher, windowsSandbox: options["codex-windows-sandbox"], additionalWritableDirs });
+  const cloudImplementation = await createCloudImplementation(options, { stateDir, workspace });
+  const { roles, runRole } = await createRoles(options, { stateDir, workspace });
   launchReady = true;
   let cline;
-  const worker = {
+  const worker = cloudImplementation?.worker ?? {
     withExclusive: async fn => {
       if (!cline) {
         const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds,llamaCppModelsDir:options.llamacppModelsDir,...(options.llamacppLauncher?{llamaCppLauncher:options.llamacppLauncher}:{}),thinking:options.clineThinking});
@@ -59,7 +64,7 @@ try {
     run: (...args) => cline.run(...args),
   };
   const result = await runManualElevate({
-    workspace,stateDir,codex,worker,objective:options.objective,
+    workspace,stateDir,codex,worker,objective:options.objective,roles,runRole,
     solReassessmentEnabled:options.solReassessment,
     readControl:()=>state.readControl(),onEvent:event=>state.record(event),
     pollMs:Number(options["poll-seconds"]??2)*1000,

@@ -75,6 +75,62 @@ objectives that contain double quotes:
 node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
 ```
 
+## Implementation through Codex or Claude Code (`--implementation-cli`)
+
+Default is `--implementation-cli cline` (Cline + local model, unchanged). With `codex` or
+`claude` the implementation worker is `src/cloud-impl-worker.mjs`:
+
+- `--implementation-model`, `--implementation-effort`, `--implementation-fast` and
+  `--timeout-seconds` apply; the Cline runtime (llama.cpp start, provider checks) is skipped.
+- Claude Code: `claude -p --permission-mode dontAsk`; `Edit`/`Write` are allowed only for the
+  task's `allowedPaths`. With `--tool-guard true` the shell is limited to its `qaCommand`,
+  lint/typecheck and read-only git. Git write commands (commit, add, reset, checkout, stash…) are
+  always denied.
+- Codex: `codex exec --approve-for-me` (the workspace-write sandbox QA uses) plus a `PreToolUse`
+  hook passed with `-c hooks.PreToolUse=…` and `--dangerously-bypass-hook-trust` (the engine writes
+  the hook itself for every run). `src/codex-scope-hook.mjs` applies `src/codex-scope-guard.mjs`:
+  patches may only add, update, delete or move the task's `allowedPaths` (also with the tool guard
+  off); with `--tool-guard true` shell commands are limited to the task's check, lint/typecheck and
+  read-only commands, and MCP tools are denied. Decisions go to `<state>/codex/<id>/scope-hook.ndjson`
+  (`implementation-scope-blocked` events); if Codex used tools but the hook logged nothing, the
+  attempt is refused (fail closed).
+- Same lock file as Cline (`cline.busy.lock`), same never-replay rule after an interruption, same
+  scope/HEAD verification and independent QA. The prompt and output go to `<state>/codex/<id>/`
+  so token usage is recorded.
+
+## Workflow roles (`--roles-file`)
+
+A JSON array of read-only roles (`src/workflow-roles.mjs`):
+`{ id, name, stage, gate, cli, model?, effort?, fast?, instructions, enabled? }`, where `stage` is
+`before-implementation`, `before-qa` or `after-pass` and `cli` is `codex` or `claude`. Each role
+returns `{ verdict: pass|changes-needed, summary, findings[], guidance }`.
+
+- `before-implementation`: once per task; `guidance` is appended to every worker prompt.
+- `before-qa`: a new recovery phase `review` between evidence and QA, once per attempt. Results
+  are added to the QA packet as `roleReviews`. A `gate` role returning `changes-needed` turns the
+  attempt into a recoverable failure (HEAD verified unchanged) that goes to correction Assessment
+  without calling QA. A gate that fails to run blocks; an advisory role that fails is recorded
+  (`role-error`) and skipped.
+- `after-pass`: after the commit; reports are appended to `<state>/role-reports.ndjson`.
+
+Roles run through `runRecoverableCodex` (`role:<id>` operations: usage-limit wait, pending
+receipts) and each result is checkpointed in `current-task.json`, so a resumed run never repeats
+a finished role. Events: `role-started`, `role-finished`, `role-result`, `role-error`,
+`role-gate-failed`.
+
+## Loop limits
+
+Defaults reproduce the original fixed behaviour (`src/engine-tuning.mjs`):
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--elevation-after` | 3 | Attempted Assessment corrections before automatic Elevation |
+| `--max-corrections` | 0 (none) | Corrections per task before stopping for user attention (`correction-limit`); Resume grants another round |
+| `--resolver-max-strategies` | 3 | Distinct Resolver recovery strategies per task |
+| `--task-max-files` | 1 | Task sizing in the Assessment prompt |
+| `--task-max-new-lines` | 200 | New-file size in the Assessment prompt |
+| `--task-max-read-files` | 3 | Files the worker may be told to read |
+
 ## Process lifecycle
 
 1. Node acquires the existing Cline lock and checks a clean git baseline.

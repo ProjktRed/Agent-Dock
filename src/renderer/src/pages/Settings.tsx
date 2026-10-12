@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Agent, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -29,6 +29,52 @@ function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
   return <K extends keyof Settings>(key: K, patch: Partial<Settings[K]>) =>
     saveSettings({ ...snap.settings, [key]: { ...(snap.settings[key] as object), ...patch } as Settings[K] });
+}
+
+/**
+ * A loop limit the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
+ * Off: editable; saved on blur. Null-able values (engine defaults) clear to the default when emptied.
+ */
+function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof EngineTuning; min: number; max: number; unit?: string; zeroLabel?: string; fallback?: number; label: string }) {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const guarded = snap.settings.advanced.engineGuardrails !== false;
+  const stored = snap.settings.tuning[k];
+  const engineValue = (DEFAULT_SETTINGS.tuning[k] ?? fallback) as number;
+  const value = (guarded ? engineValue : stored ?? fallback) as number;
+  const [text, setText] = useState(stored == null ? "" : String(stored));
+  useEffect(() => setText(stored == null ? "" : String(stored)), [stored]);
+  const unitFor = (v: number) => (unit && v === 1 && /s$/.test(unit) ? unit.slice(0, -1) : unit);
+  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${v.toLocaleString()}${unit ? ` ${unitFor(v)}` : ""}`);
+  if (guarded) {
+    return (
+      <span className="row" style={{ gap: 10 }}>
+        <span className="mono">{show(value)}</span>
+        <span className="lock" title="Turn off engine guardrails (Settings › Advanced) to change"><Icon name="lock" size="sm" />Fixed by engine</span>
+      </span>
+    );
+  }
+  const commit = () => {
+    const raw = text.replace(/[\s,]/g, "");
+    if (raw === "" && fallback !== undefined) return void patch("tuning", { [k]: null } as Partial<EngineTuning>);
+    const next = Number(raw);
+    if (Number.isInteger(next) && next >= min && next <= max) {
+      if (next !== stored) void patch("tuning", { [k]: next } as Partial<EngineTuning>);
+    } else setText(stored == null ? "" : String(stored));
+  };
+  return (
+    <span className="row" style={{ gap: 8 }}>
+      <input className="input mono" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? fallback.toLocaleString() : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
+      {unit && <span className="sub">{unit}</span>}
+      {zeroLabel && <span className="hint">0 = {zeroLabel.toLowerCase()}</span>}
+    </span>
+  );
+}
+
+function GuardrailsNote() {
+  const { snap } = useApp();
+  if (snap.settings.advanced.engineGuardrails === false) return <div className="banner warnb"><Icon name="warn" className="warn" /><span>Engine guardrails are off: the values below are passed to the engine. Defaults reproduce the engine's built-in behaviour.</span></div>;
+  return <div className="banner"><Icon name="lock" className="info" /><span>Values marked <b>Fixed by engine</b> become editable when you turn off engine guardrails (Settings › Advanced).</span></div>;
 }
 
 function General() {
@@ -172,11 +218,12 @@ function Workflow() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
+        <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
-        <SetRow title="Automatic elevation" desc="One short Elevation reassessment on a manual-review case. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
-        <SetRow title="QA failure handling" desc="Actionable failures return a bounded correction to Cline, with no numeric retry limit" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
-        <SetRow title="Strategy reassessment" desc="On attempts 5, 10, 15… QA must issue a materially revised correction strategy" support="engine"><span className="chip mut">Every 5 attempts</span></SetRow>
-        <SetRow title="Blocked cases" desc="The read-only Resolver runs once all workers are idle; at most three distinct recovery strategies per task" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
+        <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
+        <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
+        <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>
+        <SetRow title="Resolver strategies" desc="Blocked cases: the read-only Resolver runs once all workers are idle. Distinct recovery strategies per task before human review." support="engine"><Tunable k="resolverMaxStrategies" min={1} max={20} unit="per task" label="Resolver strategies per task" /></SetRow>
         <SetRow title="After the app restarts" desc="When a project was mid-task and its engine is no longer running" support="app">
           <select className="sel" value={w.resumeAfterRestart} onChange={(e) => patch("workflow", { resumeAfterRestart: e.target.value as typeof w.resumeAfterRestart })} aria-label="Resume behaviour">
             <option value="ask">Ask me</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
@@ -210,7 +257,7 @@ function Workflow() {
 function Context() {
   const { snap, healths, setAgents } = useApp();
   const patch = useSettingsPatch();
-  const impl = snap.agents.filter((x) => x.role === "implementation");
+  const impl = snap.agents.filter((x) => x.role === "implementation" && snap.clis.find((c) => c.id === x.cliId)?.kind === "cline");
   return (
     <div className="stack" style={{ gap: 20 }}>
       <div className="row wrap sub" style={{ gap: 18 }}>
@@ -219,14 +266,17 @@ function Context() {
       </div>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Defaults</h2>
-        <SetRow title="Engine default context window" desc="Used for new Implementation agents" support="engine"><span className="mono">{snap.engine.defaults.contextTokens.toLocaleString()}</span></SetRow>
-        <SetRow title="Engine default maximum output" support="engine"><span className="mono">{snap.engine.defaults.maxOutputTokens.toLocaleString()}</span></SetRow>
+        <GuardrailsNote />
+        <SetRow title="Default context window" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultContextTokens" min={1024} max={10_000_000} fallback={snap.engine.defaults.contextTokens} unit="tokens" label="Default context window" /></SetRow>
+        <SetRow title="Default maximum output" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultMaxOutputTokens" min={256} max={1_000_000} fallback={snap.engine.defaults.maxOutputTokens} unit="tokens" label="Default maximum output" /></SetRow>
         <SetRow title="Context warning threshold" desc="Warn when a configured context reaches this share of the model's reported maximum" support="app">
           <input type="range" min={50} max={95} step={5} value={snap.settings.context.warnThresholdPercent} onChange={(e) => patch("context", { warnThresholdPercent: Number(e.target.value) })} aria-label="Warning threshold" style={{ accentColor: "var(--a)", width: 200 }} />
           <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Large files" desc="Assessment sizes tasks for the local worker: one file per task where possible, new files under ~200 lines, at most three files to read" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
+        <SetRow title="Files per task" desc="Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
+        <SetRow title="New file size" desc="Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
+        <SetRow title="Files to read" desc="Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>
@@ -250,7 +300,7 @@ function Context() {
             </tbody>
           </table>
         </div>
-        <span className="hint">QA, Assessment and Elevation context is managed inside the orchestrator CLI and is not configurable by the engine.</span>
+        <span className="hint">QA, Assessment, Elevation, workflow roles and Codex / Claude Code implementation agents manage their own context inside their CLI.</span>
       </section>
     </div>
   );
@@ -317,7 +367,7 @@ export function EngineGuardrails() {
     <>
       <SetRow
         title="Engine guardrails"
-        desc={on ? "On: QA, Assessment and Elevation share one orchestrator CLI, models must come from that CLI, and Fast only where the CLI reports it." : "Off: each role may use its own CLI (Codex or Claude Code) and any model, effort or speed. Mismatches are shown as warnings and the run starts anyway."}
+        desc={on ? "On: QA, Assessment and Elevation share one orchestrator CLI, models must come from that CLI, Fast only where the CLI reports it, and the engine's loop limits are fixed." : "Off: each role may use its own CLI and any model, effort or speed, and the loop limits in Workflow rules and Context limits are editable. Mismatches are shown as warnings and the run starts anyway."}
         support="app"
       >
         <Toggle on={on} onChange={(v) => (v ? patch("advanced", { engineGuardrails: true }) : setConfirm(true))} label="Engine guardrails" />
@@ -332,6 +382,7 @@ export function EngineGuardrails() {
             <li>QA, Assessment and Elevation may run on different CLIs; the engine routes each role to its own CLI.</li>
             <li>Any model id is passed as typed, even one the CLI doesn't list or that belongs to another CLI. A wrong id fails that role's call.</li>
             <li>Fast is sent even when the model or account doesn't report it.</li>
+            <li>Loop limits become editable: elevation threshold, correction limit, Resolver strategies, task sizing and default context.</li>
             <li>Launch checks become warnings instead of stopping the start.</li>
           </ul>
           <div className="row" style={{ gap: 10 }}>

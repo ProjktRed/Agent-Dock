@@ -1,4 +1,5 @@
 import {execFile} from 'node:child_process';
+import {TUNING} from './engine-tuning.mjs';
 import {promisify} from 'node:util';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,lstat,mkdir,copyFile,unlink} from 'node:fs/promises';
@@ -93,7 +94,7 @@ export async function runBlockedResolver({workspace,stateDir,codex,readControl,o
  const control=await readControl();
  if(control.stopAfterSafePoint)return{status:'stopped'};
  if(automatic&&control.pauseAfterCurrent)return{status:'paused'};
- if(journal?.status!=='applying'&&(r.resolverRecoveries?.length??0)>=3){await onEvent({type:'resolver-limit',message:'Three Resolver recovery strategies exhausted; human review required.'});return{status:'blocked'};}
+ if(journal?.status!=='applying'&&(r.resolverRecoveries?.length??0)>=TUNING.resolverMaxStrategies){await onEvent({type:'resolver-limit',message:TUNING.resolverMaxStrategies===3?'Three Resolver recovery strategies exhausted; human review required.':`Resolver recovery limit (${TUNING.resolverMaxStrategies}) exhausted; human review required.`});return{status:'blocked'};}
  const save=()=>atomicWriteJson(path.join(stateDir,'current-task.json'),current);
  let op;
  try{

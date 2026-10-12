@@ -25,6 +25,7 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     advanced: { ...DEFAULT_SETTINGS.advanced, ...(s.advanced ?? {}) },
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },
     updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}) },
+    tuning: { ...DEFAULT_SETTINGS.tuning, ...(s.tuning ?? {}) },
   };
 }
 

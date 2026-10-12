@@ -1,3 +1,5 @@
+import { parseTuning } from "./engine-tuning.mjs";
+
 export const DEFAULT_CLINE_CONTEXT_TOKENS = 98_304;
 // Measured on a consumer GPU with RAM offload (--fit): fits; ~48 tok/s gen at 24K prompt, ~17 tok/s at 68K.
 export const DEFAULT_LLAMACPP_CONTEXT_TOKENS = 98_304;
@@ -47,6 +49,19 @@ function clineThinking(value) {
   return value;
 }
 
+export const IMPLEMENTATION_CLIS = ["cline", "codex", "claude"];
+
+/** --implementation-cli cline|codex|claude (+ --implementation-model / -effort / -fast for codex and claude). */
+export function parseImplementation(options) {
+  const cli = options["implementation-cli"] ?? "cline";
+  if (!IMPLEMENTATION_CLIS.includes(cli)) throw new Error(`--implementation-cli must be one of ${IMPLEMENTATION_CLIS.join(", ")}`);
+  const model = options["implementation-model"];
+  const effort = options["implementation-effort"];
+  if (model !== undefined && !/^[\w.:\[\]-]+$/.test(model)) throw new Error("--implementation-model is not a valid model identifier");
+  if (effort !== undefined && !REASONING_EFFORTS.includes(effort)) throw new Error(`--implementation-effort must be one of ${REASONING_EFFORTS.join(", ")}`);
+  return { cli, model: model ?? null, effort: effort ?? null, fast: booleanOption(options["implementation-fast"], "implementation-fast", false) };
+}
+
 export function parseLoopOptions(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 2) {
@@ -71,5 +86,8 @@ export function parseLoopOptions(argv) {
     clineThinking: clineThinking(options["cline-thinking"]),
     llamacppModelsDir: options["llamacpp-models-dir"] || null,
     llamacppLauncher: options["llamacpp-launcher"] || null,
+    implementation: parseImplementation(options),
+    rolesFile: options["roles-file"] || null,
+    tuning: parseTuning(options),
   };
 }
