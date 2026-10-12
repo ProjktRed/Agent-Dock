@@ -103,7 +103,7 @@ export function UsageTab() {
               <th>Access</th>
               <th style={{ width: "22%" }}>Session / rolling window</th>
               <th style={{ width: "22%" }}>Weekly / monthly</th>
-              <th><span data-tip="Reported by each CLI's own limit data. Codex: app-server account/rateLimits/read (free). Claude Code: the rate_limit_event of a tiny Haiku request.">Status</span></th>
+              <th><span data-tip="Reported by each provider's own CLI.">Status</span></th>
             </tr>
           </thead>
           <tbody>
@@ -161,17 +161,17 @@ export function UsageTab() {
                     {reported?.ok && reported.extras.map((x) => <div key={x.label} className="sub">{x.label}: {x.value}</div>)}
                     {provider && (
                       <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
-                        <button className="btn sm" disabled={refreshing} onClick={() => refresh(provider)} title={provider === "claude" ? "Sends one tiny Haiku request to read the limit headers" : "Free, read-only"}>
+                        <button className="btn sm" disabled={refreshing} onClick={() => refresh(provider)} title="Free, read-only">
                           {refreshing ? <Spinner /> : <Icon name="refresh" size="sm" />}
-                          {provider === "claude" ? "Check" : "Refresh"}
+                          Refresh
                         </button>
                         {reported && <span className="sub">as of {ago(reported.fetchedAt)}</span>}
                       </div>
                     )}
                     {reported?.error && <div className="sub err" style={{ marginTop: 4 }}>{reported.error}</div>}
-                    {notes && (
+                    {notes && (engineLimited || local || !provider) && (
                       <div className="sub" style={{ marginTop: 4 }}>
-                        {engineLimited ? activeStatus?.limitMessage : local ? "Usage is measured as tokens on the Token tab." : provider === "claude" ? "Claude Code reports limits only with a request; each check costs a few hundred Haiku tokens." : provider === "codex" ? "Read from Codex's app-server; no usage is consumed." : "This API does not expose quotas."}
+                        {engineLimited ? activeStatus?.limitMessage : local ? "Usage is measured as tokens on the Token tab." : "This API does not expose quotas."}
                       </div>
                     )}
                   </td>
@@ -194,17 +194,18 @@ export function UsageTab() {
               <option value={15}>15 minutes</option>
               <option value={30}>30 minutes</option>
             </select>
-            <span className="hint">Read-only through codex app-server. Uses no Codex usage.</span>
+            <span className="hint">Free: checking uses no Codex usage.</span>
           </label>
           <label className="field">
-            <span>Claude Code: check every</span>
-            <select className="sel" value={snap.settings.usage.claudeProbeMinutes} onChange={(e) => updateSettings((s) => ({ ...s, usage: { ...s.usage, claudeProbeMinutes: Number(e.target.value) } }))}>
-              <option value={0}>Only when I click Check</option>
+            <span>Claude Code: refresh every</span>
+            <select className="sel" value={snap.settings.usage.claudePollMinutes} onChange={(e) => updateSettings((s) => ({ ...s, usage: { ...s.usage, claudePollMinutes: Number(e.target.value) } }))}>
+              <option value={0}>Only when I click Refresh</option>
+              <option value={1}>1 minute</option>
+              <option value={5}>5 minutes</option>
+              <option value={15}>15 minutes</option>
               <option value={30}>30 minutes</option>
-              <option value={60}>1 hour</option>
-              <option value={180}>3 hours</option>
             </select>
-            <span className="hint">Claude Code exposes limits only alongside a request, so each check sends one minimal Haiku prompt (no tools, nothing saved). Each costs a few hundred tokens of your Claude allowance.</span>
+            <span className="hint">Free: checking uses no Claude usage.</span>
           </label>
           <div className="row"><span className="grow" /><button className="btn primary" onClick={() => setChecksOpen(false)}>Done</button></div>
         </Modal>

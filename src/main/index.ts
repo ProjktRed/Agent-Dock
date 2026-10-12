@@ -244,7 +244,7 @@ function registerIpc() {
     const previous = store.data.settings.usage;
     store.data.settings = settings;
     await store.saveSettings();
-    if (previous.codexPollMinutes !== settings.usage.codexPollMinutes || previous.claudeProbeMinutes !== settings.usage.claudeProbeMinutes) limits.schedule(settings);
+    if (previous.codexPollMinutes !== settings.usage.codexPollMinutes || previous.claudePollMinutes !== settings.usage.claudePollMinutes) limits.schedule(settings);
     app.setLoginItemSettings({ openAtLogin: settings.general.launchAtStartup, args: settings.general.startMinimized ? ["--minimized"] : [] });
     return settings;
   });
@@ -365,7 +365,7 @@ function registerIpc() {
     return listSkills(engineDir, store.data.settings.skills.importedDirs);
   });
   handle("limits:get", () => limits.state);
-  handle("limits:refresh", (provider: "codex" | "claude") => limits.refresh(provider));
+  handle("limits:refresh", (provider: "codex" | "claude") => limits.refresh(provider, true));
   handle("models:get", () => models.state);
   handle("models:refresh", (provider: "codex" | "claude") => models.refresh(provider));
   handle("update:status", () => updater.status);

@@ -134,3 +134,73 @@ export function lastRateLimitEvent(streamJson: string): ClaudeRateLimitInfo | nu
   }
   return found;
 }
+
+interface ClaudeUsageWindow {
+  utilization: number | null;
+  resets_at?: string | null;
+  locked_reason?: string | null;
+}
+/** Claude Code SDK control request `get_usage` (skip_behaviors) response. */
+export interface ClaudeUsageResponse {
+  subscription_type?: string | null;
+  rate_limits_available?: boolean;
+  rate_limits?: (Record<string, unknown> & {
+    extra_usage?: { is_enabled?: boolean; monthly_limit?: number | null; used_credits?: number | null; utilization?: number | null; currency?: string | null; spend_limit_reached?: boolean } | null;
+    limits?: { kind: string; group?: string; percent: number; severity?: string; resets_at?: string | null; is_active?: boolean }[];
+    seven_day_breakdown?: { rows?: { display_name: string; percent: number }[] } | null;
+  }) | null;
+}
+
+const CLAUDE_USAGE_WINDOWS: Record<string, [string, number]> = {
+  five_hour: ["5-hour window", 300],
+  seven_day: ["Weekly", 10_080],
+  seven_day_opus: ["Weekly · Opus", 10_080],
+  seven_day_sonnet: ["Weekly · Sonnet", 10_080],
+  seven_day_oauth_apps: ["Weekly · connected apps", 10_080],
+  seven_day_cowork: ["Weekly · Cowork", 10_080],
+};
+const CLAUDE_PLANS: Record<string, string> = { free: "Claude Free", pro: "Claude Pro", max: "Claude Max", team: "Claude Team", enterprise: "Claude Enterprise" };
+
+/** Plan limits from Claude Code's own `get_usage` (no prompt is sent). Utilization is already a percentage. */
+export function parseClaudeUsage(response: ClaudeUsageResponse, fetchedAt = new Date().toISOString()): ProviderLimits {
+  const limits = response.rate_limits ?? {};
+  const windows: LimitWindow[] = [];
+  let locked: string | null = null;
+  for (const [id, [label, minutes]] of Object.entries(CLAUDE_USAGE_WINDOWS)) {
+    const w = limits[id] as ClaudeUsageWindow | null | undefined;
+    if (!w || typeof w.utilization !== "number") continue;
+    locked ??= w.locked_reason ?? null;
+    windows.push({ id, label, usedPercent: Math.round(w.utilization), resetsAt: w.resets_at ?? null, windowMinutes: minutes });
+  }
+  windows.sort((a, b) => (a.windowMinutes ?? 99_999) - (b.windowMinutes ?? 99_999) || a.label.localeCompare(b.label));
+  const severities = (limits.limits ?? []).map((l) => l.severity ?? "normal");
+  const full = windows.some((w) => w.usedPercent >= 100);
+  const status = locked || full ? "limited" : severities.some((s) => s !== "normal") || windows.some((w) => w.usedPercent >= 90) ? "warning" : "ok";
+  const nearest = windows.reduce<LimitWindow | null>((top, w) => (!top || w.usedPercent > top.usedPercent ? w : top), null);
+  const extras: ProviderLimits["extras"] = [];
+  const extra = limits.extra_usage;
+  if (extra) {
+    const value = !extra.is_enabled
+      ? "Off"
+      : extra.spend_limit_reached
+        ? "Spend limit reached"
+        : extra.monthly_limit != null
+          ? `${extra.used_credits ?? 0} of ${extra.monthly_limit} ${extra.currency ?? ""}`.trim()
+          : "On";
+    extras.push({ label: "Extra usage", value });
+  }
+  const rows = (limits.seven_day_breakdown?.rows ?? []).filter((r) => r.percent > 0);
+  if (rows.length) extras.push({ label: "This week by product", value: rows.map((r) => `${r.display_name} ${r.percent}%`).join(" · ") });
+  const type = response.subscription_type ?? null;
+  return {
+    provider: "claude",
+    ok: true,
+    fetchedAt,
+    source: "Claude Code · get_usage",
+    plan: type ? CLAUDE_PLANS[type] ?? `Claude ${type}` : null,
+    status,
+    statusText: status === "limited" ? (locked ? `Limited: ${locked.replaceAll("_", " ")}` : "Limit reached") : status === "warning" ? `Warning: ${nearest?.label ?? "a window"} is ${nearest?.usedPercent ?? "?"}% used` : "Within limits",
+    windows,
+    extras,
+  };
+}

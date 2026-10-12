@@ -120,11 +120,14 @@ or quitting the app can leave it running safely; the app reattaches on the next 
     stdio, `initialize` + one read). Plan, 5-hour and weekly windows (used %, reset time),
     credits and reset-credit count. Read-only and free; refreshed every 5 minutes by default. The
     reset-credit *consume* method is never called.
-  - **Claude Code**: has no usage command; it reports plan limits as a `rate_limit_event` in
-    `stream-json` output alongside a real request. A check sends one minimal request (Haiku, no
-    tools, one turn, `--no-session-persistence`, empty temp folder, `CLAUDE*` env stripped) and
-    reads the 5-hour and weekly windows. Each check costs a few hundred tokens, so it runs only
-    when you click **Check** unless you set an interval (Usage limits › Limit checks).
+  - **Claude Code**: the SDK control request `get_usage` (`skip_behaviors: true`, after
+    `initialize`) over `claude -p --input-format stream-json`. Claude Code fetches the numbers
+    itself, so no prompt is sent and Agent Dock never handles its login token. Plan, 5-hour and
+    weekly windows (plus per-model weekly windows when the plan has them), extra usage and this
+    week's split by product. Free; refreshed every 5 minutes by default. Hooks are off for that
+    session. `get_usage` is not in Claude's public docs, so if it is unavailable a **manual**
+    Refresh falls back to one minimal Haiku request and reads its `rate_limit_event`; automatic
+    refreshes never fall back.
   - The last snapshots are cached in `config\limits.json`; a failed refresh keeps the last good
     snapshot and shows the error. You can also add a monthly token budget, shown as **Manual**.
 - **Tokens**: Codex `turn.completed` usage and Claude Code `result` usage from each invocation

@@ -292,6 +292,39 @@ describe("updater parsing", () => {
 });
 
 describe("provider limits", () => {
+  it("parses a real Claude Code get_usage response (no prompt sent)", async () => {
+    const { parseClaudeUsage } = await import("../src/main/lib/limits-parse");
+    const window = (utilization: number, resets_at: string) => ({ utilization, resets_at, limit_dollars: null, used_dollars: null, remaining_dollars: null, locked_reason: null });
+    const result = parseClaudeUsage({
+      subscription_type: "pro",
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: window(77, "2026-10-12T18:10:00.063578+00:00"),
+        seven_day: window(49, "2026-10-18T06:00:00.063600+00:00"),
+        seven_day_opus: null,
+        seven_day_sonnet: null,
+        tangelo: null,
+        extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null, currency: null, spend_limit_reached: false },
+        limits: [
+          { kind: "session", group: "session", percent: 77, severity: "warning", resets_at: "2026-10-12T18:10:00.063578+00:00", is_active: true },
+          { kind: "weekly_all", group: "weekly", percent: 49, severity: "normal", resets_at: "2026-10-18T06:00:00.063600+00:00", is_active: false },
+        ],
+        seven_day_breakdown: { rows: [{ display_name: "Claude Code", percent: 95 }, { display_name: "Chats", percent: 0 }, { display_name: "Cowork", percent: 5 }] },
+      },
+    });
+    expect(result.plan).toBe("Claude Pro");
+    expect(result.source).toBe("Claude Code · get_usage");
+    expect(result.windows.map((w) => [w.label, w.usedPercent, w.windowMinutes])).toEqual([["5-hour window", 77, 300], ["Weekly", 49, 10_080]]);
+    expect(result.windows[0].resetsAt).toBe("2026-10-12T18:10:00.063578+00:00");
+    expect(result.status).toBe("warning");
+    expect(result.statusText).toBe("Warning: 5-hour window is 77% used");
+    expect(result.extras).toEqual([{ label: "Extra usage", value: "Off" }, { label: "This week by product", value: "Claude Code 95% · Cowork 5%" }]);
+  });
+  it("marks a locked Claude window as limited", async () => {
+    const { parseClaudeUsage } = await import("../src/main/lib/limits-parse");
+    const result = parseClaudeUsage({ subscription_type: "max", rate_limits: { five_hour: { utilization: 100, resets_at: null, locked_reason: "rate_limited" } } });
+    expect([result.plan, result.status, result.statusText]).toEqual(["Claude Max", "limited", "Limited: rate limited"]);
+  });
   it("parses a real Codex account/rateLimits/read result", async () => {
     const { parseCodexLimits } = await import("../src/main/lib/limits-parse");
     const snap = { limitId: "codex", primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1791815431 }, secondary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: 1792299024 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "plus", rateLimitReachedType: null, spendControlReached: false };

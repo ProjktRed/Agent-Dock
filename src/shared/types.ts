@@ -149,8 +149,8 @@ export interface Settings {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
     /** Codex limits are read for free; 0 = only on demand. */
     codexPollMinutes: number;
-    /** Each Claude check sends one tiny Haiku request; 0 = only on demand. */
-    claudeProbeMinutes: number;
+    /** Claude Code get_usage polling (free). Replaces the old paid-probe interval claudeProbeMinutes. */
+    claudePollMinutes: number;
   };
   advanced: {
     nodeRuntime: "system" | "electron";
