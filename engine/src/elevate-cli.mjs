@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { CodexWorker, useOrchestratorModels } from "./codex-worker.mjs";
+import { CodexWorker, useOrchestratorModels, useRoleOverrides } from "./codex-worker.mjs";
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { resolveCodexCommand, preflightCodex } from "./codex-command.mjs";
 import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
@@ -31,6 +31,7 @@ try {
     launcher = await resolveCodexCommand({ explicitCommand: options["codex-command"] ?? options["codex-exe"] });
     await preflightCodex(launcher);
   }
+  useRoleOverrides(options.roleOverrides);
   const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true });
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
@@ -43,8 +44,8 @@ try {
   const worker = {
     withExclusive: async fn => {
       if (!cline) {
-        const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds});
-        cline = new ClineCliWorker({toolGuard:options.toolGuard,stateDir,workspace,clineJs:options["cline-js"],provider:runtime.provider,model:runtime.model,timeoutSeconds:options.timeoutSeconds,contextTokens:options.clineContextTokens,dataDir:runtime.dataDir,requestedProvider:runtime.requestedProvider,baseUrl:runtime.baseUrl,beforeRun:runtime.ensureReady,readMetrics:runtime.readMetrics});
+        const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds,llamaCppModelsDir:options.llamacppModelsDir,thinking:options.clineThinking});
+        cline = new ClineCliWorker({toolGuard:options.toolGuard,thinking:options.clineThinking,stateDir,workspace,clineJs:options["cline-js"],provider:runtime.provider,model:runtime.model,timeoutSeconds:options.timeoutSeconds,contextTokens:options.clineContextTokens,dataDir:runtime.dataDir,requestedProvider:runtime.requestedProvider,baseUrl:runtime.baseUrl,beforeRun:runtime.ensureReady,readMetrics:runtime.readMetrics});
         await state.configureRuntime({contextTokens:options.clineContextTokens,timeoutSeconds:options.timeoutSeconds,model:runtime.model,provider:runtime.provider});
       }
       return cline.withExclusive(fn);

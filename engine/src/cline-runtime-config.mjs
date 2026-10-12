@@ -7,9 +7,9 @@ const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
 const DEFAULT_LLAMACPP_LAUNCHER = "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd";
 
 /** Per-slot context of a running llama-server, or null when /props does not report it. */
-export async function readLlamaCppSlotContext(fetchImpl, baseUrl) {
+export async function readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel = null) {
   try {
-    const response = await fetchImpl(`${baseUrl.replace(/\/v1$/, "")}/props`);
+    const response = await fetchImpl(`${baseUrl.replace(/\/v1$/, "")}/props${modelQuery(routerModel)}`);
     if (!response?.ok) return null;
     const props = await response.json();
     const value = Number(props?.default_generation_settings?.n_ctx ?? props?.n_ctx);
@@ -21,9 +21,23 @@ export async function readLlamaCppSlotContext(fetchImpl, baseUrl) {
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function startLlamaCppServer(launcher) {
+/** Router mode (llama-server --models-dir) serves /props and /metrics per model: `?model=<id>`. */
+const modelQuery = (routerModel) => (routerModel ? `?model=${encodeURIComponent(routerModel)}` : "");
+
+/**
+ * Launcher arguments: router mode over a models folder, and the server reasoning switch for the
+ * worker's thinking level (the launcher's own settings apply when neither is given).
+ */
+export function llamaCppLauncherArgs({ modelsDir = null, thinking = "none" } = {}) {
+  const args = [];
+  if (modelsDir) args.push("-ModelsDir", modelsDir);
+  if (thinking && thinking !== "none") args.push("-Reasoning", "on", "-ReasoningEffort", thinking);
+  return args;
+}
+
+function startLlamaCppServer(launcher, launcherArgs = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn("cmd.exe", ["/d", "/c", launcher], {
+    const child = spawn("cmd.exe", ["/d", "/c", launcher, ...launcherArgs], {
       detached: true,
       windowsHide: true,
       stdio: "ignore",
@@ -82,8 +96,8 @@ function parsePrometheus(text) {
   };
 }
 
-async function readLlamaCppMetrics(fetchImpl, baseUrl) {
-  const response = await fetchImpl(`${llamaRoot(baseUrl)}/metrics`);
+async function readLlamaCppMetrics(fetchImpl, baseUrl, routerModel = null) {
+  const response = await fetchImpl(`${llamaRoot(baseUrl)}/metrics${modelQuery(routerModel)}`);
   if (!response?.ok) throw new Error(`llama.cpp metrics failed: HTTP ${response?.status ?? "unknown"}`);
   return parsePrometheus(await response.text());
 }
@@ -110,16 +124,19 @@ export async function prepareClineRuntime({
   sleepImpl = sleep,
   startupAttempts = 240,
   startupPollMs = 500,
+  llamaCppModelsDir = null,
+  thinking = "none",
 }) {
   if (provider === "llamacpp") {
     const baseUrl = llamaCppUrl.replace(/\/$/, "");
+    const routerModel = llamaCppModelsDir ? model : null;
     let startedServer = false;
     const ensureReady = async () => {
       try {
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
-        await startServerImpl(llamaCppLauncher);
+        await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
         startedServer = true;
         let lastError = error;
         for (let attempt = 0; attempt < startupAttempts; attempt++) {
@@ -138,7 +155,7 @@ export async function prepareClineRuntime({
         }
       }
       // Cline is told contextWindow=contextTokens; a smaller server slot would overflow silently.
-      const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl);
+      const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel);
       if (serverContext !== null && contextTokens && serverContext < contextTokens) {
         throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Set ContextSize in E:\\llama-cpp-local\\config\\settings.psd1 (and restart the server) or lower --cline-context-tokens.`);
       }
@@ -182,7 +199,7 @@ export async function prepareClineRuntime({
       port: Number(new URL(baseUrl).port || 80),
       startedServer,
       ensureReady,
-      readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl),
+      readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl, routerModel),
     };
   }
   if (provider !== "ollama") {

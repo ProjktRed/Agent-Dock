@@ -5,8 +5,9 @@
 A Windows desktop command center for the Codex ↔ Cline automation loop: manage projects,
 agents, CLI connections and settings, and monitor runs with progress, usage and token data.
 
-The automation itself is the engine from `E:\BG3C\codex-cline-loop`, vendored unchanged in
-[`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)). The app launches it as
+The automation itself is the engine from `E:\BG3C\codex-cline-loop`, vendored in
+[`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)); the only change to it is
+per-role model, reasoning effort and speed flags. The app launches it as
 a separate process per project and reads the engine's `.state` files. It never re-implements
 the loop.
 
@@ -85,7 +86,7 @@ src/preload/     contextBridge API (window.api), typed by src/shared/api.ts
 src/renderer/    React UI: Overview (Progress, Usage limits, Token consumption), Projects,
                  Agents, CLIs, Settings, first-launch setup
 src/shared/      types and defaults shared by all three
-engine/          vendored engine (unchanged), its tests, skills and fixtures
+engine/          vendored engine (+ per-role model flags), its tests, skills and fixtures
 tests/           vitest unit tests for the main-process logic
 ```
 
@@ -95,7 +96,10 @@ tests/           vitest unit tests for the main-process logic
 | --- | --- |
 | Project path, objective, state folder | `--workspace`, `--objective`, `--state-dir` |
 | Implementation agent: provider, model, context, max output, timeout | `--provider`, `--model`, `--cline-context-tokens`, `--cline-max-output-tokens`, `--timeout-seconds` |
+| Implementation agent: thinking (Cline `--thinking`) | `--cline-thinking none\|low\|medium\|high\|xhigh` |
+| llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` → launcher `-ModelsDir` |
 | QA agent's CLI (Codex or Claude Code) | `--orchestrator codex\|claude` (+ `--codex-exe` / `--claude-command` for a custom path) |
+| QA, Assessment, Elevation agents: model, reasoning effort, speed (Resolver follows Assessment) | `--qa-model` / `--qa-effort` / `--qa-fast`, `--assessment-*`, `--resolver-*`, `--elevate-*` |
 | Automatic elevation (and Elevation agent enabled) | `--sol-reassessment` |
 | Worker tool guard | `--tool-guard` |
 | Attached task file | `--task` (validated with the engine's own `validateTask`, used once) |
@@ -128,19 +132,37 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   context occupancy is not reported by any runtime, so it is not shown as a number.
 - **Model limits**: llama.cpp `/props` and Ollama `/api/show` context sizes are **Reported**;
   otherwise **Not exposed**.
+- **Orchestrator models**: listed by the CLI itself, free, no prompt sent. Codex: app-server
+  `model/list` (efforts, default effort, Fast service tier `priority`). Claude Code: the SDK
+  `initialize` control request (models, effort levels, fast-mode support, and whether fast mode is
+  available on the account). Cached in `config\models.json`, refreshed daily or with the refresh
+  button in Agents. Fast runs pass `-c service_tier="priority"` (Codex) or the `fastMode` flag
+  setting (Claude Code).
+- **Local models**: collected from the provider itself and stored on the connection (first setup
+  offers it; CLIs › Models › Refresh updates it). Ollama: `/api/tags` + `/api/show` (context and
+  the `thinking` capability); needs Ollama running. llama.cpp: `/v1/models`. With a models folder
+  set, llama.cpp runs in router mode (`--models-dir`): it lists every model in the folder (one per
+  subfolder) and loads the Implementation agent's model on demand, with the launcher's tuning. If
+  the server isn't running, Refresh starts the launcher in router mode just for the listing (no
+  model is loaded) and stops it again. Router mode is opt-in; without a folder the launcher serves
+  its single `settings.psd1` model as before.
+- **Thinking (Implementation)**: passed to Cline `--thinking`. For llama.cpp, a level other than
+  Off also starts the server with `--reasoning on --reasoning-effort <level>` (only when the
+  engine starts it; a running server keeps its setting). Speed tiers do not apply to local models.
 - **Capabilities**: detected from each CLI's own `--help` output, never assumed.
 - Every setting carries a label: **Enforced by engine**, **Applied by app**, or **Saved only**
   (stored for future engine support).
 
 ## Known limitations
 
-- The engine fixes orchestrator models per CLI (Codex: `gpt-6.1-sol`/`gpt-6-astra`,
-  Claude: `sonnet`/`opus`, medium effort); the app shows them read-only.
+- The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
+  whichever model runs the role.
 - QA and Assessment must share one orchestrator CLI.
 - Custom roles, agent custom instructions, extra skills and protected paths are saved only;
   the engine does not read them yet.
 - The llama.cpp auto-start launcher path is fixed in the engine
-  (`E:\llama-cpp-local\scripts\Cline-Server.cmd`).
+  (`E:\llama-cpp-local\scripts\Cline-Server.cmd`). Router mode needs its `-ModelsDir`,
+  `-Reasoning` and `-ReasoningEffort` parameters (added in `Start-ClineServer.ps1`, opt-in).
 - On this machine the engine's atomic state writes can hit `EPERM` on rename (a file lock,
   likely antivirus or indexing). It intermittently fails one engine test under parallel load
   and blocked the `ADR020-A1` reference run. Excluding the engine state folders from real-time

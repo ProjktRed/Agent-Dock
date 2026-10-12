@@ -107,6 +107,83 @@ describe("engine launch args", () => {
     expect(plan.args[plan.args.indexOf("--provider") + 1]).toBe("ollama");
     expect(plan.args[plan.args.indexOf("--tool-guard") + 1]).toBe("false");
   });
+  it("passes each orchestrator agent's model, effort and speed; Resolver follows Assessment", () => {
+    const list = agents().map((a) =>
+      a.role === "qa" ? { ...a, model: "gpt-6-luna", reasoning: "high", fast: true } : a.role === "assessment" ? { ...a, model: "gpt-6-sol", reasoning: "xhigh" } : a,
+    );
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
+    expect(plan.problems).toEqual([]);
+    expect([flag("--qa-model"), flag("--qa-effort"), flag("--qa-fast")]).toEqual(["gpt-6-luna", "high", "true"]);
+    expect([flag("--assessment-model"), flag("--assessment-effort"), flag("--assessment-fast")]).toEqual(["gpt-6-sol", "xhigh", "false"]);
+    expect([flag("--resolver-model"), flag("--resolver-effort")]).toEqual(["gpt-6-sol", "xhigh"]);
+    expect(flag("--elevate-model")).toBe("gpt-6-astra");
+  });
+  it("rejects a model from the other CLI and an Elevation agent on another orchestrator", () => {
+    const list = agents().map((a) => (a.role === "qa" ? { ...a, model: "sonnet" } : a.role === "elevation" ? { ...a, cliId: "claude" } : a));
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    expect(plan.problems.some((p) => p.includes("“sonnet” is not a Codex model"))).toBe(true);
+    expect(plan.problems.some((p) => p.includes("Elevation agent"))).toBe(true);
+    expect(plan.args).not.toContain("--qa-model");
+  });
+});
+
+describe("local providers", () => {
+  it("passes thinking and the llama.cpp models folder, and rejects a model the provider did not list", () => {
+    const list = agents().map((a) => (a.role === "implementation" ? { ...a, model: "GLM", reasoning: "medium" } : a));
+    const withDir = clis().map((c) => (c.kind === "llamacpp" ? { ...c, modelsDir: "E:\\LLM-Models", collected: { at: "", source: "", error: null, models: [{ id: "GLM", detail: "", contextTokens: null, thinking: null }] } } : c));
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: withDir, settings: settings() });
+    const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
+    expect(plan.problems).toEqual([]);
+    expect(flag("--cline-thinking")).toBe("medium");
+    expect(flag("--llamacpp-models-dir")).toBe("E:\\LLM-Models");
+    const stale = buildEngineArgs({ project: project(), agents: agents(), clis: withDir, settings: settings() });
+    expect(stale.problems.some((p) => p.includes("not in the list collected from"))).toBe(true);
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--llamacpp-models-dir");
+  });
+  it("reads llama.cpp router listings", async () => {
+    const { parseLlamaModels } = await import("../src/main/local-models");
+    const body = { data: [{ id: "GLM", source: "models_dir", status: { value: "unloaded" } }, { id: "glm-4.7-flash-ud-q3-k-xl" }] };
+    expect(parseLlamaModels(body)).toEqual([
+      { id: "GLM", detail: "unloaded · from models folder", contextTokens: null, thinking: null },
+      { id: "glm-4.7-flash-ud-q3-k-xl", detail: "served model", contextTokens: null, thinking: null },
+    ]);
+  });
+});
+
+describe("model catalogs", () => {
+  it("parses Codex model/list: hidden models dropped, efforts, default effort and the Fast tier", async () => {
+    const { parseCodexModels } = await import("../src/main/lib/models-parse");
+    const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"].map((reasoningEffort) => ({ reasoningEffort }));
+    const result = parseCodexModels({
+      data: [
+        { id: "gpt-6.1-sol", model: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", description: "Latest workhorse model", hidden: false, supportedReasoningEfforts: efforts, defaultReasoningEffort: "low", serviceTiers: [{ id: "priority", name: "Fast", description: "2x speed, increased usage" }], isDefault: true },
+        { id: "gpt-reserve", model: "gpt-reserve", hidden: true, supportedReasoningEfforts: efforts },
+        { id: "gpt-6-luna", model: "gpt-6-luna", displayName: "GPT-6-Luna", hidden: false, supportedReasoningEfforts: efforts.slice(0, 5), defaultReasoningEffort: "medium", serviceTiers: [] },
+      ],
+    });
+    expect(result.models.map((m) => m.id)).toEqual(["gpt-6.1-sol", "gpt-6-luna"]);
+    expect(result.models[0]).toMatchObject({ efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "low", fast: true, fastDescription: "2x speed, increased usage", isDefault: true });
+    expect(result.models[1]).toMatchObject({ fast: false, efforts: ["low", "medium", "high", "xhigh", "max"] });
+  });
+  it("parses the Claude Code initialize models: aliases resolved, default marked, fast availability", async () => {
+    const { parseClaudeModels } = await import("../src/main/lib/models-parse");
+    const levels = ["low", "medium", "high", "xhigh", "max"];
+    const result = parseClaudeModels({
+      models: [
+        { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)", supportsEffort: true, supportedEffortLevels: levels, supportsFastMode: true },
+        { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", description: "For complex work", supportsEffort: true, supportedEffortLevels: levels, supportsFastMode: true },
+        { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet 5.5", supportsEffort: true, supportedEffortLevels: levels },
+        { value: "claude-haiku-4-5-20251001", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5" },
+      ],
+      fast_mode_disabled_reason: "extra_usage_disabled",
+    });
+    expect(result.models.map((m) => m.id)).toEqual(["opus", "sonnet", "claude-haiku-4-5-20251001"]);
+    expect(result.models[0]).toMatchObject({ resolved: "claude-opus-5-5", isDefault: true, fast: true });
+    expect(result.models[1]).toMatchObject({ isDefault: false, fast: false, efforts: levels });
+    expect(result.models[2]).toMatchObject({ resolved: null, efforts: [] });
+    expect(result.fastBlockedReason).toBe("Needs extra usage enabled on your Claude account");
+  });
 });
 
 describe("usage telemetry", () => {
@@ -177,9 +254,10 @@ describe("updater parsing", () => {
     const { parseLsRemote, parseLog } = await import("../src/main/updater-parse");
     expect(parseLsRemote("abc123\trefs/heads/master\ndef\trefs/heads/dev\n", "master")).toBe("abc123");
     expect(parseLsRemote("", "master")).toBeNull();
-    expect(parseLog("h1\t2026-10-12T10:00:00Z\tFix: tabs\th\nh2\t2026-10-11T10:00:00Z\tInit\n")).toEqual([
-      { hash: "h1", date: "2026-10-12T10:00:00Z", subject: "Fix: tabs\th" },
-      { hash: "h2", date: "2026-10-11T10:00:00Z", subject: "Init" },
+    const log = "h1\x1f2026-10-12T10:00:00Z\x1fBeta 0.14.0\x1f- Pick any model\r\n- Fast tier\n\nCo-Authored-By: Claude <x@y>\n\x1e\nh2\x1f2026-10-11T10:00:00Z\x1fInit\x1f\x1e\n";
+    expect(parseLog(log)).toEqual([
+      { hash: "h1", date: "2026-10-12T10:00:00Z", subject: "Beta 0.14.0", body: "- Pick any model\n- Fast tier" },
+      { hash: "h2", date: "2026-10-11T10:00:00Z", subject: "Init", body: "" },
     ]);
   });
 });

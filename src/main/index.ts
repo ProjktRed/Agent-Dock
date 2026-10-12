@@ -14,6 +14,8 @@ import { listSkills } from "./skills";
 import { AppStore } from "./store";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
+import { ModelsService } from "./models";
+import { collectLlamaCpp, collectOllama, detectLlamaModelsDir } from "./local-models";
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -40,6 +42,7 @@ async function resolveNode(): Promise<{ command: string; env: NodeJS.ProcessEnv 
 const engine = new EngineManager(engineDir, resolveNode);
 let updater: Updater;
 let limits: LimitsService;
+let models: ModelsService;
 
 async function applyUpdate() {
   const running = store.data.projects.filter((p) => engine.isAlive(p.id));
@@ -264,6 +267,16 @@ function registerIpc() {
     await store.saveClis();
     return snapshot().clis;
   });
+  handle("cli:collectModels", async (id: string) => {
+    const conn = store.data.clis.find((c) => c.id === id);
+    if (!conn) throw new Error("Connection not found");
+    if (conn.kind !== "llamacpp" && conn.kind !== "ollama") throw new Error("Only local providers list models here");
+    const collected = conn.kind === "ollama" ? await collectOllama(conn.location.replace(/\/$/, "")) : await collectLlamaCpp(conn, store.data.settings.advanced.llamaCppLauncher);
+    store.data.clis = store.data.clis.map((c) => (c.id === id ? { ...c, collected } : c));
+    await store.saveClis();
+    return snapshot().clis;
+  });
+  handle("cli:detectModelsDir", () => detectLlamaModelsDir(store.data.settings.advanced.llamaCppLauncher));
   handle("cli:delete", async (id: string) => {
     store.data.clis = store.data.clis.filter((c) => c.id !== id || c.builtIn);
     await store.setSecret(id, null);
@@ -351,6 +364,8 @@ function registerIpc() {
   });
   handle("limits:get", () => limits.state);
   handle("limits:refresh", (provider: "codex" | "claude") => limits.refresh(provider));
+  handle("models:get", () => models.state);
+  handle("models:refresh", (provider: "codex" | "claude") => models.refresh(provider));
   handle("update:status", () => updater.status);
   handle("update:check", () => updater.check(store.data.settings));
   handle("update:apply", () => applyUpdate());
@@ -422,11 +437,14 @@ app.on("window-all-closed", () => {
 app.whenReady().then(async () => {
   await store.load();
   engineInfo = await engine.info();
-  limits = new LimitsService(path.join(store.dir, "limits.json"), async (kind) => {
+  const resolveOrchestrator = async (kind: "codex" | "claude") => {
     const conn = store.data.clis.find((c) => c.kind === kind);
     return conn ? pickRunnable(await whereAll(conn.location)) : null;
-  }, (s) => send("limits", s));
+  };
+  limits = new LimitsService(path.join(store.dir, "limits.json"), resolveOrchestrator, (s) => send("limits", s));
   await limits.load();
+  models = new ModelsService(path.join(store.dir, "models.json"), resolveOrchestrator, (s) => send("models", s));
+  await models.load();
   updater = new Updater(app.isPackaged, await Updater.readBuildInfo(app.getAppPath()), (s) => send("update", s), async () => pickRunnable(await whereAll("node")));
   const preferred = store.data.settings.general.defaultProject;
   if (preferred !== "last" && store.data.projects.some((p) => p.id === preferred && !p.archived)) store.data.settings.activeProjectId = preferred;
@@ -443,4 +461,6 @@ app.whenReady().then(async () => {
   setTimeout(() => void resumeAfterRestart(), 2500);
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);
   setTimeout(() => limits.schedule(store.data.settings), 3000);
+  // Model lists are free to read; refresh once a day or when missing.
+  setTimeout(() => void models.refreshStale(24 * 60 * 60_000), 6000);
 });

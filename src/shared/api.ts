@@ -6,6 +6,7 @@ import type {
   CliHealth,
   DirectoryInspection,
   LimitsState,
+  ModelCatalog,
   PathDetection,
   Project,
   ProjectStatus,
@@ -48,6 +49,10 @@ export interface DesktopApi {
   healths(): Promise<CliHealth[]>;
   detectOnPath(command: string): Promise<PathDetection>;
   testConnection(cli: CliConnection, secret?: string | null): Promise<CliHealth>;
+  /** Local providers: ask the provider for its models and store the list on the connection. */
+  collectModels(id: string): Promise<CliConnection[]>;
+  /** The models folder the llama.cpp launcher's settings point into, if found. */
+  detectModelsDir(): Promise<string | null>;
   pickDirectory(title: string): Promise<string | null>;
   pickTaskFile(): Promise<string | null>;
   inspectDirectory(dir: string): Promise<DirectoryInspection>;
@@ -67,6 +72,9 @@ export interface DesktopApi {
   limits(): Promise<LimitsState>;
   refreshLimits(provider: "codex" | "claude"): Promise<LimitsState>;
   onLimits(callback: (state: LimitsState) => void): () => void;
+  models(): Promise<ModelCatalog>;
+  refreshModels(provider: "codex" | "claude"): Promise<ModelCatalog>;
+  onModels(callback: (state: ModelCatalog) => void): () => void;
   updateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
   applyUpdate(): Promise<void>;

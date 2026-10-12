@@ -6,6 +6,7 @@ import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult 
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
+const CODEX_DEFAULT_LABELS = new Set(["gpt-6.1-sol", "gpt-6-astra"]);
 const ROLE_LABELS = new Map([
   ["GPT-6.1 Sol Medium", "Claude Sonnet (medium effort)"],
   ["GPT-6.1 Sol", "Claude Sonnet"],
@@ -57,7 +58,7 @@ export class ClaudeWorker extends CodexWorker {
     this.pidFile = path.join(this.stateDir, "codex-process.json"); // same single-orchestrator lock as Codex
   }
 
-  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
@@ -65,12 +66,15 @@ export class ClaudeWorker extends CodexWorker {
     await writeFile(path.join(invocation, "schema.json"), JSON.stringify(schema));
     await writeFile(path.join(invocation, "prompt.txt"), text);
     const writable = sandbox !== "read-only";
-    // The base class passes its role labels; elevation is the only Opus role, whatever labels are active.
-    model = ["gpt-6-astra", CLAUDE_MODELS.elevate].includes(model) ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
-    reasoningEffort = CLAUDE_MODELS.reasoning;
+    // Codex default labels (orchestrator models never configured) map to the Claude defaults:
+    // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
+    if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
+    reasoningEffort ||= CLAUDE_MODELS.reasoning;
     const args = [...this.prefixArgs, "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
+      // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
+      ...(fast ? ["--settings", JSON.stringify({ fastMode: true })] : []),
       "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
       "--disallowedTools", ...NEVER_TOOLS,
       ...(writable ? this.additionalWritableDirs.flatMap((dir) => ["--add-dir", dir]) : [])];

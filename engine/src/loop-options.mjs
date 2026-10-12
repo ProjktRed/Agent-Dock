@@ -21,6 +21,32 @@ function booleanOption(value, name, fallback) {
   throw new Error(`--${name} must be true or false`);
 }
 
+export const ORCHESTRATOR_ROLES = ["qa", "assessment", "resolver", "elevate"];
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+/** --<role>-model, --<role>-effort, --<role>-fast per orchestrator role; only roles with a flag appear. */
+export function parseRoleOverrides(options) {
+  const overrides = {};
+  for (const role of ORCHESTRATOR_ROLES) {
+    const model = options[`${role}-model`];
+    const effort = options[`${role}-effort`];
+    const fast = booleanOption(options[`${role}-fast`], `${role}-fast`, undefined);
+    if (effort !== undefined && !REASONING_EFFORTS.includes(effort)) throw new Error(`--${role}-effort must be one of ${REASONING_EFFORTS.join(", ")}`);
+    if (model !== undefined && !/^[\w.:\[\]-]+$/.test(model)) throw new Error(`--${role}-model is not a valid model identifier`);
+    if (model === undefined && effort === undefined && fast === undefined) continue;
+    overrides[role] = { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(fast !== undefined ? { fast } : {}) };
+  }
+  return overrides;
+}
+
+export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
+
+function clineThinking(value) {
+  if (value === undefined) return "none";
+  if (!CLINE_THINKING.includes(value)) throw new Error(`--cline-thinking must be one of ${CLINE_THINKING.join(", ")}`);
+  return value;
+}
+
 export function parseLoopOptions(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 2) {
@@ -41,5 +67,8 @@ export function parseLoopOptions(argv) {
     solReassessment: booleanOption(options["sol-reassessment"], "sol-reassessment", true),
     // false: Cline runs with its normal tools; Node scope/HEAD checks and QA still gate every change.
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
+    roleOverrides: parseRoleOverrides(options),
+    clineThinking: clineThinking(options["cline-thinking"]),
+    llamacppModelsDir: options["llamacpp-models-dir"] || null,
   };
 }

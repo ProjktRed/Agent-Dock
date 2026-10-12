@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CliKind } from "@shared/types";
-import { useApp } from "../store";
+import { cleanError, useApp } from "../store";
 import { connectionMeta } from "../lib/format";
 import { Spinner, St } from "../components/ui";
+import { Icon } from "../components/Icon";
 import { AddProjectDialog } from "./projects/AddProjectDialog";
 
 const REQUIREMENTS: { label: string; kinds: CliKind[]; why: string }[] = [
@@ -10,6 +11,62 @@ const REQUIREMENTS: { label: string; kinds: CliKind[]; why: string }[] = [
   { label: "Local model runtime", kinds: ["llamacpp", "ollama"], why: "llama.cpp or Ollama serves the worker's model" },
   { label: "Orchestrator", kinds: ["codex", "claude"], why: "Codex CLI or Claude Code plans tasks and runs QA" },
 ];
+
+/**
+ * Local providers found during setup: offer to collect their model lists from the provider itself.
+ * llama.cpp counts as found when it answers or its launcher points at a models folder.
+ */
+function LocalModelsPrompt() {
+  const { snap, healths, setClis, toast } = useApp();
+  const [modelsDir, setModelsDir] = useState<string | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [skipped, setSkipped] = useState(false);
+  useEffect(() => {
+    void window.api.detectModelsDir().then(setModelsDir);
+  }, []);
+  const local = snap.clis.filter((c) => (c.kind === "ollama" && healths[c.id]?.state === "connected") || (c.kind === "llamacpp" && (healths[c.id]?.state === "connected" || modelsDir)));
+  const pending = local.filter((c) => !c.collected?.models.length);
+  if (skipped || modelsDir === undefined || local.length === 0) return null;
+  if (pending.length === 0) {
+    return (
+      <div className="row sub" style={{ gap: 8 }}>
+        <St kind="done" />
+        {local.map((c) => `${c.name}: ${c.collected!.models.length} models`).join(" · ")} · refresh any time in CLIs › Models
+      </div>
+    );
+  }
+  const collect = async () => {
+    setBusy(true);
+    try {
+      for (const c of pending) {
+        if (c.kind === "llamacpp" && !c.modelsDir && modelsDir) setClis(await window.api.saveCli({ ...c, modelsDir }));
+        const clis = await window.api.collectModels(c.id);
+        setClis(clis);
+        const result = clis.find((x) => x.id === c.id)?.collected;
+        toast(result?.error ? "warning" : "success", result?.error ?? `${result?.models.length ?? 0} models from ${c.name}`);
+      }
+    } catch (e) {
+      toast("error", cleanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="banner" style={{ alignItems: "flex-start" }}>
+      <Icon name="active" className="ok" />
+      <div className="stack grow" style={{ gap: 8 }}>
+        <span>
+          <b style={{ fontWeight: 600 }}>Local providers found: {pending.map((c) => c.name).join(", ")}.</b> Collect their model lists so you can pick the Implementation model?
+          {pending.some((c) => c.kind === "llamacpp") && modelsDir && <span className="sub"> llama.cpp will list every model in <span className="mono">{modelsDir}</span> (router mode).</span>}
+        </span>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn primary sm" disabled={busy} onClick={() => void collect()}>{busy && <Spinner />}Collect model lists</button>
+          <button className="btn ghost sm" disabled={busy} onClick={() => setSkipped(true)}>Skip</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function FirstLaunch() {
   const { snap, healths, go, saveSettings, setProjects, setActive, toast } = useApp();
@@ -45,6 +102,7 @@ export function FirstLaunch() {
               </div>
             ))}
           </div>
+          <LocalModelsPrompt />
           <div className="row wrap" style={{ gap: 12 }}>
             <button className="btn" disabled={checking} onClick={async () => { setChecking(true); await Promise.all(snap.clis.map((c) => window.api.checkCli(c.id))); setChecking(false); }}>{checking && <Spinner />}Detect again</button>
             <button className="btn ghost" onClick={() => go("clis")}>Configure manually…</button>

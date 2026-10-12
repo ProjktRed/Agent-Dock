@@ -216,6 +216,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .field > span { font-size: 12px; color: var(--t2); }
 .list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
 .list li { display: flex; align-items: center; gap: 10px; min-height: 28px; font-size: 12.5px; }
+.list li.commit { display: block; padding: 4px 0; }
+.changelog { white-space: pre-wrap; margin: 4px 0 6px 62px; color: var(--t2); font-size: 12px; line-height: 1.55; }
 .log { padding: 12px 14px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; line-height: 1.6; color: #b9c7d8; border-radius: 12px; box-shadow: var(--in-s); }
 .disc { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 4px; border: 0; background: transparent; cursor: pointer; color: var(--t); font-size: 13px; text-align: left; }
 .disc:hover { color: var(--a); }

@@ -16,6 +16,19 @@ export function agentForRole(role: EngineRole, project: Project, agents: Agent[]
   return agents.find((a) => a.role === role && a.enabled) ?? null;
 }
 
+/**
+ * A model id that clearly belongs to the other orchestrator (e.g. a Claude alias on Codex).
+ * Codex default labels are allowed on Claude: the engine maps them to the Claude defaults.
+ */
+export function wrongProviderModel(orchestrator: "codex" | "claude", model: string): boolean {
+  const claudeLike = /^(claude-|sonnet|opus|haiku|fable|default$)/i.test(model);
+  if (orchestrator === "codex") return claudeLike;
+  return /^(gpt-|o\d|codex-)/i.test(model) && !["gpt-6.1-sol", "gpt-6-astra"].includes(model);
+}
+
+/** Cline CLI --thinking levels (engine --cline-thinking). */
+export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
+
 export interface EngineLaunchPlan {
   args: string[];
   problems: string[];
@@ -67,11 +80,36 @@ export function buildEngineArgs(input: {
     args.push("--cline-context-tokens", String(impl.contextTokens));
     args.push("--cline-max-output-tokens", String(impl.maxOutputTokens));
     args.push("--timeout-seconds", String(impl.timeoutSeconds));
+    if (impl.reasoning && CLINE_THINKING.includes(impl.reasoning)) args.push("--cline-thinking", impl.reasoning);
+    const providerConn = clis.find((c) => c.kind === impl.provider);
+    if (impl.provider === "llamacpp" && providerConn?.modelsDir) args.push("--llamacpp-models-dir", providerConn.modelsDir);
+    const collected = providerConn?.collected?.models ?? [];
+    if (collected.length && !collected.some((m) => m.id === impl.model)) {
+      problems.push(`Implementation model “${impl.model}” is not in the list collected from ${providerConn!.name}. Pick a model in Agents, or refresh the list in CLIs › Models.`);
+    }
   }
   const orchestrator = qaCli?.kind === "claude" ? "claude" : "codex";
   args.push("--orchestrator", orchestrator);
   if (qaCli && qaCli.location && qaCli.location !== qaCli.kind) {
     args.push(orchestrator === "claude" ? "--claude-command" : "--codex-exe", qaCli.location);
+  }
+  // Per-role model, effort and speed. Resolver follows the Assessment agent (the app has no Resolver role).
+  const roles: [string[], Agent | null][] = [[["qa"], qa], [["assessment", "resolver"], assessment], [["elevate"], elevation?.enabled ? elevation : null]];
+  for (const [flags, agent] of roles) {
+    if (!agent || cliOf(agent)?.kind !== orchestrator) continue;
+    const model = agent.model.trim();
+    if (model && wrongProviderModel(orchestrator, model)) {
+      problems.push(`${agent.name}: “${model}” is not a ${orchestrator === "claude" ? "Claude Code" : "Codex"} model. Pick a model in Agents.`);
+      continue;
+    }
+    for (const flag of flags) {
+      if (model) args.push(`--${flag}-model`, model);
+      if (agent.reasoning) args.push(`--${flag}-effort`, agent.reasoning);
+      args.push(`--${flag}-fast`, String(Boolean(agent.fast)));
+    }
+  }
+  if (elevation?.enabled && qaCli && cliOf(elevation) && cliOf(elevation)!.kind !== orchestrator) {
+    problems.push(`Elevation agent “${elevation.name}” must use the same orchestrator CLI as QA (${qaCli.name}).`);
   }
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));

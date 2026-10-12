@@ -58,7 +58,10 @@ export function Updates() {
             </div>
             <ul className="list">
               {status.commits.slice(0, 12).map((c) => (
-                <li key={c.hash}><span className="mono mut">{c.hash.slice(0, 7)}</span><span className="grow ellipsis">{c.subject}</span><span className="sub">{ago(c.date)}</span></li>
+                <li key={c.hash} className="commit">
+                  <div className="row" style={{ gap: 10 }}><span className="mono mut">{c.hash.slice(0, 7)}</span><b className="grow ellipsis" style={{ fontWeight: 600 }}>{c.subject}</b><span className="sub">{ago(c.date)}</span></div>
+                  {c.body && <div className="changelog selectable">{c.body}</div>}
+                </li>
               ))}
             </ul>
             <span className="hint">The app keeps running while the new version builds from a clean copy of the committed code, then restarts. Running automation must be stopped first.</span>

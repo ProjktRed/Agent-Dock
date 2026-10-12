@@ -12,8 +12,35 @@ export let RESOLVER_MODEL = "gpt-6.1-sol";
 export let ELEVATE_MODEL = "gpt-6-astra";
 export let CODEX_REASONING = "medium";
 
+// Per-role reasoning effort and Fast speed tier. Defaults keep every role at CODEX_REASONING, standard speed.
+export const ROLE_EFFORT = { qa: "medium", assessment: "medium", resolver: "medium", elevate: "medium" };
+export const ROLE_FAST = { qa: false, assessment: false, resolver: false, elevate: false };
+
 export function useOrchestratorModels({ qa, assessment, resolver, elevate, reasoning }) {
   QA_MODEL = qa; ASSESSMENT_MODEL = assessment; RESOLVER_MODEL = resolver; ELEVATE_MODEL = elevate; CODEX_REASONING = reasoning;
+  for (const role of Object.keys(ROLE_EFFORT)) ROLE_EFFORT[role] = reasoning;
+}
+
+/** Apply per-role overrides ({ qa: { model, effort, fast }, ... }) on top of the orchestrator defaults. */
+export function useRoleOverrides(overrides = {}) {
+  for (const [role, value] of Object.entries(overrides)) {
+    if (!(role in ROLE_EFFORT) || !value) continue;
+    if (value.model) {
+      if (role === "qa") QA_MODEL = value.model;
+      else if (role === "assessment") ASSESSMENT_MODEL = value.model;
+      else if (role === "resolver") RESOLVER_MODEL = value.model;
+      else ELEVATE_MODEL = value.model;
+    }
+    if (value.effort) ROLE_EFFORT[role] = value.effort;
+    if (value.fast !== undefined) ROLE_FAST[role] = value.fast;
+  }
+}
+
+export const roleModel = (role) => ({ qa: QA_MODEL, assessment: ASSESSMENT_MODEL, resolver: RESOLVER_MODEL, elevate: ELEVATE_MODEL })[role];
+
+/** invoke() options for a role; `fast` is only present when enabled. */
+export function roleOptions(role) {
+  return { model: roleModel(role), reasoningEffort: ROLE_EFFORT[role], ...(ROLE_FAST[role] ? { fast: true } : {}) };
 }
 
 export const recoveryOutputSchema = {
@@ -193,7 +220,7 @@ export class CodexWorker {
     await this.clearProcessState(this.pidFile);
   }
 
-  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
@@ -208,6 +235,8 @@ export class CodexWorker {
       ...(this.windowsSandbox ? ["-c", `windows.sandbox=${JSON.stringify(this.windowsSandbox)}`] : []),
       ...(model ? ["-m", model] : []),
       ...(reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
+      // Codex's Fast speed tier (model/list serviceTiers id "priority"); omitted keeps the user's config.
+      ...(fast ? ["-c", `service_tier="priority"`] : []),
     ];
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs,
       ...(sandbox === "workspace-write" ? ["--approve-for-me"] : ["--sandbox", sandbox]),
@@ -293,13 +322,13 @@ export class CodexWorker {
       "Do not launch Cline, another Codex, background processes, or wait for development. Return JSON and exit.",
       "User objective: " + objective,
       "Previous completed task: " + JSON.stringify(previous ?? null),
-    ].join("\n"), "read-only", { model: ASSESSMENT_MODEL, reasoningEffort: CODEX_REASONING });
+    ].join("\n"), "read-only", roleOptions("assessment"));
     if (result.status === "task") taskSkillMode(result.task, "", { required: true });
     return result;
   }
 
   review(qaPacket, context = {}) {
-    return this.invoke(buildQaPrompt(qaPacket, context), "workspace-write", { model: QA_MODEL, reasoningEffort: CODEX_REASONING, schema:qaOutputSchema, parse:parseQaResult });
+    return this.invoke(buildQaPrompt(qaPacket, context), "workspace-write", { ...roleOptions("qa"), schema:qaOutputSchema, parse:parseQaResult });
   }
 
   assessCorrection(input) { return this.recoveryOperation(input, false); }
@@ -318,7 +347,7 @@ export class CodexWorker {
       'Give concise nextWorkerInstructions, including direct edits and no repository scratch/helper files. Preserve correct existing work. Return JSON and exit completely.',
       'workerCapabilities.nativeTools is the observed runtime tool list, not a wish list. An empty list is unverified. Do not prescribe absent tools. Inspect editFailures for actual failed inputs/results and current source excerpts. When the tool guard is active (workerCapabilities present), require fresh reads, unique small matches and at most 2000 characters per editor field. A broken file this task created may be overwritten completely instead of patched. Verify helper/property paths in the supplied source evidence; do not invent them.',
       'INPUT: '+JSON.stringify(input),
-    ].join('\n'),'read-only',{model:RESOLVER_MODEL,reasoningEffort:CODEX_REASONING,schema:recoveryOutputSchema,parse:parseRecoveryResult});
+    ].join('\n'),'read-only',{...roleOptions("resolver"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
   }
 
   recoveryOperation(input, elevation) {
@@ -335,6 +364,6 @@ export class CodexWorker {
       "Only relevant independently verified issue knowledge is supplied. Do not treat speculative prior reports as established causes.",
       "Return JSON and exit completely.",
       "INPUT: " + JSON.stringify(input),
-    ].join("\n"), "read-only", {model:elevation?ELEVATE_MODEL:ASSESSMENT_MODEL,reasoningEffort:CODEX_REASONING,schema:recoveryOutputSchema,parse:parseRecoveryResult});
+    ].join("\n"), "read-only", {...roleOptions(elevation?"elevate":"assessment"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
   }
 }

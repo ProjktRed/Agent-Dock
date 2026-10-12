@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { atomicWriteJson, DashboardState } from "./dashboard-state.mjs";
-import { CodexUsageLimitError, detectCodexUsageLimit, ELEVATE_MODEL, ASSESSMENT_MODEL, QA_MODEL, RESOLVER_MODEL, CODEX_REASONING } from "./codex-worker.mjs";
+import { CodexUsageLimitError, detectCodexUsageLimit, ROLE_EFFORT, roleModel } from "./codex-worker.mjs";
 import { captureGitBaseline } from "./qa-runner.mjs";
 import { classifyQaCommand, prepareQaPacket, collectGitEvidence } from "./qa-packet.mjs";
 import { buildCorrectionPrompt, buildInitialPrompt } from "./workflow.mjs";
@@ -65,13 +65,14 @@ export async function runRecoverableCodex({
       record = { ...record, status: "running", inputs, context, limit: null, waitingResumeGeneration: null, updatedAt: new Date().toISOString() };
       await writePending(pendingPath(stateDir), record);
       const operationStarted = Date.now();
+      const role = ['qa', 'elevate', 'resolver'].includes(operation) ? operation : 'assessment';
       const qaTelemetry = operation === "qa" ? {
         attempt: inputs.attempt,
         changedFileCount: inputs.changedFiles?.length ?? 0,
         diffByteCount: inputs.diff?.bytes ?? 0,
         commands: inputs.qaEvidence?.command?.command ? [inputs.qaEvidence.command.command] : [],
-      } : operation === "elevate" ? { startedAt: new Date(operationStarted).toISOString(), model: ELEVATE_MODEL, reasoningEffort: CODEX_REASONING } : {};
-      await emit(startType, { ...qaTelemetry, operation, startedAt:new Date(operationStarted).toISOString(), model: operation === 'qa' ? QA_MODEL : operation === 'elevate' ? ELEVATE_MODEL : operation === 'resolver' ? RESOLVER_MODEL : ASSESSMENT_MODEL, reasoningEffort: CODEX_REASONING, automatic: context.automatic, triggeredBy: context.triggeredBy, operationId: record.operationId });
+      } : operation === "elevate" ? { startedAt: new Date(operationStarted).toISOString(), model: roleModel("elevate"), reasoningEffort: ROLE_EFFORT.elevate } : {};
+      await emit(startType, { ...qaTelemetry, operation, startedAt:new Date(operationStarted).toISOString(), model: roleModel(role), reasoningEffort: ROLE_EFFORT[role], automatic: context.automatic, triggeredBy: context.triggeredBy, operationId: record.operationId });
       let result;
       try {
         result = await invoke(inputs);

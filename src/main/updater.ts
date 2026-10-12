@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
-import { parseLog, parseLsRemote } from "./updater-parse";
+import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
 const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
@@ -105,7 +105,7 @@ export class Updater {
     await run("git", ["fetch", "--force", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: REPO, timeoutMs: 10 * 60_000 });
     const known = await run("git", ["cat-file", "-e", `${this.installed!.commit}^{commit}`], { cwd: REPO });
     const range = known.code === 0 ? `${this.installed!.commit}..${latest}` : `-20 ${latest}`;
-    const logResult = await run("git", ["log", "--format=%H%x09%cI%x09%s", ...range.split(" ")], { cwd: REPO });
+    const logResult = await run("git", ["log", LOG_FORMAT, ...range.split(" ")], { cwd: REPO });
     return logResult.code === 0 ? parseLog(logResult.stdout) : [];
   }
 

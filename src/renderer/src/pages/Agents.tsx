@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Agent, EngineEvent, Role, TokenRecord } from "@shared/types";
 import { cleanError, useApp } from "../store";
-import { clock, connectionMeta, roleLabel, tokens, uid } from "../lib/format";
+import { ago, clock, connectionMeta, roleLabel, tokens, uid } from "../lib/format";
 import { agentForRoleClient } from "../lib/agents";
+import { defaultModelId, effortLabel, useModelCatalog, withModel } from "../lib/models";
 import { Icon } from "../components/Icon";
 import { Disclosure, Dot, Empty, Modal, Spinner, St, Support, Tabs, Toggle } from "../components/ui";
 
@@ -19,7 +20,7 @@ function eventText(e: EngineEvent) {
 }
 
 function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Agent) => void; onDelete: () => void }) {
-  const { snap, healths, toast } = useApp();
+  const { snap, healths, toast, go } = useApp();
   const [draft, setDraft] = useState(agent);
   const [manual, setManual] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -29,9 +30,23 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const cliOptions = snap.clis.filter((c) => (implementation ? c.kind === "cline" : orchestrator ? c.kind === "codex" || c.kind === "claude" : true));
   const cli = snap.clis.find((c) => c.id === draft.cliId);
   const providerCli = implementation ? snap.clis.find((c) => c.kind === draft.provider) : null;
-  const discovered = providerCli ? healths[providerCli.id]?.models ?? [] : [];
-  const engineModels = cli?.kind === "claude" ? snap.engine.orchestratorModels.claude : snap.engine.orchestratorModels.codex;
-  const engineModel = orchestrator ? engineModels[draft.role === "elevation" ? "elevate" : draft.role] : null;
+  // Local models: the list collected from the provider (CLIs › Models) wins over the live health check.
+  const collected = providerCli?.collected?.models ?? [];
+  const discovered: { id: string; detail: string; thinking?: boolean | null }[] = collected.length ? collected : providerCli ? healths[providerCli.id]?.models ?? [] : [];
+  const localModel = discovered.find((m) => m.id === draft.model);
+  const catalog = useModelCatalog();
+  const roleKey = draft.role === "elevation" ? "elevate" : draft.role;
+  const kind = cli?.kind === "claude" || cli?.kind === "codex" ? cli.kind : null;
+  const list = orchestrator && kind ? catalog?.[kind] ?? null : null;
+  const current = list?.models.find((m) => m.id === draft.model);
+  const refreshing = kind ? catalog?.refreshing[kind] : false;
+  const changeCli = (cliId: string) => {
+    const next = snap.clis.find((c) => c.id === cliId);
+    const nextKind = next?.kind === "claude" || next?.kind === "codex" ? next.kind : null;
+    if (!orchestrator || !nextKind || nextKind === kind) return set("cliId", cliId);
+    const nextList = catalog?.[nextKind];
+    setDraft(withModel({ ...draft, cliId, reasoning: "medium", fast: false }, nextList, defaultModelId(nextList, snap.engine.orchestratorModels[nextKind][roleKey])));
+  };
   const modelMax = providerCli ? healths[providerCli.id]?.contextMax : undefined;
   const dirty = JSON.stringify(draft) !== JSON.stringify(agent);
   const set = <K extends keyof Agent>(k: K, v: Agent[K]) => setDraft({ ...draft, [k]: v });
@@ -66,7 +81,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         {draft.role === "custom" && <label className="field"><span>Custom role name</span><input className="input" value={draft.customRole ?? ""} onChange={(e) => set("customRole", e.target.value)} /></label>}
         <label className="field">
           <span>CLI connection</span>
-          <select className="sel" value={draft.cliId} onChange={(e) => set("cliId", e.target.value)}>
+          <select className="sel" value={draft.cliId} onChange={(e) => changeCli(e.target.value)}>
             {cliOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{healths[c.id] && healths[c.id].state !== "connected" ? ` (${connectionMeta[healths[c.id].state].label})` : ""}</option>)}
           </select>
           {orchestrator && <span className="hint">The engine runs one orchestrator: QA and Assessment must use the same CLI.</span>}
@@ -83,38 +98,127 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         <div className="field">
           <span className="row" style={{ gap: 8 }}>Model{orchestrator ? <Support kind="engine" /> : implementation ? <Support kind="engine" /> : <Support kind="saved" />}
             {implementation && discovered.length > 0 && <button className="btn ghost sm" style={{ height: 20, padding: 0, marginLeft: "auto" }} onClick={() => setManual(!manual)}>{manual ? "Choose discovered" : "Enter manually"}</button>}
+            {orchestrator && kind && (
+              <span className="row" style={{ gap: 6, marginLeft: "auto" }}>
+                {list?.ok && <button className="btn ghost sm" style={{ height: 20, padding: 0 }} onClick={() => setManual(!manual)}>{manual ? "Choose from list" : "Enter manually"}</button>}
+                <button className="btn ghost sm icon" style={{ height: 20, width: 20 }} disabled={refreshing} onClick={() => window.api.refreshModels(kind).catch((e) => toast("error", cleanError(e)))} aria-label="Refresh model list" title="Ask the CLI for its model list again">
+                  {refreshing ? <Spinner /> : <Icon name="refresh" size="sm" />}
+                </button>
+              </span>
+            )}
           </span>
           {orchestrator ? (
-            <>
-              <input className="input mono" value={engineModel ?? "unknown"} readOnly />
-              <span className="hint">Set by the engine for {cli?.kind === "claude" ? "Claude Code" : "Codex CLI"}; the engine does not accept a model override for this role.</span>
-            </>
+            list?.ok && list.models.length && !manual ? (
+              <>
+                <select className="sel" value={draft.model} onChange={(e) => setDraft(withModel(draft, list, e.target.value))}>
+                  {!current && <option value={draft.model}>{draft.model || "Engine default"} (not listed by {cli?.name})</option>}
+                  {list.models.map((m) => (
+                    <option key={m.id} value={m.id}>{m.displayName}{m.isDefault ? " (CLI default)" : ""}{m.description ? ` · ${m.description}` : ""}</option>
+                  ))}
+                </select>
+                <span className="hint">
+                  <span className="mono">{current?.resolved ?? draft.model}</span> · {list.models.length} models reported by {cli?.name} {ago(list.fetchedAt)}
+                  {list.error ? ` · ${list.error}` : ""}
+                </span>
+              </>
+            ) : (
+              <>
+                <input className="input mono" value={draft.model} onChange={(e) => set("model", e.target.value.trim())} placeholder={snap.engine.orchestratorModels[kind ?? "codex"][roleKey] ?? "model identifier"} />
+                <span className="hint">
+                  {refreshing ? `Asking ${cli?.name} for its models…` : list?.error ? `${cli?.name} did not list models: ${list.error}` : manual ? "Exact model identifier or alias, passed to the CLI as given." : `No model list from ${cli?.name ?? "this CLI"} yet. Use the refresh button.`}
+                </span>
+              </>
+            )
           ) : implementation && discovered.length && !manual ? (
             <>
               <select className="sel" value={draft.model} onChange={(e) => set("model", e.target.value)}>
-                {!discovered.some((m) => m.id === draft.model) && <option value={draft.model}>{draft.model} (not advertised)</option>}
+                {!localModel && <option value={draft.model}>{draft.model} (not listed by {providerCli?.name})</option>}
                 {discovered.map((m) => <option key={m.id} value={m.id}>{m.id}{m.detail ? ` · ${m.detail}` : ""}</option>)}
               </select>
-              <span className="hint">{discovered.length} models discovered from {providerCli?.name}</span>
+              <span className="hint">
+                {collected.length ? `${collected.length} models collected from ${providerCli?.name} ${ago(providerCli?.collected?.at)}` : `${discovered.length} models discovered from the running ${providerCli?.name}`} ·{" "}
+                <a onClick={() => go("clis")}>refresh in CLIs › Models</a>
+              </span>
             </>
           ) : (
             <>
               <input className="input mono" value={draft.model} onChange={(e) => set("model", e.target.value)} placeholder="model identifier" />
-              <span className="hint">{implementation ? `${providerCli?.name ?? "Provider"} did not list models (is it running?). The engine requires the exact identifier.` : "Manual identifier"}</span>
+              <span className="hint">
+                {implementation ? (
+                  <>
+                    No model list from {providerCli?.name ?? "the provider"} yet. <a onClick={() => go("clis")}>Collect it in CLIs › Models</a>, or type the exact identifier.
+                  </>
+                ) : (
+                  "Manual identifier"
+                )}
+              </span>
             </>
           )}
         </div>
         <div className="field">
-          <span>Reasoning effort</span>
+          <span className="row" style={{ gap: 8 }}>{implementation ? "Thinking" : "Reasoning effort"}{(orchestrator || implementation) && <Support kind="engine" />}</span>
           {orchestrator ? (
+            current && current.efforts.length === 0 ? (
+              <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>{current.displayName} has no effort setting</div>
+            ) : (
+              <>
+                <select className="sel" value={draft.reasoning ?? "medium"} onChange={(e) => set("reasoning", e.target.value)}>
+                  {(current?.efforts.length ? current.efforts : ["low", "medium", "high", "xhigh", "max"]).map((effort) => (
+                    <option key={effort} value={effort}>{effortLabel(effort)}{current?.defaultEffort === effort ? " (model default)" : ""}</option>
+                  ))}
+                </select>
+                <span className="hint">{current ? `Levels ${current.displayName} supports, as reported by ${cli?.name}` : "Model not in the CLI's list: common levels shown"}</span>
+              </>
+            )
+          ) : implementation ? (
             <>
-              <input className="input" value={engineModels.reasoning ?? "—"} readOnly />
-              <span className="hint">Fixed by the engine for this orchestrator.</span>
+              <select className="sel" value={draft.reasoning ?? "none"} onChange={(e) => set("reasoning", e.target.value)}>
+                {["none", "low", "medium", "high", "xhigh"].map((level) => (
+                  <option key={level} value={level}>{level === "none" ? "Off" : effortLabel(level)}</option>
+                ))}
+              </select>
+              <span className="hint">
+                {localModel?.thinking === true
+                  ? `${providerCli?.name} reports that ${draft.model} can think. `
+                  : localModel?.thinking === false
+                    ? `${providerCli?.name} reports no thinking support for ${draft.model}; Cline's level is ignored. `
+                    : ""}
+                Sent as Cline --thinking.{draft.provider === "llamacpp" ? " llama.cpp is started with reasoning on (and this effort) when it isn't Off; a server that is already running keeps its setting." : ""}
+              </span>
             </>
           ) : (
-            <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>Not reported as supported for local models</div>
+            <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>Not used by this role</div>
           )}
         </div>
+        {implementation && (
+          <div className="field">
+            <span>Speed</span>
+            <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }} title="Local speed comes from your hardware and llama.cpp / Ollama server settings">Not applicable for local models</div>
+          </div>
+        )}
+        {orchestrator && (
+          <div className="field">
+            <span className="row" style={{ gap: 8 }}>Speed<Support kind="engine" /></span>
+            <Tabs
+              label="Speed"
+              value={draft.fast ? "fast" : "standard"}
+              onChange={(v) => set("fast", v === "fast")}
+              options={[
+                { value: "standard", label: "Standard" },
+                { value: "fast", label: "Fast", disabled: !current?.fast || (Boolean(list?.fastBlockedReason) && !draft.fast) },
+              ]}
+            />
+            <span className="hint">
+              {!current
+                ? "Speed tiers are listed per model; pick a listed model to see them."
+                : !current.fast
+                  ? `${current.displayName} has no Fast tier`
+                  : list?.fastBlockedReason
+                    ? `Fast unavailable: ${list.fastBlockedReason}`
+                    : `Fast: ${current.fastDescription ?? "faster output"}`}
+            </span>
+          </div>
+        )}
         {implementation && (
           <>
             <label className="field">
@@ -292,7 +396,7 @@ export function AgentsPage() {
                 <button key={a.id} className={`item ${sel.id === a.id ? "on" : ""} ${a.enabled ? "" : "off"}`} onClick={() => setSelId(a.id)} aria-pressed={sel.id === a.id}>
                   <div className="row"><span className="name" style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</span><span className="chip">{a.role === "custom" ? a.customRole || "Custom" : roleLabel[a.role]}</span><span className="grow" /><span className={`sub ${a.enabled ? "" : "mut"}`}>{a.enabled ? "" : "Disabled"}</span></div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 6 }}><span>{cli?.name ?? "No CLI"}</span>{a.provider && <><span>·</span><span>{a.provider === "llamacpp" ? "llama.cpp" : "Ollama"}</span></>}</div>
-                  <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.role === "implementation" || a.role === "custom" ? a.model || "—" : (cli?.kind === "claude" ? snap.engine.orchestratorModels.claude : snap.engine.orchestratorModels.codex)[a.role === "elevation" ? "elevate" : a.role] ?? "—"}</span></div>
+                  <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.model || "—"}</span>{a.reasoning && a.role !== "implementation" && <span className="sub">{effortLabel(a.reasoning)}</span>}{a.fast && <span className="chip">Fast</span>}</div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 12 }}>
                     <span className={`row ${h ? connectionMeta[h.state].tone : "mut"}`} style={{ gap: 5 }}><Dot tone="" />{h ? connectionMeta[h.state].label : "Not checked"}</span>
                     {a.role === "implementation" && <span>ctx {tokens(a.contextTokens)}</span>}

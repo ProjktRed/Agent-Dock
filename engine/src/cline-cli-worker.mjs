@@ -315,6 +315,7 @@ export function buildClineArgs({
   configDir,
   hooksDir,
   prompt,
+  thinking = "none",
 }) {
   const args = [
     clineJs,
@@ -326,7 +327,7 @@ export function buildClineArgs({
     "--retries",
     "6",
     "--thinking",
-    "none",
+    thinking,
     "--provider",
     provider,
     "--model",
@@ -358,6 +359,7 @@ export async function launchCline({
   onEvent,
   guardPolicyPath,
   guardPluginPath,
+  thinking,
 }) {
   await access(clineJs, constants.R_OK);
   if (guardPolicyPath) await verifyRestrictedTools({ pluginPath: guardPluginPath });
@@ -371,6 +373,7 @@ export async function launchCline({
     configDir,
     hooksDir,
     prompt,
+    thinking,
   });
   const env = guardPolicyPath ? { ...process.env, CLINE_GLOBAL_SETTINGS_PATH: path.join(configDir, "data", "settings", "global-settings.json") } : undefined;
   const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent });
@@ -390,6 +393,7 @@ export class ClineCliWorker {
     timeoutSeconds = 1_800,
     contextTokens = 98_304,
     dataDir,
+    thinking = "none",
     requestedProvider = provider,
     baseUrl,
     beforeRun,
@@ -410,6 +414,7 @@ export class ClineCliWorker {
       dataDir,
       requestedProvider,
       baseUrl,
+      thinking,
     };
     this.beforeRun = beforeRun;
     this.toolGuard = toolGuard;

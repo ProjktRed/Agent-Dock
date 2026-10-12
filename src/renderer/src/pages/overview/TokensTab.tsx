@@ -73,9 +73,13 @@ export function TokensTab() {
   const implHealth = implCli ? healths[implCli.id] : undefined;
   const modelMax = implHealth?.contextMax;
   const orch = snap.clis.find((c) => c.id === agentForRoleClient("qa", activeProject, snap.agents)?.cliId)?.kind === "claude" ? snap.engine.orchestratorModels.claude : snap.engine.orchestratorModels.codex;
-  // Orchestrator invocations don't record a model; the engine's fixed mapping for the CLI that produced them does.
+  // Orchestrator invocations don't record a model: show the role's configured agent model, else the engine default.
   const modelFor = (r: (typeof byRole)[number]) => {
     if (r.role === "implementation") return r.rs.at(-1)?.model ?? impl?.model ?? "—";
+    const recorded = r.rs.at(-1)?.model;
+    if (recorded) return recorded;
+    const configured = agentForRoleClient(r.role === "resolver" ? "assessment" : r.role, activeProject, snap.agents)?.model;
+    if (configured) return configured;
     const models = r.rs.at(-1)?.provider.startsWith("Anthropic") ? snap.engine.orchestratorModels.claude : snap.engine.orchestratorModels.codex;
     return models[r.role === "elevation" ? "elevate" : r.role] ?? "—";
   };

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { ClineCliWorker } from "./cline-cli-worker.mjs";
-import { CodexWorker, useOrchestratorModels } from "./codex-worker.mjs";
+import { CodexWorker, ROLE_EFFORT, ROLE_FAST, roleModel, useOrchestratorModels, useRoleOverrides } from "./codex-worker.mjs";
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
 import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
@@ -36,6 +36,8 @@ const clineRuntime = await prepareClineRuntime({
   contextTokens: options.clineContextTokens,
   maxOutputTokens: options.clineMaxOutputTokens,
   timeoutSeconds: options.timeoutSeconds,
+  llamaCppModelsDir: options.llamacppModelsDir,
+  thinking: options.clineThinking,
 });
 const provider = clineRuntime.provider;
 const model = clineRuntime.model;
@@ -66,9 +68,12 @@ if (useClaude) {
   const codexPreflight = await preflightCodex(codexLauncher);
   console.log(JSON.stringify({ codexCommand: codexPreflight.command, codexVersion: codexPreflight.version }));
 }
+useRoleOverrides(options.roleOverrides);
+console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
 const state = new DashboardState({ stateDir });
 const worker = new ClineCliWorker({
   toolGuard: options.toolGuard,
+  thinking: options.clineThinking,
   stateDir, workspace, clineJs: options["cline-js"],
   provider, model,
   timeoutSeconds: options.timeoutSeconds,

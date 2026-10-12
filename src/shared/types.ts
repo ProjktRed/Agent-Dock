@@ -42,6 +42,8 @@ export interface Agent {
   provider?: "llamacpp" | "ollama";
   model: string;
   reasoning?: string;
+  /** Orchestrator agents: run on the CLI's Fast speed tier (Codex service tier priority, Claude fast mode). */
+  fast?: boolean;
   contextTokens: number;
   maxOutputTokens: number;
   timeoutSeconds: number;
@@ -64,6 +66,25 @@ export interface CliConnection {
   manualModels: string[];
   env: { key: string; value: string; secret: boolean }[];
   hasSecret: boolean;
+  /** llama.cpp only: serve every model in this folder (router mode, opt-in). Null keeps the launcher's single model. */
+  modelsDir?: string | null;
+  /** Local providers: the model list last collected from the provider itself (Models tab › Refresh). */
+  collected?: CollectedModels | null;
+}
+
+export interface CollectedModel {
+  id: string;
+  detail: string;
+  contextTokens: number | null;
+  /** The provider reports thinking support (Ollama capabilities); null when it does not say. */
+  thinking: boolean | null;
+}
+
+export interface CollectedModels {
+  at: string;
+  source: string;
+  models: CollectedModel[];
+  error: string | null;
 }
 
 export interface Capability {
@@ -180,6 +201,38 @@ export interface LimitsState {
   refreshing: { codex: boolean; claude: boolean };
 }
 
+/** One model as the orchestrator CLI itself advertises it. */
+export interface CliModel {
+  id: string;
+  displayName: string;
+  description: string;
+  /** Resolved full model name when `id` is an alias (Claude: sonnet → claude-sonnet-5-5). */
+  resolved: string | null;
+  efforts: string[];
+  defaultEffort: string | null;
+  /** The model offers a Fast speed tier. */
+  fast: boolean;
+  fastDescription: string | null;
+  isDefault: boolean;
+}
+
+export interface ProviderModels {
+  provider: "codex" | "claude";
+  ok: boolean;
+  fetchedAt: string;
+  source: string;
+  models: CliModel[];
+  /** Account-level fast availability, when the CLI reports it (Claude: fast_mode_disabled_reason). */
+  fastBlockedReason: string | null;
+  error: string | null;
+}
+
+export interface ModelCatalog {
+  codex: ProviderModels | null;
+  claude: ProviderModels | null;
+  refreshing: { codex: boolean; claude: boolean };
+}
+
 export interface BuildInfo {
   commit: string;
   shortCommit: string;
@@ -196,7 +249,8 @@ export interface UpdateStatus {
   source: string;
   branch: string;
   latest: { commit: string; subject: string; version?: string | null } | null;
-  commits: { hash: string; subject: string; date: string }[];
+  /** body: the commit description (changelog), without trailers such as Co-Authored-By. */
+  commits: { hash: string; subject: string; date: string; body: string }[];
   checkedAt: string | null;
   error: string | null;
   log: string[];
