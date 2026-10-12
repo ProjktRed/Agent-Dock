@@ -19,6 +19,7 @@ const MAX_LOG = 400;
 export class Updater {
   status: UpdateStatus;
   private building = false;
+  private muted = false;
 
   constructor(
     private readonly packaged: boolean,
@@ -50,7 +51,7 @@ export class Updater {
 
   private set(patch: Partial<UpdateStatus>) {
     this.status = { ...this.status, ...patch };
-    this.emit(this.status);
+    if (!this.muted) this.emit(this.status);
   }
 
   private append(text: string) {
@@ -66,7 +67,31 @@ export class Updater {
     };
   }
 
-  async check(settings: Settings): Promise<UpdateStatus> {
+  /** True while a build or swap is in progress; background checks are skipped then. */
+  get busy(): boolean {
+    return this.building || this.status.state === "checking" || this.status.state === "building" || this.status.state === "ready";
+  }
+
+  /**
+   * Quiet checks (timer, window focus) never replace the shown status with an error: when the
+   * source cannot be reached (offline), the previous status stays and the next check tries again.
+   */
+  async check(settings: Settings, { quiet = false } = {}): Promise<UpdateStatus> {
+    if (!quiet) return this.probe(settings, false);
+    // Quiet: intermediate states are not shown; only the outcome is, and an error keeps the previous status.
+    const previous = this.status;
+    this.muted = true;
+    try {
+      await this.probe(settings, true);
+    } finally {
+      this.muted = false;
+    }
+    if (this.status.state === "error") this.status = previous;
+    this.emit(this.status);
+    return this.status;
+  }
+
+  private async probe(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
     const { source, branch } = this.target(settings);
     if (!this.packaged || !this.installed) {
       this.set({ state: "dev", source, branch, error: null });
@@ -76,7 +101,8 @@ export class Updater {
       this.set({ state: "error", error: "No update source configured." });
       return this.status;
     }
-    this.set({ state: "checking", source, branch, error: null });
+    // A quiet check keeps the current status (and any update notice) visible while it runs.
+    if (!quiet) this.set({ state: "checking", source, branch, error: null });
     const remote = await run("git", ["ls-remote", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
     const latest = remote.code === 0 ? parseLsRemote(remote.stdout, branch) : null;
     if (!latest) {

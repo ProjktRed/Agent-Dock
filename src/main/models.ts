@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stopAndClean } from "./proc";
 import type { ModelCatalog, ProviderModels } from "@shared/types";
 import { claudeFastPending, parseClaudeModels, parseCodexModels, type CodexModelListResult } from "./lib/models-parse";
 import { readJson, writeJson } from "./lib/json-file";
@@ -106,9 +107,7 @@ function readClaudeModelsOnce(claudePath: string, timeoutMs = 45_000): Promise<{
       if (done) return;
       done = true;
       clearTimeout(timer);
-      child.stdin.end();
-      child.kill();
-      setTimeout(() => rmSync(cwd, { recursive: true, force: true }), 2000);
+      stopAndClean(child, cwd);
       resolve({ models: value, pending });
     };
     const timer = setTimeout(() => finish(failed("claude", source, "Timed out waiting for Claude Code")), timeoutMs);

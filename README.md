@@ -60,7 +60,10 @@ Options: `--source <repo path or git URL>`, `--branch <name>`, `--install-dir <d
 The installed app compares its commit with the source branch on launch
 (`git ls-remote <source> refs/heads/<branch>`). When a newer commit exists it lists the new
 commits and offers **Update now**, or installs automatically if you enable it (Settings ›
-Updates). Updating:
+Updates). While the app runs it repeats that check in the background (every 30 minutes by default,
+Settings › Updates › Check while running) and when you return to the window (at most every
+10 minutes). Background checks stay silent when the source can't be reached, and show a Windows
+notification for a new update when the window isn't in front. Updating:
 
 1. fetches the new commit into the staging copy and runs **that commit's**
    `scripts/release-local.mjs --stage build` while the app keeps running (log shown in Settings),

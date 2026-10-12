@@ -54,15 +54,52 @@ async function applyUpdate() {
 }
 
 async function checkForUpdatesOnLaunch() {
-  const { updates } = store.data.settings;
   await updater.readLastSwap();
   if (updater.status.state === "error") {
     notice({ kind: "error", message: updater.status.error ?? "The last update failed." });
     return;
   }
-  if (!updates.autoCheck) return;
-  const status = await updater.check(store.data.settings).catch(() => null);
+  await checkForUpdates(false);
+  scheduleUpdateChecks();
+}
+
+/** Background update listener: a cheap `git ls-remote` on a timer and when the window is focused. */
+let updateTimer: NodeJS.Timeout | null = null;
+let lastUpdateCheck = 0;
+let updateCheckRunning = false;
+const FOCUS_CHECK_MS = 10 * 60_000;
+
+function scheduleUpdateChecks() {
+  if (updateTimer) clearInterval(updateTimer);
+  updateTimer = null;
+  const { autoCheck, checkMinutes } = store.data.settings.updates;
+  if (autoCheck && checkMinutes > 0) updateTimer = setInterval(() => void checkForUpdates(true), checkMinutes * 60_000);
+}
+
+function checkOnFocus() {
+  const { autoCheck, checkMinutes } = store.data.settings.updates;
+  if (autoCheck && checkMinutes > 0 && Date.now() - lastUpdateCheck > FOCUS_CHECK_MS) void checkForUpdates(true);
+}
+
+async function checkForUpdates(quiet: boolean) {
+  const { updates } = store.data.settings;
+  if (!updates.autoCheck || updater.busy || updateCheckRunning) return;
+  updateCheckRunning = true;
+  lastUpdateCheck = Date.now();
+  try {
+    await reactToUpdateCheck(quiet);
+  } finally {
+    updateCheckRunning = false;
+  }
+}
+
+async function reactToUpdateCheck(quiet: boolean) {
+  const { updates } = store.data.settings;
+  const knownCommit = updater.status.state === "available" ? updater.status.latest?.commit : null;
+  const status = await updater.check(store.data.settings, { quiet }).catch(() => null);
   if (status?.state !== "available") return;
+  // A background check only speaks up for a commit it has not announced yet.
+  if (quiet && status.latest?.commit === knownCommit) return;
   const n = status.commits.length;
   const summary = `${n || "New"} commit${n === 1 ? "" : "s"} since ${status.installed?.shortCommit}: ${status.latest?.subject ?? ""}`;
   if (updates.autoInstall && !store.data.projects.some((p) => engine.isAlive(p.id))) {
@@ -70,7 +107,9 @@ async function checkForUpdatesOnLaunch() {
     await applyUpdate().catch((e) => notice({ kind: "error", message: `Update failed: ${e.message}` }));
     return;
   }
-  // Otherwise the renderer shows the in-app update notice in the title bar (UpdateNotice).
+  // Otherwise the renderer shows the in-app update notice in the title bar (UpdateNotice);
+  // when the window is hidden or in the background, a Windows notification points to it.
+  if (quiet && !win?.isFocused()) osNotify(`Agent Dock ${status.latest?.version ? `v${status.latest.version} ` : ""}is available`, summary);
 }
 
 const send = (channel: string, value: unknown) => win?.webContents.send(channel, value);
@@ -169,6 +208,7 @@ function createWindow() {
     title: "Agent Dock",
     webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: false, contextIsolation: true, nodeIntegration: false },
   });
+  win.on("focus", checkOnFocus);
   win.once("ready-to-show", () => {
     if (!store.data.settings.general.startMinimized && !startHidden) win?.show();
   });
@@ -242,9 +282,11 @@ function registerIpc() {
   handle("snapshot", snapshot);
   handle("settings:save", async (settings: Settings) => {
     const previous = store.data.settings.usage;
+    const previousUpdates = store.data.settings.updates;
     store.data.settings = settings;
     await store.saveSettings();
     if (previous.codexPollMinutes !== settings.usage.codexPollMinutes || previous.claudePollMinutes !== settings.usage.claudePollMinutes) limits.schedule(settings);
+    if (previousUpdates.autoCheck !== settings.updates.autoCheck || previousUpdates.checkMinutes !== settings.updates.checkMinutes) scheduleUpdateChecks();
     app.setLoginItemSettings({ openAtLogin: settings.general.launchAtStartup, args: settings.general.startMinimized ? ["--minimized"] : [] });
     return settings;
   });

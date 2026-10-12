@@ -77,8 +77,13 @@ export function Updates() {
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Automatic updates</h2>
         <SetRow title="Check for updates on launch" desc="Compares the installed commit with the source branch" support="app"><Toggle on={u.autoCheck} onChange={(v) => patch({ autoCheck: v })} label="Check on launch" /></SetRow>
+        <SetRow title="Check while running" desc="Asks the source for a newer commit in the background and when you return to the window (at most every 10 minutes). Free: no download unless there is an update." support="app">
+          <select className="sel" value={u.checkMinutes} disabled={!u.autoCheck} onChange={(e) => patch({ checkMinutes: Number(e.target.value) })} aria-label="Background update check interval">
+            {[0, 15, 30, 60, 180].map((m) => <option key={m} value={m}>{m === 0 ? "Off (launch only)" : m < 60 ? `Every ${m} min` : `Every ${m / 60} h`}</option>)}
+          </select>
+        </SetRow>
         <SetRow title="Install without asking" desc="Builds and restarts automatically when no automation is running; otherwise asks" support="app"><Toggle on={u.autoInstall} onChange={(v) => patch({ autoInstall: v })} label="Install automatically" disabled={!u.autoCheck} /></SetRow>
-        <SetRow title="Update source" desc={`Local repository path now; a GitHub URL (https://github.com/owner/repo.git) works the same way later. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
+        <SetRow title="Update source" desc={`A GitHub URL (https://github.com/owner/repo.git) or a local repository path. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
           <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "https://github.com/owner/repo.git"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
         </SetRow>
         <SetRow title="Branch" desc="Only committed history on this branch is used" support="app">

@@ -170,6 +170,8 @@ export interface Settings {
   updates: {
     autoCheck: boolean;
     autoInstall: boolean;
+    /** Minutes between background checks while the app runs (also on window focus); 0 = launch only. */
+    checkMinutes: number;
     /** Git repository to update from: a local path now, a GitHub URL later. Empty = the source this build came from. */
     source: string;
     /** Empty = the branch this build came from. */

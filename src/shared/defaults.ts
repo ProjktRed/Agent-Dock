@@ -77,7 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
-  updates: { autoCheck: true, autoInstall: false, source: "", branch: "" },
+  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "" },
   onboardingComplete: false,
   activeProjectId: null,
 };

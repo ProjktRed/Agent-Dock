@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stopAndClean } from "./proc";
 import type { LimitsState, ProviderLimits, Settings } from "@shared/types";
 import { lastRateLimitEvent, parseClaudeRateLimit, parseClaudeUsage, parseCodexLimits, type ClaudeUsageResponse, type CodexRateLimitsResult } from "./lib/limits-parse";
 import { readJson, writeJson } from "./lib/json-file";
@@ -92,9 +93,7 @@ export function readClaudeUsage(claudePath: string, timeoutMs = 45_000): Promise
       if (done) return;
       done = true;
       clearTimeout(timer);
-      child.stdin.end();
-      child.kill();
-      setTimeout(() => rmSync(cwd, { recursive: true, force: true }), 2000);
+      stopAndClean(child, cwd);
       resolve(value);
     };
     const timer = setTimeout(() => finish(failed("claude", source, "Timed out waiting for Claude Code")), timeoutMs);
@@ -144,15 +143,15 @@ export function probeClaudeLimits(claudePath: string, timeoutMs = 90_000): Promi
     const child = spawn(quote(claudePath), args, { shell: true, windowsHide: true, cwd, env });
     let out = "";
     let err = "";
+    let done = false;
     const finish = (value: ProviderLimits) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
-      rmSync(cwd, { recursive: true, force: true });
+      stopAndClean(child, cwd);
       resolve(value);
     };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(failed("claude", source, "Timed out waiting for Claude Code"));
-    }, timeoutMs);
+    const timer = setTimeout(() => finish(failed("claude", source, "Timed out waiting for Claude Code")), timeoutMs);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (error) => finish(failed("claude", source, error.message)));
