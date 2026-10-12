@@ -79,7 +79,10 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
   if (!conn.modelsDir) return done([], "llama.cpp is not running. Set the models folder so Agent Dock can ask it for the models there, or start the server and refresh.");
   if (!launcher.trim()) return done([], "llama.cpp is not running and no launcher is set (Settings › Advanced › llama.cpp launcher). Start llama.cpp, then refresh.");
   if (!existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
-  const child = spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { windowsHide: true, stdio: "ignore" });
+  const child = process.platform === "win32"
+    ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { windowsHide: true, stdio: "ignore" })
+    : spawn(launcher, ["-ModelsDir", conn.modelsDir], { stdio: "ignore", detached: true });
+  child.on("error", () => { /* not executable: exitCode stays null, the wait below times out */ });
   try {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -96,6 +99,11 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
     return done([], "llama.cpp did not answer in time");
   } finally {
     // Only the process tree Agent Dock started here is stopped.
-    if (child.pid && child.exitCode === null) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    if (child.pid && child.exitCode === null) {
+      if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      else {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+      }
+    }
   }
 }
