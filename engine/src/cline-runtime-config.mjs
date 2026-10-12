@@ -4,7 +4,8 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
-const DEFAULT_LLAMACPP_LAUNCHER = "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd";
+// Script that starts llama.cpp when it is unreachable: --llamacpp-launcher, or the LLAMACPP_LAUNCHER variable.
+const DEFAULT_LLAMACPP_LAUNCHER = process.env.LLAMACPP_LAUNCHER || null;
 
 /** Per-slot context of a running llama-server, or null when /props does not report it. */
 export async function readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel = null) {
@@ -136,6 +137,7 @@ export async function prepareClineRuntime({
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
+        if (!llamaCppLauncher) throw new Error(`${error.message}. Start llama.cpp, or set a launcher script (--llamacpp-launcher) so the engine can start it.`);
         await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
         startedServer = true;
         let lastError = error;
@@ -157,7 +159,7 @@ export async function prepareClineRuntime({
       // Cline is told contextWindow=contextTokens; a smaller server slot would overflow silently.
       const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel);
       if (serverContext !== null && contextTokens && serverContext < contextTokens) {
-        throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Set ContextSize in E:\\llama-cpp-local\\config\\settings.psd1 (and restart the server) or lower --cline-context-tokens.`);
+        throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Raise the server's context size (llama-server -c) and restart it, or lower --cline-context-tokens.`);
       }
       return { requestedProvider: "llamacpp", provider: "openai-compatible", baseUrl, port: Number(new URL(baseUrl).port || 80), model };
     };

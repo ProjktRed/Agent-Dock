@@ -38,6 +38,7 @@ const clineRuntime = await prepareClineRuntime({
   maxOutputTokens: options.clineMaxOutputTokens,
   timeoutSeconds: options.timeoutSeconds,
   llamaCppModelsDir: options.llamacppModelsDir,
+  ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
   thinking: options.clineThinking,
 });
 const provider = clineRuntime.provider;

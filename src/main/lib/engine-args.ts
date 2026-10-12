@@ -92,6 +92,7 @@ export function buildEngineArgs(input: {
     if (impl.reasoning && CLINE_THINKING.includes(impl.reasoning)) args.push("--cline-thinking", impl.reasoning);
     const providerConn = clis.find((c) => c.kind === impl.provider);
     if (impl.provider === "llamacpp" && providerConn?.modelsDir) args.push("--llamacpp-models-dir", providerConn.modelsDir);
+    if (impl.provider === "llamacpp" && settings.advanced.llamaCppLauncher.trim()) args.push("--llamacpp-launcher", settings.advanced.llamaCppLauncher.trim());
     const collected = providerConn?.collected?.models ?? [];
     if (collected.length && !collected.some((m) => m.id === impl.model)) {
       guard(`Implementation model “${impl.model}” is not in the list collected from ${providerConn!.name}. Pick a model in Agents, or refresh the list in CLIs › Models.`);

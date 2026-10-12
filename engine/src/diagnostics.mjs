@@ -1,4 +1,4 @@
-const installed = Symbol.for("codex-cline-loop.process-diagnostics");
+const installed = Symbol.for("agent-dock-engine.process-diagnostics");
 
 export function diagnostic(type, fields = {}) {
   const entry = { timestamp: new Date().toISOString(), diagnostic: type, ...fields };

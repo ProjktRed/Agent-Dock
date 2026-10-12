@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./cline-tool-guard.mjs";
 
-const DEFAULT_CLINE_JS =
-  "C:\\Users\\seish\\AppData\\Roaming\\npm\\node_modules\\cline\\bin\\cline";
+// The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
+const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
 
 const boundedText = (value, limit = 1_000) => typeof value === "string" && value.trim()
   ? value.trim().slice(0, limit)

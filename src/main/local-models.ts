@@ -77,6 +77,7 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
     // not running
   }
   if (!conn.modelsDir) return done([], "llama.cpp is not running. Set the models folder so Agent Dock can ask it for the models there, or start the server and refresh.");
+  if (!launcher.trim()) return done([], "llama.cpp is not running and no launcher is set (Settings › Advanced › llama.cpp launcher). Start llama.cpp, then refresh.");
   if (!existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
   const child = spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { windowsHide: true, stdio: "ignore" });
   try {

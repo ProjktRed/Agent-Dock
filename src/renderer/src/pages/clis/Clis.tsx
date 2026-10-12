@@ -128,7 +128,7 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
         <div className="well pad stack" style={{ gap: 8 }}>
           <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Models folder (router mode)</b>{cli.modelsDir ? <span className="chip info">On</span> : <span className="chip">Off · launcher's single model</span>}</div>
           <div className="row" style={{ gap: 8 }}>
-            <input className="input mono grow" value={dir} placeholder="E:\LLM-Models" onChange={(e) => setDir(e.target.value)} aria-label="Models folder" />
+            <input className="input mono grow" value={dir} placeholder="D:\models" onChange={(e) => setDir(e.target.value)} aria-label="Models folder" />
             <button className="btn sm" onClick={async () => { const found = await window.api.detectModelsDir(); if (found) setDir(found); else toast("warning", "No models folder found in the launcher settings"); }}>Detect</button>
             <button className="btn sm" disabled={dir.trim() === (cli.modelsDir ?? "")} onClick={() => void saveDir(dir.trim() || null)}>Save</button>
             {cli.modelsDir && <button className="btn ghost sm" onClick={() => void saveDir(null)}>Turn off</button>}

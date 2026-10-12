@@ -50,7 +50,7 @@ try {
   const worker = {
     withExclusive: async fn => {
       if (!cline) {
-        const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds,llamaCppModelsDir:options.llamacppModelsDir,thinking:options.clineThinking});
+        const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds,llamaCppModelsDir:options.llamacppModelsDir,...(options.llamacppLauncher?{llamaCppLauncher:options.llamacppLauncher}:{}),thinking:options.clineThinking});
         cline = new ClineCliWorker({toolGuard:options.toolGuard,thinking:options.clineThinking,stateDir,workspace,clineJs:options["cline-js"],provider:runtime.provider,model:runtime.model,timeoutSeconds:options.timeoutSeconds,contextTokens:options.clineContextTokens,dataDir:runtime.dataDir,requestedProvider:runtime.requestedProvider,baseUrl:runtime.baseUrl,beforeRun:runtime.ensureReady,readMetrics:runtime.readMetrics});
         await state.configureRuntime({contextTokens:options.clineContextTokens,timeoutSeconds:options.timeoutSeconds,model:runtime.model,provider:runtime.provider});
       }

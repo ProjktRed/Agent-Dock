@@ -150,7 +150,7 @@ test("dashboard page exposes only the requested controls", async () => {
   try {
     const html = await fetch(dashboard.url).then((response) => response.text());
     for (const control of ["Pause After Task", "Resume", "Stop After Current Task", "Elevate", "View Logs", "View Task Details"]) assert.match(html, new RegExp(control));
-    for (const label of ["BG3C Automation", "Overview", "Activity Log", "File Changes", "Cline Activity", "Recent Cline Events", "Tests &amp; Commands", "Task Details"]) assert.ok(html.includes(label), label);
+    for (const label of ["Agent Dock", "Overview", "Activity Log", "File Changes", "Cline Activity", "Recent Cline Events", "Tests &amp; Commands", "Task Details"]) assert.ok(html.includes(label), label);
     for (const id of ["cline-started", "cline-elapsed", "cline-pid", "qa-tests", "qa-typecheck", "qa-lint", "qa-scope", "current-action", "last-command", "last-file-read", "last-file-modified", "latest-message", "recent-events", "changed-files", "command-results", "activity-filter"]) assert.match(html, new RegExp(`id="${id}"`));
   } finally {
     await dashboard.close();

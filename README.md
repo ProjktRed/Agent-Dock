@@ -5,8 +5,8 @@
 A Windows desktop command center for the Codex ↔ Cline automation loop: manage projects,
 agents, CLI connections and settings, and monitor runs with progress, usage and token data.
 
-The automation itself is the engine from `E:\BG3C\codex-cline-loop`, vendored in
-[`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)); the only change to it is
+The automation itself is the Codex ↔ Cline loop engine, vendored in
+[`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)), extended with
 per-role model, reasoning effort and speed flags. The app launches it as
 a separate process per project and reads the engine's `.state` files. It never re-implements
 the loop.
@@ -38,18 +38,19 @@ npm run release:local
 This builds the app from a **clean copy of the latest commit** on the current branch, not from
 your working tree, and installs it:
 
-1. Clones/refreshes the source into `E:\Agent Dock\Updates\repo` and checks out the branch head
+1. Clones/refreshes the source into `<root>\Updates\repo` and checks out the branch head
    (uncommitted changes are never included).
 2. Writes `build-info.json` (commit, branch, source) and the logo icon, runs `npm ci`,
    `electron-vite build` and `electron-builder --win --dir`.
-3. Mirrors the result to `E:\Agent Dock\App\AgentDock.exe` and adds “Agent Dock” Start menu and
-   Desktop shortcuts. No admin rights are needed. Set `AGENT_DOCK_HOME` to use another root.
+3. Mirrors the result to `<root>\App\AgentDock.exe` and adds “Agent Dock” Start menu and
+   Desktop shortcuts. No admin rights are needed.
 
-The installed app and its update workspace stay outside the source repository:
+`<root>` is `%LOCALAPPDATA%\Programs\Agent Dock` by default; set `AGENT_DOCK_HOME` to use another
+folder. The installed app and its update workspace stay outside the source repository:
 
 ```
-E:\Agent Dock\App       installed app (replaced on update)
-E:\Agent Dock\Updates   clean clone of the committed source + build output
+<root>\App       installed app (replaced on update)
+<root>\Updates   clean clone of the committed source + build output
 ```
 
 Options: `--source <repo path or git URL>`, `--branch <name>`, `--install-dir <dir>`, `--commit <sha>`.
@@ -69,9 +70,8 @@ Updates). Updating:
 Updates are refused while an automation engine is running, because the engine files are replaced.
 Building needs Node.js, npm and Git on PATH.
 
-The source is any git location. Today it is the local repository (`E:\Automation_App`); after the
-move to GitHub, set Settings › Updates › Update source to `https://github.com/<owner>/<repo>.git`
-(or rebuild once from the GitHub clone) and the same mechanism works unchanged.
+The source is any git location: by default the repository the app was built from, or a URL such
+as `https://github.com/<owner>/<repo>.git` set in Settings › Updates › Update source.
 
 ## Architecture
 
@@ -149,7 +149,7 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   subfolder) and loads the Implementation agent's model on demand, with the launcher's tuning. If
   the server isn't running, Refresh starts the launcher in router mode just for the listing (no
   model is loaded) and stops it again. Router mode is opt-in; without a folder the launcher serves
-  its single `settings.psd1` model as before.
+  its single configured model as before.
 - **Thinking (Implementation)**: passed to Cline `--thinking`. For llama.cpp, a level other than
   Off also starts the server with `--reasoning on --reasoning-effort <level>` (only when the
   engine starts it; a running server keeps its setting). Speed tiers do not apply to local models.
@@ -171,10 +171,11 @@ or quitting the app can leave it running safely; the app reattaches on the next 
 - Custom roles can pick a CLI, model, effort and speed, but the engine has no slot that runs them.
 - Custom roles, agent custom instructions, extra skills and protected paths are saved only;
   the engine does not read them yet.
-- The llama.cpp auto-start launcher path is fixed in the engine
-  (`E:\llama-cpp-local\scripts\Cline-Server.cmd`). Router mode needs its `-ModelsDir`,
-  `-Reasoning` and `-ReasoningEffort` parameters (added in `Start-ClineServer.ps1`, opt-in).
-- On this machine the engine's atomic state writes can hit `EPERM` on rename (a file lock,
-  likely antivirus or indexing). It intermittently fails one engine test under parallel load
-  and blocked the `ADR020-A1` reference run. Excluding the engine state folders from real-time
+- llama.cpp is only started automatically when a launcher script is set (Settings › Advanced ›
+  llama.cpp launcher; passed as `--llamacpp-launcher`). Router mode and thinking expect the
+  launcher to accept `-ModelsDir`, `-Reasoning` and `-ReasoningEffort` and pass them on to
+  `llama-server` as `--models-dir`, `--reasoning` and `--reasoning-effort`.
+- On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file
+  lock, usually antivirus or indexing). It can intermittently fail an engine test under parallel
+  load or interrupt a run. Excluding the engine state folders from real-time
   scanning is the usual fix.

@@ -14,9 +14,9 @@ test("thinking and models-folder flags parse; thinking defaults to none", () => 
   const defaults = parseLoopOptions(["--workspace", "w", "--objective", "o"]);
   assert.equal(defaults.clineThinking, "none");
   assert.equal(defaults.llamacppModelsDir, null);
-  const set = parseLoopOptions(["--workspace", "w", "--objective", "o", "--cline-thinking", "high", "--llamacpp-models-dir", "E:\\LLM-Models"]);
+  const set = parseLoopOptions(["--workspace", "w", "--objective", "o", "--cline-thinking", "high", "--llamacpp-models-dir", "D:\\models"]);
   assert.equal(set.clineThinking, "high");
-  assert.equal(set.llamacppModelsDir, "E:\\LLM-Models");
+  assert.equal(set.llamacppModelsDir, "D:\\models");
   assert.throws(() => parseLoopOptions(["--workspace", "w", "--objective", "o", "--cline-thinking", "ultra"]), /cline-thinking must be one of/);
 });
 
@@ -28,7 +28,7 @@ test("Cline gets the configured thinking level", () => {
 
 test("launcher args: router mode over a folder, reasoning only when thinking is on", () => {
   assert.deepEqual(llamaCppLauncherArgs(), []);
-  assert.deepEqual(llamaCppLauncherArgs({ modelsDir: "E:\\LLM-Models" }), ["-ModelsDir", "E:\\LLM-Models"]);
+  assert.deepEqual(llamaCppLauncherArgs({ modelsDir: "D:\\models" }), ["-ModelsDir", "D:\\models"]);
   assert.deepEqual(llamaCppLauncherArgs({ modelsDir: "D", thinking: "high" }), ["-ModelsDir", "D", "-Reasoning", "on", "-ReasoningEffort", "high"]);
 });
 
@@ -44,7 +44,8 @@ test("router mode starts the launcher with the folder and reads /props and /metr
       model: "GLM",
       contextTokens: 24_576,
       timeoutSeconds: 60,
-      llamaCppModelsDir: "E:\\LLM-Models",
+      llamaCppModelsDir: "D:\\models",
+      llamaCppLauncher: "C:\\llama\\start-server.cmd",
       thinking: "low",
       fetchImpl: async (url) => {
         requests.push(url);
@@ -63,7 +64,7 @@ test("router mode starts the launcher with the folder and reads /props and /metr
       },
       sleepImpl: async () => {},
     });
-    assert.deepEqual(starts, [["-ModelsDir", "E:\\LLM-Models", "-Reasoning", "on", "-ReasoningEffort", "low"]]);
+    assert.deepEqual(starts, [["-ModelsDir", "D:\\models", "-Reasoning", "on", "-ReasoningEffort", "low"]]);
     assert.ok(requests.includes("http://127.0.0.1:8081/props?model=GLM"));
     assert.equal((await runtime.readMetrics()).promptTokens, 10);
     assert.ok(requests.includes("http://127.0.0.1:8081/metrics?model=GLM"));

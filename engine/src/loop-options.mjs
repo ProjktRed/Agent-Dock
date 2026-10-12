@@ -1,5 +1,5 @@
 export const DEFAULT_CLINE_CONTEXT_TOKENS = 98_304;
-// Measured 2026-10-11 on RTX 5080 + RAM offload (--fit): fits; ~48 tok/s gen at 24K prompt, ~17 tok/s at 68K.
+// Measured on a consumer GPU with RAM offload (--fit): fits; ~48 tok/s gen at 24K prompt, ~17 tok/s at 68K.
 export const DEFAULT_LLAMACPP_CONTEXT_TOKENS = 98_304;
 // 8K output so a whole small file can be written in one step (piecemeal edits corrupted files).
 export const DEFAULT_LLAMACPP_MAX_OUTPUT_TOKENS = 8_192;
@@ -70,5 +70,6 @@ export function parseLoopOptions(argv) {
     roleOverrides: parseRoleOverrides(options),
     clineThinking: clineThinking(options["cline-thinking"]),
     llamacppModelsDir: options["llamacpp-models-dir"] || null,
+    llamacppLauncher: options["llamacpp-launcher"] || null,
   };
 }

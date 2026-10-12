@@ -359,7 +359,16 @@ function Advanced() {
         <SetRow title="Node runtime" desc="Runs engine/src/cli.mjs. System Node is used when found on PATH; otherwise Electron's bundled runtime" support="app">
           <select className="sel" value={ad.nodeRuntime} onChange={(e) => patch("advanced", { nodeRuntime: e.target.value as typeof ad.nodeRuntime })} aria-label="Node runtime"><option value="system">System Node (PATH)</option><option value="electron">Electron's bundled Node</option></select>
         </SetRow>
-        <SetRow title="llama.cpp launcher" desc={<span className="mono">{ad.llamaCppLauncher}</span>} support="saved"><span className="hint" style={{ maxWidth: 220 }}>The engine starts this script when llama.cpp is unreachable; its path is currently fixed in the engine.</span></SetRow>
+        <SetRow title="llama.cpp launcher" desc="Script the engine runs to start llama.cpp when it is unreachable (and for router-mode model lists). Empty: start llama.cpp yourself." support="engine">
+          <input
+            className="input mono"
+            style={{ width: 300 }}
+            defaultValue={ad.llamaCppLauncher}
+            placeholder="C:\llama\start-server.cmd"
+            onBlur={(e) => e.target.value.trim() !== ad.llamaCppLauncher && patch("advanced", { llamaCppLauncher: e.target.value.trim() })}
+            aria-label="llama.cpp launcher"
+          />
+        </SetRow>
         <SetRow title="Debug logging" support="saved"><Toggle on={ad.debug} onChange={(v) => patch("advanced", { debug: v })} label="Debug logging" /></SetRow>
       </section>
       <section className="card pad">

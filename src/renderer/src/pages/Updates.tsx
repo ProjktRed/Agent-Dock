@@ -79,7 +79,7 @@ export function Updates() {
         <SetRow title="Check for updates on launch" desc="Compares the installed commit with the source branch" support="app"><Toggle on={u.autoCheck} onChange={(v) => patch({ autoCheck: v })} label="Check on launch" /></SetRow>
         <SetRow title="Install without asking" desc="Builds and restarts automatically when no automation is running; otherwise asks" support="app"><Toggle on={u.autoInstall} onChange={(v) => patch({ autoInstall: v })} label="Install automatically" disabled={!u.autoCheck} /></SetRow>
         <SetRow title="Update source" desc={`Local repository path now; a GitHub URL (https://github.com/owner/repo.git) works the same way later. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
-          <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "E:\\Automation_App"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
+          <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "https://github.com/owner/repo.git"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
         </SetRow>
         <SetRow title="Branch" desc="Only committed history on this branch is used" support="app">
           <input className="input mono" style={{ width: 160 }} value={branch} placeholder={status.installed?.branch ?? "master"} onChange={(e) => setBranch(e.target.value)} onBlur={() => branch !== u.branch && patch({ branch: branch.trim() })} aria-label="Update branch" />

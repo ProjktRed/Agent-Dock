@@ -17,9 +17,10 @@ import { logoPng } from "./logo.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL = process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local");
 // Installed app and its update workspace live side by side, outside the source repository:
-//   E:Agent DockApp      the installed app (AgentDock.exe)
-//   E:Agent DockUpdates  clean clone of the committed source + build output
-const ROOT = process.env.AGENT_DOCK_HOME ?? "E:\\Agent Dock";
+//   <root>\App      the installed app (AgentDock.exe)
+//   <root>\Updates  clean clone of the committed source + build output
+// <root> is %LOCALAPPDATA%\Programs\Agent Dock, or AGENT_DOCK_HOME when set.
+const ROOT = process.env.AGENT_DOCK_HOME ?? path.join(LOCAL, "Programs", "Agent Dock");
 export const DEFAULTS = {
   staging: path.join(ROOT, "Updates"),
   installDir: path.join(ROOT, "App"),

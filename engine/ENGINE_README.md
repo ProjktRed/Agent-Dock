@@ -8,10 +8,10 @@ when it is selected explicitly.
 
 ## Start dashboard and loop
 
-From `E:\BG3C\codex-cline-loop`:
+From the `engine/` folder:
 
 ```powershell
-npm run dashboard -- --workspace ..\BG3C_Qwen --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
+npm run dashboard -- --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
 ```
 
 The command automatically opens http://127.0.0.1:4180 in the default browser.
@@ -28,8 +28,9 @@ By default Cline uses llama.cpp at `http://127.0.0.1:8081/v1` with model
 `glm-4.7-flash-ud-q3-k-xl`. The automation maps `--provider llamacpp` to Cline's
 `openai-compatible` provider and defaults to a 98,304-token context and 8,192-token
 maximum output. Before every Cline attempt, Node checks `/health` and `/v1/models`
-and requires the exact model identifier. If the endpoint is unavailable, it starts
-`E:\llama-cpp-local\scripts\Cline-Server.cmd` and waits up to 120 seconds. A
+and requires the exact model identifier. If the endpoint is unavailable and a launcher script
+is set (`--llamacpp-launcher <script>` or the `LLAMACPP_LAUNCHER` variable), it starts that
+script and waits up to 120 seconds; without one it stops with an explanation. A
 startup timeout or model mismatch is logged and stops the attempt. It never causes
 an automatic Ollama fallback.
 
@@ -71,7 +72,7 @@ Launch from PowerShell with `node` directly, because `npm run` through cmd.exe s
 objectives that contain double quotes:
 
 ```powershell
-node src/dashboard-cli.mjs --workspace ..\BG3C_Qwen --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
+node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
 ```
 
 ## Process lifecycle
@@ -259,8 +260,8 @@ Fake Codex writes its JSON, then stays alive briefly. During each fake Cline run
 the child repeatedly probes every recorded Codex PID and fails if any is alive.
 The test covers assessment → FAIL → correction → PASS → next assessment.
 
-`npm test` and the lifecycle test do not invoke a live model or perform BG3
-development. `scripts/live-integration.mjs` is an explicitly invoked end-to-end
+`npm test` and the lifecycle test do not invoke a live model or perform real
+project work. `scripts/live-integration.mjs` is an explicitly invoked end-to-end
 proof: it creates an isolated temporary Git repository with a failing JavaScript
 test, has Cline inspect/edit/test it through llama.cpp, then passes the scoped diff
 to the existing Codex QA and commit workflow.
@@ -269,4 +270,4 @@ No vision model is configured by this integration. A later vision addition needs
 a separate llama.cpp-compatible multimodal GGUF plus its matching projector file,
 a dedicated server/port and launcher, and a Cline provider/model entry with image
 capability. It should be benchmarked independently rather than sharing the coding
-model's 16 GB VRAM budget.
+model's VRAM budget.

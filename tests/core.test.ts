@@ -160,15 +160,21 @@ describe("engine guardrails", () => {
 describe("local providers", () => {
   it("passes thinking and the llama.cpp models folder, and rejects a model the provider did not list", () => {
     const list = agents().map((a) => (a.role === "implementation" ? { ...a, model: "GLM", reasoning: "medium" } : a));
-    const withDir = clis().map((c) => (c.kind === "llamacpp" ? { ...c, modelsDir: "E:\\LLM-Models", collected: { at: "", source: "", error: null, models: [{ id: "GLM", detail: "", contextTokens: null, thinking: null }] } } : c));
+    const withDir = clis().map((c) => (c.kind === "llamacpp" ? { ...c, modelsDir: "D:\\models", collected: { at: "", source: "", error: null, models: [{ id: "GLM", detail: "", contextTokens: null, thinking: null }] } } : c));
     const plan = buildEngineArgs({ project: project(), agents: list, clis: withDir, settings: settings() });
     const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
     expect(plan.problems).toEqual([]);
     expect(flag("--cline-thinking")).toBe("medium");
-    expect(flag("--llamacpp-models-dir")).toBe("E:\\LLM-Models");
+    expect(flag("--llamacpp-models-dir")).toBe("D:\\models");
     const stale = buildEngineArgs({ project: project(), agents: agents(), clis: withDir, settings: settings() });
     expect(stale.problems.some((p) => p.includes("not in the list collected from"))).toBe(true);
     expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--llamacpp-models-dir");
+    // No launcher by default; a configured one is passed to the engine.
+    expect(plan.args).not.toContain("--llamacpp-launcher");
+    const s = settings();
+    s.advanced.llamaCppLauncher = "C:\\llama\\start-server.cmd";
+    const launched = buildEngineArgs({ project: project(), agents: list, clis: withDir, settings: s });
+    expect(launched.args[launched.args.indexOf("--llamacpp-launcher") + 1]).toBe("C:\\llama\\start-server.cmd");
   });
   it("reads llama.cpp router listings", async () => {
     const { parseLlamaModels } = await import("../src/main/local-models");
