@@ -1,0 +1,6 @@
+{
+  "name": "codex-cline-engine",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

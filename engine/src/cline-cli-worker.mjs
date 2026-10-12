@@ -1,0 +1,535 @@
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
+import { prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./cline-tool-guard.mjs";
+
+const DEFAULT_CLINE_JS =
+  "C:\\Users\\seish\\AppData\\Roaming\\npm\\node_modules\\cline\\bin\\cline";
+
+const boundedText = (value, limit = 1_000) => typeof value === "string" && value.trim()
+  ? value.trim().slice(0, limit)
+  : null;
+
+const MESSAGE_BUFFER_LIMIT = 4_000;
+const TEXT_DELTA_TYPES = new Set([
+  "assistant_update",
+  "assistant_delta",
+  "message_delta",
+  "text_delta",
+  "content_block_delta",
+]);
+
+function messageFragment(value) {
+  return typeof value === "string" && value.trim()
+    ? value.slice(0, MESSAGE_BUFFER_LIMIT)
+    : null;
+}
+
+function mergeStreamingText(current, next) {
+  if (!current) return next.slice(0, MESSAGE_BUFFER_LIMIT);
+  if (next.startsWith(current)) return next.slice(0, MESSAGE_BUFFER_LIMIT);
+  if (current.endsWith(next)) return current;
+  const overlapLimit = Math.min(current.length, next.length);
+  for (let size = overlapLimit; size > 0; size--) {
+    if (current.endsWith(next.slice(0, size))) {
+      return `${current}${next.slice(size)}`.slice(0, MESSAGE_BUFFER_LIMIT);
+    }
+  }
+  return `${current}${next}`.slice(0, MESSAGE_BUFFER_LIMIT);
+}
+
+function reconcileFinalMessage(buffer, finalMessage) {
+  const buffered = buffer.trim();
+  const final = finalMessage.trim();
+  if (buffered === final || final.startsWith(buffered)) return finalMessage;
+  if (buffered.startsWith(final)) return buffer;
+  return null;
+}
+
+function parsedToolText(event) {
+  if (typeof event?.text !== "string") return null;
+  try {
+    const value = JSON.parse(event.text);
+    return value && typeof value === "object" ? value : null;
+  } catch { return null; }
+}
+
+export function normalizeClineEvent(parsed) {
+  if (!parsed || typeof parsed !== "object" || parsed.type === "run_result") return null;
+  const event = parsed.type === "agent_event" && parsed.event && typeof parsed.event === "object"
+    ? parsed.event
+    : parsed;
+  const parsedDetail = parsedToolText(event);
+  const detail = parsedDetail ?? {};
+  const kind = String(detail.tool ?? detail.type ?? event.tool ?? event.name ?? event.type ?? "").toLowerCase();
+  const command = boundedText(detail.command ?? event.command);
+  const filePath = boundedText(detail.path ?? detail.file ?? event.path ?? event.file);
+
+  if (["execute_command", "command", "command_execution"].includes(kind) && command) {
+    return { type: "cline-command", commands: [command], action: `Running ${command}` };
+  }
+  if (["read_file", "file_read", "read"].includes(kind) && filePath) {
+    return { type: "cline-file-read", path: filePath, action: `Reading ${filePath}` };
+  }
+  if (["write_to_file", "write_file", "file_write", "replace_in_file", "apply_patch", "file_modified"].includes(kind) && filePath) {
+    return { type: "cline-file-modified", path: filePath, action: `Modifying ${filePath}` };
+  }
+  if (["search_files", "search", "grep", "find"].includes(kind)) {
+    const query = boundedText(detail.regex ?? detail.query ?? event.query);
+    if (filePath || query) return { type: "cline-search", ...(filePath ? { path: filePath } : {}), ...(query ? { query } : {}), action: "Searching workspace" };
+  }
+  const rawMessage = parsedDetail ? null : messageFragment(event.message ?? event.text);
+  if (parsed.type === "agent_event" && event.contentType === "text" && event.type === "content_start" && rawMessage) {
+    return { type: "cline-message-delta", fragment: messageFragment(event.accumulated) ?? rawMessage };
+  }
+  if (parsed.type === "agent_event" && event.contentType === "text" && event.type === "content_end") {
+    const finalMessage = boundedText(event.text);
+    return finalMessage ? { type: "cline-message", message: finalMessage, action: finalMessage } : null;
+  }
+  if (rawMessage && TEXT_DELTA_TYPES.has(kind)) {
+    return { type: "cline-message-delta", fragment: rawMessage };
+  }
+  const message = parsedDetail ? null : boundedText(event.message ?? event.text);
+  if (message && (parsed.type === "agent_event" || ["say", "message", "progress", "text"].includes(kind) || event.say === "text" || event.say === "progress")) {
+    return { type: "cline-message", message, action: message };
+  }
+  return null;
+}
+
+export function collectClineProcess(command, args, {
+  cwd,
+  env,
+  input = "",
+  spawnProcess = spawn,
+  drainTimeoutMs = 250,
+  requireRunResult = true,
+  diagnostic = defaultDiagnostic,
+  onStart = () => {},
+  onEvent = () => {},
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess(command, args, {
+      cwd,
+      ...(env ? { env } : {}),
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutLine = "";
+    let runResult;
+    let malformedFinal;
+    let exited = false;
+    let stdoutEnded = false;
+    let stderrEnded = false;
+    let settled = false;
+    let exitCode = 1;
+    let drainTimer;
+    let messageBuffer = "";
+    let activityTraceCount = 0;
+    let activitySequence = 0;
+    const traceActivity = process.env.CLINE_ACTIVITY_TRACE === "1";
+    const trace = (detail) => {
+      if (traceActivity && activityTraceCount++ < 120) diagnostic("CLINE_ACTIVITY_TRACE", detail);
+    };
+    let eventQueue = Promise.resolve();
+
+    diagnostic("CLINE_START", { command, pid: child.pid ?? null });
+    Promise.resolve(onStart({ pid: child.pid ?? null })).catch(reject);
+
+    const queueEvent = (event) => {
+      const activityId = ++activitySequence;
+      trace({ phase: "activity-created", activityId, activityType: event.type, length: event.message?.length ?? event.fragment?.length ?? null, preview: (event.message ?? event.fragment ?? "").slice(0, 40) });
+      eventQueue = eventQueue.then(async () => {
+        await onEvent(event);
+        trace({ phase: "activity-forwarded", activityId, activityType: event.type, transformed: false });
+      });
+    };
+    const queueMessage = (text) => {
+      const message = boundedText(text);
+      if (message) queueEvent({ type: "cline-message", message, action: message });
+      return message;
+    };
+    const flushMessage = (reason = "boundary") => {
+      if (!messageBuffer) return null;
+      const buffered = messageBuffer;
+      messageBuffer = "";
+      const emitted = queueMessage(buffered);
+      trace({ phase: "flushed", reason, length: buffered.length, preview: buffered.slice(0, 40) });
+      return emitted;
+    };
+    const handleActivity = (activity) => {
+      if (!activity) return;
+      if (activity.type === "cline-message-delta") {
+        messageBuffer = mergeStreamingText(messageBuffer, activity.fragment);
+        trace({ phase: "buffered", length: activity.fragment.length, preview: activity.fragment.slice(0, 40), bufferLength: messageBuffer.length });
+        return;
+      }
+      if (activity.type === "cline-message") {
+        if (messageBuffer) {
+          const buffered = messageBuffer;
+          messageBuffer = "";
+          const reconciled = reconcileFinalMessage(buffered, activity.message);
+          if (reconciled !== null) queueMessage(reconciled);
+          else {
+            queueMessage(buffered);
+            queueEvent(activity);
+          }
+          return;
+        }
+        queueEvent(activity);
+        return;
+      }
+      flushMessage("boundary");
+      queueEvent(activity);
+    };
+    const parseLine = (line) => {
+      if (!line.trim()) return;
+      try {
+        const parsed = JSON.parse(line);
+        const activity = normalizeClineEvent(parsed);
+        if (activity && traceActivity) {
+          const raw = parsed.type === "agent_event" ? parsed.event : parsed;
+          const field = typeof raw?.message === "string" ? "message" : typeof raw?.text === "string" ? "text" : null;
+          trace({ phase: "raw-normalized", rawType: parsed.type, eventType: raw?.type ?? null, contentType: raw?.contentType ?? null, messageId: raw?.messageId ?? raw?.message_id ?? null, itemId: raw?.itemId ?? raw?.item_id ?? null, contentBlockId: raw?.contentBlockId ?? raw?.content_block_id ?? null, field, length: field ? raw[field].length : 0, preview: field ? raw[field].slice(0, 40) : "", activityType: activity.type });
+        }
+        handleActivity(activity);
+        if (parsed?.type === "run_result") {
+          flushMessage("boundary");
+          if (typeof parsed.finishReason !== "string" || !parsed.finishReason.trim()) {
+            malformedFinal = new Error("run_result.finishReason must be a non-empty string");
+          } else {
+            runResult = parsed;
+            malformedFinal = undefined;
+            diagnostic("CLINE_RESULT_PARSED", { finishReason: parsed.finishReason });
+          }
+        }
+      } catch (error) {
+        malformedFinal = error;
+      }
+    };
+    const consumeStdout = (chunk) => {
+      stdout += chunk;
+      stdoutLine += chunk;
+      const lines = stdoutLine.split(/\r?\n/);
+      stdoutLine = lines.pop() ?? "";
+      for (const line of lines) parseLine(line);
+    };
+    const finish = async () => {
+      if (settled || !exited) return;
+      settled = true;
+      clearTimeout(drainTimer);
+      if (stdoutLine) {
+        parseLine(stdoutLine);
+        stdoutLine = "";
+      }
+      flushMessage("boundary");
+      try { await eventQueue; }
+      catch (error) { reject(error); return; }
+      const output = `${stdout}${stderr}`;
+      if (requireRunResult && !runResult) {
+        const detail = malformedFinal ? `; final NDJSON was malformed: ${malformedFinal.message}` : "";
+        const error = new Error(`Cline output did not contain a valid final run_result${detail}`);
+        error.exitCode = exitCode;
+        error.output = output;
+        reject(error);
+        return;
+      }
+      resolve({ exitCode, output, runResult, pid: child.pid ?? null });
+    };
+    const maybeFinish = () => {
+      if (exited && stdoutEnded && stderrEnded) void finish();
+    };
+    const startDrainWindow = () => {
+      maybeFinish();
+      if (settled) return;
+      drainTimer = setTimeout(() => {
+        if (!stdoutEnded && !child.stdout.destroyed) child.stdout.destroy();
+        if (!stderrEnded && !child.stderr.destroyed) child.stderr.destroy();
+        void finish();
+      }, drainTimeoutMs);
+      drainTimer.unref?.();
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", consumeStdout);
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stdout.on("end", () => {
+      stdoutEnded = true;
+      diagnostic("CLINE_STDOUT_END", { pid: child.pid ?? null });
+      maybeFinish();
+    });
+    child.stderr.on("end", () => {
+      stderrEnded = true;
+      diagnostic("CLINE_STDERR_END", { pid: child.pid ?? null });
+      maybeFinish();
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(drainTimer);
+      reject(error);
+    });
+    child.on("exit", (code, signal) => {
+      exited = true;
+      exitCode = code ?? 1;
+      diagnostic("CLINE_EXIT", { pid: child.pid ?? null, exitCode, signal });
+      startDrainWindow();
+    });
+    child.on("close", (code, signal) => {
+      diagnostic("CLINE_CLOSE", { pid: child.pid ?? null, exitCode: code ?? 1, signal });
+      if (!exited) {
+        exited = true;
+        exitCode = code ?? 1;
+      }
+      maybeFinish();
+    });
+    child.stdin.on("error", (error) => {
+      diagnostic("CLINE_STDIN_ERROR", { pid: child.pid ?? null, error: error.message });
+    });
+    child.stdin.end(input);
+  });
+}
+
+export async function isAnyClineCliActive(clineJs = DEFAULT_CLINE_JS) {
+  const result = await collectClineProcess(process.execPath, [clineJs, "doctor"], {
+    requireRunResult: false,
+  });
+  const plain = result.output.replace(/\x1b\[[0-9;]*m/g, "");
+  if (result.exitCode !== 0) throw new Error(`Cline CLI unavailable at ${clineJs}: doctor exited with exit ${result.exitCode}. ${plain.trim().slice(0,1000)} Restore the configured Cline installation before Resume.`);
+  const match = plain.match(/cli processes\s+(\d+)/i);
+  if (!match) throw new Error(`Cannot determine Cline availability at ${clineJs}: unrecognized doctor output. ${plain.trim().slice(0,1000)} Check the configured CLI before Resume.`);
+  return Number(match[1]) > 0;
+}
+
+export function buildClineArgs({
+  clineJs,
+  workspace,
+  provider,
+  model,
+  timeoutSeconds,
+  dataDir,
+  configDir,
+  hooksDir,
+  prompt,
+}) {
+  const args = [
+    clineJs,
+    "--json",
+    "--auto-approve",
+    "true",
+    "--compaction",
+    "agentic",
+    "--retries",
+    "6",
+    "--thinking",
+    "none",
+    "--provider",
+    provider,
+    "--model",
+    model,
+    "--cwd",
+    workspace,
+    "--timeout",
+    String(timeoutSeconds),
+  ];
+  if (dataDir) args.push("--data-dir", dataDir);
+  if (configDir) args.push("--config", configDir);
+  if (hooksDir) args.push("--hooks-dir", hooksDir);
+  args.push(prompt);
+  return args;
+}
+
+export async function launchCline({
+  clineJs = DEFAULT_CLINE_JS,
+  workspace,
+  provider = "ollama",
+  model = "glm-4.7-flash:q4_K_M",
+  timeoutSeconds = 1_800,
+  contextTokens = 98_304,
+  dataDir,
+  configDir,
+  hooksDir,
+  prompt,
+  onStart,
+  onEvent,
+  guardPolicyPath,
+  guardPluginPath,
+}) {
+  await access(clineJs, constants.R_OK);
+  if (guardPolicyPath) await verifyRestrictedTools({ pluginPath: guardPluginPath });
+  const args = buildClineArgs({
+    clineJs,
+    workspace,
+    provider,
+    model,
+    timeoutSeconds,
+    dataDir,
+    configDir,
+    hooksDir,
+    prompt,
+  });
+  const env = guardPolicyPath ? { ...process.env, CLINE_GLOBAL_SETTINGS_PATH: path.join(configDir, "data", "settings", "global-settings.json") } : undefined;
+  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent });
+  if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {
+    throw new Error("Cline tool restriction plugin did not initialize; guarded completion refused");
+  }
+  return result;
+}
+
+export class ClineCliWorker {
+  constructor({
+    stateDir,
+    workspace,
+    clineJs = DEFAULT_CLINE_JS,
+    provider = "ollama",
+    model = "glm-4.7-flash:q4_K_M",
+    timeoutSeconds = 1_800,
+    contextTokens = 98_304,
+    dataDir,
+    requestedProvider = provider,
+    baseUrl,
+    beforeRun,
+    toolGuard = false,
+    readMetrics,
+    checkExternalBusy = () => isAnyClineCliActive(clineJs),
+    launch = launchCline,
+  }) {
+    this.stateDir = path.resolve(stateDir);
+    this.lockPath = path.join(this.stateDir, "cline.busy.lock");
+    this.options = {
+      clineJs: clineJs ?? DEFAULT_CLINE_JS,
+      workspace: path.resolve(workspace),
+      provider,
+      model,
+      timeoutSeconds,
+      contextTokens,
+      dataDir,
+      requestedProvider,
+      baseUrl,
+    };
+    this.beforeRun = beforeRun;
+    this.toolGuard = toolGuard;
+    this.readMetrics = readMetrics;
+    this.checkExternalBusy = checkExternalBusy;
+    this.launch = launch;
+  }
+
+  async isBusy() {
+    try {
+      const contents = await readFile(this.lockPath, "utf8");
+      const pid = Number(contents.trim());
+      let alive = Number.isInteger(pid) && pid > 0;
+      if (alive) {
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          alive = error.code !== "ESRCH";
+        }
+      }
+      if (alive) return true;
+      await rm(this.lockPath, { force: true });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    return this.checkExternalBusy();
+  }
+
+  async run(prompt, hooks = {}) {
+    const onEvent = hooks.onEvent ?? (() => {});
+    const configuredIdentity = {
+      requestedProvider: this.options.requestedProvider,
+      provider: this.options.provider,
+      baseUrl: this.options.baseUrl,
+      port: this.options.baseUrl ? Number(new URL(this.options.baseUrl).port || 80) : null,
+      model: this.options.model,
+    };
+    let identity;
+    try {
+      identity = this.beforeRun ? await this.beforeRun() : configuredIdentity;
+    } catch (error) {
+      await onEvent({
+        type: "cline-provider-validation-failed",
+        ...configuredIdentity,
+        error: error.message,
+        fallbackAttempted: false,
+      });
+      throw error;
+    }
+    await onEvent({ type: "cline-provider-ready", ...identity });
+    const before = this.readMetrics ? await this.readMetrics() : null;
+    let result;
+    let failure;
+    try {
+      const guard = this.toolGuard ? await prepareToolGuard({ stateDir: this.stateDir, workspace: this.options.workspace }) : null;
+      if (guard) await verifyRestrictedTools(guard);
+      result = await this.launch({ ...this.options, ...hooks, prompt: prompt + (guard?.instructions ?? ""), ...(guard ? { configDir: guard.configDir, hooksDir: guard.hooksDir, guardPolicyPath: guard.policyPath, guardPluginPath: guard.pluginPath } : {}) });
+      if (guard) {
+        const outcome = await readGuardOutcome(guard.policyPath);
+        if (outcome.stopped) {
+          await onEvent({ type: "cline-guard-stopped", message: outcome.reason });
+          throw new Error(`Cline editing guard stopped attempt: ${outcome.reason}`);
+        }
+        if (result.runResult?.finishReason !== "completed") {
+          throw new Error(`Guarded Cline attempt did not complete: ${result.runResult?.finishReason ?? "missing final result"}`);
+        }
+      }
+      return result;
+    } catch (error) {
+      failure = error;
+      // Keep the failed attempt's own output; the loop records only the message.
+      if (typeof error.output === "string") {
+        try { await writeFile(path.join(this.stateDir, "cline-last-failure.txt"), error.output.slice(-20_000)); } catch { /* diagnostic only */ }
+      }
+      throw error;
+    } finally {
+      if (this.readMetrics && before) {
+        try {
+          const after = await this.readMetrics();
+          const promptTokens = Math.max(0, after.promptTokens - before.promptTokens);
+          const generatedTokens = Math.max(0, after.generatedTokens - before.generatedTokens);
+          const promptSeconds = Math.max(0, after.promptSeconds - before.promptSeconds);
+          const generationSeconds = Math.max(0, after.generationSeconds - before.generationSeconds);
+          await onEvent({
+            type: "cline-provider-metrics",
+            requestedProvider: identity.requestedProvider,
+            provider: identity.provider,
+            baseUrl: identity.baseUrl,
+            model: identity.model,
+            promptTokens,
+            generatedTokens,
+            promptTokensPerSecond: promptSeconds > 0 ? promptTokens / promptSeconds : 0,
+            generationTokensPerSecond: generationSeconds > 0 ? generatedTokens / generationSeconds : 0,
+            failed: Boolean(failure || result?.exitCode !== 0),
+          });
+        } catch (metricsError) {
+          await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
+        }
+      }
+    }
+  }
+
+  async withExclusive(operation) {
+    await mkdir(this.stateDir, { recursive: true });
+    if (await this.isBusy()) return null;
+    let lock;
+    try {
+      lock = await open(this.lockPath, "wx");
+    } catch (error) {
+      if (error.code === "EEXIST") return null;
+      throw error;
+    }
+    try {
+      await lock.writeFile(`${process.pid}\n`);
+      if (await this.checkExternalBusy()) return null;
+      return await operation();
+    } finally {
+      await lock.close();
+      await rm(this.lockPath, { force: true });
+      defaultDiagnostic("BUSY_LOCK_RELEASED", { lockPath: this.lockPath });
+    }
+  }
+}

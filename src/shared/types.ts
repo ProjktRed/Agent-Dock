@@ -1,0 +1,361 @@
+// Types shared between the Electron main process, preload bridge and renderer.
+
+export type Role = "implementation" | "qa" | "assessment" | "elevation" | "custom";
+export type CliKind = "codex" | "cline" | "claude" | "ollama" | "llamacpp" | "openai";
+export type ConnectionState =
+  | "connected"
+  | "disconnected"
+  | "auth-required"
+  | "not-found"
+  | "unavailable"
+  | "rate-limited"
+  | "unchecked"
+  | "checking";
+
+/** Where a displayed value came from. Never shown as "reported" unless a tool returned it. */
+export type Provenance = "reported" | "estimated" | "manual" | "not-exposed" | "unavailable" | "not-applicable";
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  repoUrl: string | null;
+  objective: string;
+  description: string;
+  createdAt: string;
+  archived: boolean;
+  /** Engine state directory. Defaults to an app-managed folder; can point at an existing run. */
+  stateDir: string;
+  roleOverrides: Partial<Record<Exclude<Role, "custom">, string>>;
+  workflowOverrides: Partial<WorkflowSettings>;
+  /** Optional first task (engine --task JSON). Used once, then cleared. */
+  pendingTaskFile?: string | null;
+}
+
+export interface Agent {
+  id: string;
+  name: string;
+  role: Role;
+  customRole?: string;
+  cliId: string;
+  /** Implementation agents only: the local provider Cline is pointed at. */
+  provider?: "llamacpp" | "ollama";
+  model: string;
+  reasoning?: string;
+  contextTokens: number;
+  maxOutputTokens: number;
+  timeoutSeconds: number;
+  instructions: string;
+  skills: string[];
+  enabled: boolean;
+}
+
+export interface CliConnection {
+  id: string;
+  kind: CliKind;
+  name: string;
+  /** Executable path/command for CLIs, base URL for HTTP runtimes. */
+  location: string;
+  builtIn: boolean;
+  startupTimeoutSeconds: number;
+  requestTimeoutSeconds: number;
+  contextCap: number | null;
+  defaultModel: string | null;
+  manualModels: string[];
+  env: { key: string; value: string; secret: boolean }[];
+  hasSecret: boolean;
+}
+
+export interface Capability {
+  name: string;
+  state: "detected" | "partial" | "unsupported" | "unknown";
+  detail: string;
+}
+
+export interface CliHealth {
+  id: string;
+  state: ConnectionState;
+  detail: string;
+  version: string | null;
+  resolvedPath: string | null;
+  auth: { state: "ok" | "required" | "not-required" | "unknown"; detail: string };
+  models: { id: string; detail: string; contextTokens: number | null }[];
+  contextMax: { value: number | null; provenance: Provenance; source: string };
+  capabilities: Capability[];
+  latencyMs: number | null;
+  checkedAt: string | null;
+  log: string[];
+}
+
+export interface WorkflowSettings {
+  autoContinue: boolean;
+  /** Maps to the engine's --sol-reassessment flag (automatic Elevation on manual review). */
+  automaticElevation: boolean;
+  /** Maps to the engine's --tool-guard flag. */
+  toolGuard: boolean;
+  resumeAfterRestart: "ask" | "auto" | "paused";
+  stopAfterCurrentTask: boolean;
+}
+
+export interface AttentionPolicy {
+  informational: "in-app" | "windows" | "off";
+  recommendPause: "in-app" | "windows";
+  mandatory: "windows";
+  blocker: "windows";
+}
+
+export interface Settings {
+  general: {
+    launchAtStartup: boolean;
+    startMinimized: boolean;
+    keepInTray: boolean;
+    theme: "dark" | "darker";
+    accent: string;
+    notifyCompleted: boolean;
+    notifyErrors: boolean;
+    notifyInfo: boolean;
+    defaultProject: string;
+  };
+  workflow: WorkflowSettings;
+  attention: AttentionPolicy;
+  context: {
+    warnThresholdPercent: number;
+  };
+  safety: {
+    protectedPaths: string[];
+  };
+  usage: {
+    manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
+    /** Codex limits are read for free; 0 = only on demand. */
+    codexPollMinutes: number;
+    /** Each Claude check sends one tiny Haiku request; 0 = only on demand. */
+    claudeProbeMinutes: number;
+  };
+  advanced: {
+    nodeRuntime: "system" | "electron";
+    debug: boolean;
+    llamaCppLauncher: string;
+  };
+  skills: {
+    enabled: Record<string, boolean>;
+    importedDirs: string[];
+  };
+  updates: {
+    autoCheck: boolean;
+    autoInstall: boolean;
+    /** Git repository to update from: a local path now, a GitHub URL later. Empty = the source this build came from. */
+    source: string;
+    /** Empty = the branch this build came from. */
+    branch: string;
+  };
+  onboardingComplete: boolean;
+  activeProjectId: string | null;
+}
+
+export interface LimitWindow {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetsAt: string | null;
+  windowMinutes: number | null;
+}
+
+/** Plan/rate-limit snapshot reported by a provider's own CLI. */
+export interface ProviderLimits {
+  provider: "codex" | "claude";
+  ok: boolean;
+  fetchedAt: string;
+  source: string;
+  plan: string | null;
+  status: "ok" | "warning" | "limited" | "error";
+  statusText: string;
+  windows: LimitWindow[];
+  extras: { label: string; value: string }[];
+  error?: string;
+}
+
+export interface LimitsState {
+  codex: ProviderLimits | null;
+  claude: ProviderLimits | null;
+  refreshing: { codex: boolean; claude: boolean };
+}
+
+export interface BuildInfo {
+  commit: string;
+  shortCommit: string;
+  subject: string;
+  committedAt: string;
+  branch: string;
+  source: string;
+  builtAt: string;
+}
+
+export interface UpdateStatus {
+  state: "dev" | "idle" | "checking" | "up-to-date" | "available" | "building" | "ready" | "error";
+  installed: BuildInfo | null;
+  source: string;
+  branch: string;
+  latest: { commit: string; subject: string } | null;
+  commits: { hash: string; subject: string; date: string }[];
+  checkedAt: string | null;
+  error: string | null;
+  log: string[];
+}
+
+/** Normalised automation status for one project, derived from the engine's .state files. */
+export type RunState = "running" | "pausing" | "paused" | "stopping" | "stopped" | "idle" | "attention" | "blocked" | "waiting-limit" | "complete";
+
+export interface QaChecks {
+  tests: string;
+  typecheck: string;
+  lint: string;
+  build?: string;
+  scopeCheck: string;
+}
+
+export interface EngineEvent {
+  timestamp: string;
+  type: string;
+  taskId?: string;
+  attempt?: number;
+  qa?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface PlanTask {
+  title: string;
+  completed: boolean;
+  depth: number;
+}
+
+export interface PlanPhase {
+  number: number;
+  title: string;
+  tasks: PlanTask[];
+  total: number;
+  completed: number;
+  percent: number | null;
+}
+
+export interface PlanProgress {
+  source: string;
+  phases: PlanPhase[];
+  total: number;
+  completed: number;
+  percent: number | null;
+  currentPhase: number | null;
+  error?: string;
+}
+
+export interface GitInfo {
+  isRepo: boolean;
+  branch: string | null;
+  head: string | null;
+  remote: string | null;
+  ahead: number | null;
+  behind: number | null;
+  changedFiles: { status: string; path: string }[];
+  error?: string;
+}
+
+export interface ProjectStatus {
+  projectId: string;
+  runState: RunState;
+  label: string;
+  processAlive: boolean;
+  pid: number | null;
+  stage: string;
+  cycle: "assessment" | "implementation" | "qa" | "correction" | "next" | null;
+  task: { id: string; name: string; prompt: string; qaCommand?: string; allowedPaths?: string[] } | null;
+  attempt: number;
+  activeRole: string | null;
+  activeModel: string | null;
+  clineStatus: string;
+  qaStatus: string;
+  latestQa: string;
+  qaChecks: QaChecks;
+  clineStartedAt: string | null;
+  clineElapsedMs: number | null;
+  clineModel: string | null;
+  clineProvider: string | null;
+  contextTokens: number | null;
+  control: { pauseAfterCurrent: boolean; stopAfterSafePoint: boolean };
+  attentionReason: string | null;
+  blockedReason: string | null;
+  limitMessage: string | null;
+  limitRetryAt: string | null;
+  elevateAvailable: boolean;
+  elevateReason: string | null;
+  resolverAvailable: boolean;
+  resolverReason: string | null;
+  events: EngineEvent[];
+  git: GitInfo;
+  plan: PlanProgress;
+  updatedAt: string | null;
+}
+
+export interface TokenRecord {
+  timestamp: string;
+  role: "implementation" | "qa" | "assessment" | "elevation" | "resolver";
+  provider: string;
+  model: string | null;
+  input: number;
+  cached: number;
+  output: number;
+  projectId: string;
+  taskId: string | null;
+}
+
+export interface UsageSummary {
+  records: TokenRecord[];
+  compactions: number;
+  sessionStartedAt: string | null;
+  limit: { message: string | null; retryAt: string | null };
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  dir: string;
+  source: "engine" | "imported";
+  instructions: string;
+  warnings: string[];
+}
+
+export interface EngineInfo {
+  dir: string;
+  orchestratorModels: { codex: Record<string, string>; claude: Record<string, string> };
+  defaults: { llamacppModel: string; ollamaModel: string; contextTokens: number; maxOutputTokens: number; timeoutSeconds: number };
+}
+
+export interface AppSnapshot {
+  projects: Project[];
+  agents: Agent[];
+  clis: CliConnection[];
+  settings: Settings;
+  engine: EngineInfo;
+  paths: { config: string; projectState: string };
+}
+
+export type AddProjectRequest =
+  | { mode: "local"; path: string; name: string; objective: string }
+  | { mode: "github"; url: string; branch: string; parentDir: string; name: string; objective: string }
+  | { mode: "new"; parentDir: string; name: string; initGit: boolean; starterPlan: boolean; objective: string };
+
+export interface DirectoryInspection {
+  path: string;
+  exists: boolean;
+  isRepo: boolean;
+  branch: string | null;
+  remote: string | null;
+  planFile: string | null;
+  planSummary: string | null;
+  suggestedName: string;
+}
+
+export interface PathDetection {
+  command: string;
+  found: { path: string; version: string | null }[];
+}

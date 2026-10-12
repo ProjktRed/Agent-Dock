@@ -1,0 +1,234 @@
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { atomicWriteJson } from "./dashboard-state.mjs";
+
+const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
+const DEFAULT_LLAMACPP_LAUNCHER = "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd";
+
+/** Per-slot context of a running llama-server, or null when /props does not report it. */
+export async function readLlamaCppSlotContext(fetchImpl, baseUrl) {
+  try {
+    const response = await fetchImpl(`${baseUrl.replace(/\/v1$/, "")}/props`);
+    if (!response?.ok) return null;
+    const props = await response.json();
+    const value = Number(props?.default_generation_settings?.n_ctx ?? props?.n_ctx);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function startLlamaCppServer(launcher) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("cmd.exe", ["/d", "/c", launcher], {
+      detached: true,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ pid: child.pid ?? null });
+    });
+  });
+}
+
+function llamaRoot(baseUrl) {
+  return baseUrl.replace(/\/$/, "").replace(/\/v1$/, "");
+}
+
+async function fetchJson(fetchImpl, url) {
+  const response = await fetchImpl(url);
+  if (!response?.ok) throw new Error(`HTTP ${response?.status ?? "unknown"}`);
+  return response.json();
+}
+
+async function checkLlamaCpp({ fetchImpl, baseUrl, model }) {
+  const root = llamaRoot(baseUrl);
+  let health;
+  try { health = await fetchJson(fetchImpl, `${root}/health`); }
+  catch (error) {
+    const failure = new Error(`llama.cpp health check failed at ${root}: ${error.message}`);
+    failure.code = "LLAMACPP_UNAVAILABLE";
+    throw failure;
+  }
+  if (health?.status !== "ok") {
+    const failure = new Error(`llama.cpp health check at ${root} returned status ${health?.status ?? "unknown"}`);
+    failure.code = "LLAMACPP_UNAVAILABLE";
+    throw failure;
+  }
+  const models = await fetchJson(fetchImpl, `${baseUrl.replace(/\/$/, "")}/models`);
+  const advertised = Array.isArray(models?.data) ? models.data.map((entry) => entry?.id).filter(Boolean) : [];
+  if (!advertised.includes(model)) {
+    throw new Error(`llama.cpp at ${baseUrl} does not advertise required model ${model}; advertised: ${advertised.join(", ") || "none"}. Ollama fallback requires explicit --provider ollama.`);
+  }
+  return { status: health.status, advertisedModels: advertised };
+}
+
+function parsePrometheus(text) {
+  const values = {};
+  for (const line of String(text).split(/\r?\n/)) {
+    const match = line.match(/^llamacpp:([^\s{]+)(?:\{[^}]*\})?\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)$/i);
+    if (match) values[match[1]] = Number(match[2]);
+  }
+  return {
+    promptTokens: values.prompt_tokens_total ?? 0,
+    promptSeconds: values.prompt_seconds_total ?? 0,
+    generatedTokens: values.tokens_predicted_total ?? 0,
+    generationSeconds: values.tokens_predicted_seconds_total ?? 0,
+  };
+}
+
+async function readLlamaCppMetrics(fetchImpl, baseUrl) {
+  const response = await fetchImpl(`${llamaRoot(baseUrl)}/metrics`);
+  if (!response?.ok) throw new Error(`llama.cpp metrics failed: HTTP ${response?.status ?? "unknown"}`);
+  return parsePrometheus(await response.text());
+}
+
+function declaredContext(modelInfo) {
+  const values = Object.entries(modelInfo ?? {})
+    .filter(([key, value]) => (key === "context_length" || key.endsWith(".context_length")) && Number.isFinite(Number(value)))
+    .map(([, value]) => Number(value));
+  return values.length ? Math.max(...values) : null;
+}
+
+export async function prepareClineRuntime({
+  stateDir,
+  provider,
+  model,
+  contextTokens,
+  timeoutSeconds,
+  fetchImpl = globalThis.fetch,
+  ollamaUrl = process.env.OLLAMA_HOST || DEFAULT_OLLAMA_URL,
+  llamaCppUrl = DEFAULT_LLAMACPP_URL,
+  llamaCppLauncher = DEFAULT_LLAMACPP_LAUNCHER,
+  maxOutputTokens = 8_192,
+  startServerImpl = startLlamaCppServer,
+  sleepImpl = sleep,
+  startupAttempts = 240,
+  startupPollMs = 500,
+}) {
+  if (provider === "llamacpp") {
+    const baseUrl = llamaCppUrl.replace(/\/$/, "");
+    let startedServer = false;
+    const ensureReady = async () => {
+      try {
+        await checkLlamaCpp({ fetchImpl, baseUrl, model });
+      } catch (error) {
+        if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
+        await startServerImpl(llamaCppLauncher);
+        startedServer = true;
+        let lastError = error;
+        for (let attempt = 0; attempt < startupAttempts; attempt++) {
+          if (attempt > 0) await sleepImpl(startupPollMs);
+          try {
+            await checkLlamaCpp({ fetchImpl, baseUrl, model });
+            lastError = null;
+            break;
+          } catch (retryError) {
+            lastError = retryError;
+            if (retryError.code !== "LLAMACPP_UNAVAILABLE") throw retryError;
+          }
+        }
+        if (lastError) {
+          throw new Error(`llama.cpp did not become ready after ${startupAttempts} checks: ${lastError.message}. No Ollama fallback was attempted; select it explicitly with --provider ollama.`);
+        }
+      }
+      // Cline is told contextWindow=contextTokens; a smaller server slot would overflow silently.
+      const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl);
+      if (serverContext !== null && contextTokens && serverContext < contextTokens) {
+        throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Set ContextSize in E:\\llama-cpp-local\\config\\settings.psd1 (and restart the server) or lower --cline-context-tokens.`);
+      }
+      return { requestedProvider: "llamacpp", provider: "openai-compatible", baseUrl, port: Number(new URL(baseUrl).port || 80), model };
+    };
+
+    await ensureReady();
+    const dataDir = path.join(path.resolve(stateDir), "cline-data");
+    await atomicWriteJson(path.join(dataDir, "settings", "providers.json"), {
+      version: 1,
+      lastUsedProvider: "openai-compatible",
+      modes: {},
+      providers: {
+        "openai-compatible": {
+          settings: {
+            provider: "openai-compatible",
+            client: "openai-compatible",
+            protocol: "openai-chat",
+            apiKey: "local-no-key",
+            model,
+            baseUrl,
+            contextWindow: contextTokens,
+            maxTokens: maxOutputTokens,
+            timeout: timeoutSeconds * 1000,
+            capabilities: ["tools", "streaming"],
+          },
+          updatedAt: new Date().toISOString(),
+          tokenSource: "manual",
+        },
+      },
+    });
+    return {
+      dataDir,
+      contextTokens,
+      maxOutputTokens,
+      declaredContextTokens: contextTokens,
+      requestedProvider: "llamacpp",
+      provider: "openai-compatible",
+      model,
+      baseUrl,
+      port: Number(new URL(baseUrl).port || 80),
+      startedServer,
+      ensureReady,
+      readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl),
+    };
+  }
+  if (provider !== "ollama") {
+    return { dataDir: undefined, contextTokens, maxOutputTokens, declaredContextTokens: null, requestedProvider: provider, provider, model };
+  }
+  const baseUrl = ollamaUrl.replace(/\/$/, "");
+  let response;
+  try {
+    response = await fetchImpl(`${baseUrl}/api/show`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+  } catch (error) {
+    throw new Error(`Ollama context preflight failed for ${model}: ${error.message}`);
+  }
+  if (!response?.ok) {
+    throw new Error(`Ollama context preflight failed for ${model}: HTTP ${response?.status ?? "unknown"}`);
+  }
+  const metadata = await response.json();
+  const declaredContextTokens = declaredContext(metadata?.model_info);
+  if (!declaredContextTokens) {
+    throw new Error(`Ollama model ${model} is missing declared context metadata; requested ${contextTokens}`);
+  }
+  if (declaredContextTokens < contextTokens) {
+    throw new Error(`Ollama model ${model} declares ${declaredContextTokens} context tokens, below requested ${contextTokens}`);
+  }
+
+  const dataDir = path.join(path.resolve(stateDir), "cline-data");
+  await atomicWriteJson(path.join(dataDir, "settings", "providers.json"), {
+    version: 1,
+    lastUsedProvider: "ollama",
+    modes: {},
+    providers: {
+      ollama: {
+        settings: {
+          provider: "ollama",
+          model,
+          baseUrl,
+          contextWindow: contextTokens,
+          timeout: timeoutSeconds * 1000,
+        },
+        updatedAt: new Date().toISOString(),
+        tokenSource: "manual",
+      },
+    },
+  });
+  return { dataDir, contextTokens, maxOutputTokens, declaredContextTokens, requestedProvider: "ollama", provider: "ollama", model, baseUrl, port: Number(new URL(baseUrl).port || 80) };
+}
