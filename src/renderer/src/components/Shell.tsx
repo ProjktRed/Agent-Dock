@@ -5,6 +5,7 @@ import { runTone } from "../lib/format";
 import { Icon, type IconName } from "./Icon";
 import { Dot, Modal } from "./ui";
 import { useUpdateStatus } from "../pages/Updates";
+import { openSettingsSection } from "../pages/Settings";
 import { Logo } from "./Logo";
 
 const NAV: { route: Route; label: string; icon: IconName }[] = [
@@ -232,6 +233,42 @@ export function RunControls({ status, projectId, size = "sm" }: { status: Projec
   );
 }
 
+/** In-app replacement for the old "Update available" dialog; lives in the empty middle of the title bar. */
+function UpdateNotice() {
+  const { go, toast } = useApp();
+  const update = useUpdateStatus();
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  if (!update?.latest || !["available", "building", "ready"].includes(update.state)) return null;
+  const available = update.state === "available";
+  if (available && dismissed === update.latest.commit) return null;
+  const n = update.commits.length;
+  const version = update.latest.version ? `v${update.latest.version}` : update.latest.commit.slice(0, 7);
+  const details = () => {
+    openSettingsSection("updates");
+    go("settings");
+  };
+  return (
+    <div className="updnote fade-in" role="status" title={update.commits.slice(0, 8).map((c) => `${c.hash.slice(0, 7)} ${c.subject}`).join("\n")}>
+      <Dot tone="attn" live={!available} />
+      {available ? (
+        <>
+          <button className="updlink ellipsis" onClick={details} aria-label={`Update ${version} available, ${n || "new"} commit${n === 1 ? "" : "s"}. Open details`}>
+            <b>Update {version}</b><span className="mut opt-word"> available</span>
+          </button>
+          <button className="btn primary sm" onClick={() => window.api.applyUpdate().catch((e) => toast("error", cleanError(e)))}>Update now</button>
+          <button className="btn ghost sm icon" onClick={() => setDismissed(update.latest!.commit)} aria-label="Later" title="Later"><Icon name="close" size="sm" /></button>
+        </>
+      ) : (
+        <>
+          <button className="updlink ellipsis" onClick={details} title="Open the update log">
+            <b>{update.state === "ready" ? "Restarting to update…" : `Building ${version}…`}</b>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function TitleBar() {
   const { activeProject, activeStatus } = useApp();
   const state = activeStatus?.runState ?? "idle";
@@ -244,7 +281,9 @@ export function TitleBar() {
       </div>
       <ProjectSelector />
       <PromptBar />
-      <div className="grow drag" />
+      <div className="grow drag titlecenter">
+        <UpdateNotice />
+      </div>
       {activeProject && (
         <span className={`pill ${["attention", "blocked"].includes(state) ? "attn" : ""}`} role="status">
           <Dot tone={tone.dot} live={tone.live && activeStatus?.processAlive} />
@@ -277,13 +316,9 @@ export function StatusBar() {
         </span>
       )}
       <span className="grow" />
-      <span className="mono" title={snap.engine.dir}>engine: {snap.engine.dir.split(/[\\/]/).slice(-2).join("\\")}</span>
-      {update && ["available", "building", "ready"].includes(update.state) && (
-        <button className="btn ghost sm" style={{ height: 20, padding: "0 6px", fontSize: 11.5, color: "var(--attn)" }} onClick={() => go("settings")} title="Open Settings › Updates">
-          <Dot tone="attn" live={update.state !== "available"} />
-          {update.state === "available" ? "Update available" : "Updating…"}
-        </button>
-      )}
+      <button className="linkish mono" title={`Agent Dock ${snap.version} · engine: ${snap.engine.dir}\nOpen Settings › Updates`} onClick={() => { openSettingsSection("updates"); go("settings"); }}>
+        Agent Dock v{snap.version}
+      </button>
       <span className="mono" title={update?.installed ? `${update.installed.subject} · built ${update.installed.builtAt}` : "Development build"}>
         {update?.installed ? update.installed.shortCommit : "dev"}
       </span>

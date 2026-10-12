@@ -89,7 +89,8 @@ export class Updater {
     }
     // Fetch into the staging clone to list what changed (cheap for a local source).
     const commits = await this.listCommits(source, branch, latest);
-    this.set({ state: "available", latest: { commit: latest, subject: commits[0]?.subject ?? "" }, commits, checkedAt: new Date().toISOString() });
+    const version = await this.versionAt(latest);
+    this.set({ state: "available", latest: { commit: latest, subject: commits[0]?.subject ?? "", version }, commits, checkedAt: new Date().toISOString() });
     return this.status;
   }
 
@@ -106,6 +107,17 @@ export class Updater {
     const range = known.code === 0 ? `${this.installed!.commit}..${latest}` : `-20 ${latest}`;
     const logResult = await run("git", ["log", "--format=%H%x09%cI%x09%s", ...range.split(" ")], { cwd: REPO });
     return logResult.code === 0 ? parseLog(logResult.stdout) : [];
+  }
+
+  /** package.json version at a commit already fetched into the staging clone. */
+  private async versionAt(commit: string): Promise<string | null> {
+    const shown = await run("git", ["show", `${commit}:package.json`], { cwd: REPO });
+    if (shown.code !== 0) return null;
+    try {
+      return JSON.parse(shown.stdout).version ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**

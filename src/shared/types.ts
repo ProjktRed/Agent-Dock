@@ -195,7 +195,7 @@ export interface UpdateStatus {
   installed: BuildInfo | null;
   source: string;
   branch: string;
-  latest: { commit: string; subject: string } | null;
+  latest: { commit: string; subject: string; version?: string | null } | null;
   commits: { hash: string; subject: string; date: string }[];
   checkedAt: string | null;
   error: string | null;
@@ -337,6 +337,8 @@ export interface AppSnapshot {
   settings: Settings;
   engine: EngineInfo;
   paths: { config: string; projectState: string };
+  /** package.json version of the running app, e.g. 0.13.0 */
+  version: string;
 }
 
 export type AddProjectRequest =

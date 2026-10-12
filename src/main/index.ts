@@ -67,16 +67,7 @@ async function checkForUpdatesOnLaunch() {
     await applyUpdate().catch((e) => notice({ kind: "error", message: `Update failed: ${e.message}` }));
     return;
   }
-  const choice = await dialog.showMessageBox({
-    type: "info",
-    buttons: ["Update now", "Later"],
-    defaultId: 0,
-    cancelId: 1,
-    title: "Update available",
-    message: "A newer committed version is available.",
-    detail: `${summary}\n\nThe new version is built from a clean copy of ${status.source} while the app keeps running, then the app restarts.`,
-  });
-  if (choice.response === 0) await applyUpdate().catch((e) => notice({ kind: "error", message: `Update failed: ${e.message}` }));
+  // Otherwise the renderer shows the in-app update notice in the title bar (UpdateNotice).
 }
 
 const send = (channel: string, value: unknown) => win?.webContents.send(channel, value);
@@ -223,7 +214,7 @@ function createTray() {
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, paths: { config: store.dir, projectState: stateRoot } };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, paths: { config: store.dir, projectState: stateRoot }, version: app.getVersion() };
 }
 
 async function usage(projectId: string | null): Promise<UsageSummary> {

@@ -343,8 +343,18 @@ function Advanced() {
   );
 }
 
+let pendingSection: Section | null = null;
+/** Open a specific section the next time the Settings page mounts (call before go("settings")). */
+export const openSettingsSection = (section: Section) => {
+  pendingSection = section;
+};
+
 export function SettingsPage() {
-  const [section, setSection] = useState<Section>("workflow");
+  const [section, setSection] = useState<Section>(() => {
+    const initial = pendingSection ?? "workflow";
+    pendingSection = null;
+    return initial;
+  });
   return (
     <>
       <div><h1 className="h1">Settings</h1><div className="sub">Changes save immediately. Labels show whether the engine enforces a setting, the app applies it, or it is saved for later.</div></div>
