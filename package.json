@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:engine": "npm --prefix engine test",
     "package": "electron-vite build && electron-builder --win --dir",
+    "package:linux": "electron-vite build && electron-builder --linux --dir",
     "release:local": "node scripts/release-local.mjs --launch"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "directories": { "buildResources": "build" },
     "files": ["out/**", "package.json", "build-info.json"],
     "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }],
-    "win": { "target": "dir", "icon": "build/icon.png" }
+    "win": { "target": "dir", "icon": "build/icon.png" },
+    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" }
   }
 }

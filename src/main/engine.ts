@@ -142,7 +142,10 @@ export class EngineManager {
     if (action === "start") return this.start(project, args);
     if (action === "stop-now") {
       if (!running) return;
-      await run("taskkill", ["/PID", String(running.pid), "/T", "/F"], { timeoutMs: 10_000 });
+      if (process.platform === "win32") await run("taskkill", ["/PID", String(running.pid), "/T", "/F"], { timeoutMs: 10_000 });
+      else {
+        try { process.kill(-running.pid, "SIGKILL"); } catch { /* already gone */ }
+      }
       this.alive.delete(project.id);
       return;
     }

@@ -11,7 +11,7 @@ function runCli(location: string, args: string[], timeoutMs: number) {
 
 export async function whereAll(command: string): Promise<string[]> {
   if (/[\\/]/.test(command)) return existsSync(command) ? [command] : [];
-  const result = await run("where", [command], { timeoutMs: 5000 });
+  const result = process.platform === "win32" ? await run("where", [command], { timeoutMs: 5000 }) : await run("which", ["-a", command], { timeoutMs: 5000 });
   if (result.code !== 0) return [];
   return result.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
