@@ -110,10 +110,18 @@ or quitting the app can leave it running safely; the app reattaches on the next 
 
 ## What is real and what is labelled
 
-- **Usage limits**: account status comes from `codex login status` and `claude auth status`.
-  Neither CLI writes quota percentages or reset times to the engine's logs, so those show
-  **Not exposed**. A usage-limit stop is shown as **Reported** with the engine's message. You can
-  add your own monthly token budget; it is shown as **Manual**.
+- **Usage limits** (all **Reported** by the provider's own CLI, with an "as of" time):
+  - **Codex**: the official app-server method `account/rateLimits/read` (`codex app-server` over
+    stdio, `initialize` + one read). Plan, 5-hour and weekly windows (used %, reset time),
+    credits and reset-credit count. Read-only and free; refreshed every 5 minutes by default. The
+    reset-credit *consume* method is never called.
+  - **Claude Code**: has no usage command; it reports plan limits as a `rate_limit_event` in
+    `stream-json` output alongside a real request. A check sends one minimal request (Haiku, no
+    tools, one turn, `--no-session-persistence`, empty temp folder, `CLAUDE*` env stripped) and
+    reads the 5-hour and weekly windows. Each check costs a few hundred tokens, so it runs only
+    when you click **Check** unless you set an interval (Usage limits › Limit checks).
+  - The last snapshots are cached in `config\limits.json`; a failed refresh keeps the last good
+    snapshot and shows the error. You can also add a monthly token budget, shown as **Manual**.
 - **Tokens**: Codex `turn.completed` usage and Claude Code `result` usage from each invocation
   under `<state>\codex\`, plus llama.cpp `/metrics` samples the engine logs per Cline attempt.
   No cost is estimated (no pricing is configured; subscriptions expose none). The current
