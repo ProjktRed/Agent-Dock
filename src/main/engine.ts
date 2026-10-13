@@ -98,7 +98,9 @@ export class EngineManager {
     try {
       // Detached with file-backed stdio: the engine keeps running safely if the window or app closes.
       const child = spawn(command, [path.join(this.engineDir, "src", script), ...args], {
-        cwd: this.engineDir,
+        // Not the engine folder: processes the engine starts (a llama.cpp server keeps running on
+        // purpose) inherit this, and a working directory inside the install blocks updates.
+        cwd: project.stateDir,
         env,
         detached: true,
         windowsHide: true,

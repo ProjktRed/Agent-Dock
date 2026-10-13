@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
@@ -19,6 +20,16 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir } from "./local-models";
 
 if (!app.requestSingleInstanceLock()) app.quit();
+
+// Shortcuts start the app with its install folder as the working directory, and every process it
+// starts inherits that. One that outlives the app (a llama.cpp server, an orphaned CLI) then keeps
+// the install folder in use and the next update cannot replace it. Work from the user data folder.
+try {
+  mkdirSync(app.getPath("userData"), { recursive: true });
+  process.chdir(app.getPath("userData"));
+} catch {
+  // keep the inherited directory
+}
 
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(app.getAppPath(), "engine");
 const store = new AppStore(app.getPath("userData"));

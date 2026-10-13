@@ -161,7 +161,7 @@ export async function swap({ from, installDir, waitPid, relaunch, shortcuts = tr
     }
     if (!moved) {
       rmSync(fresh, { recursive: true, force: true });
-      throw new Error(`${installDir} is in use (close every Agent Dock window and stop running automation). The installed version was left unchanged.`);
+      throw new Error(`${installDir} is in use: another Agent Dock window, running automation, or a program started from it (such as a llama.cpp server started by an older version) still works inside that folder. Close it and update again. The installed version was left unchanged.`);
     }
   }
   try {

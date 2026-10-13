@@ -39,6 +39,9 @@ export function llamaCppLauncherArgs({ modelsDir = null, thinking = "none" } = {
 function startLlamaCppServer(launcher, launcherArgs = []) {
   return new Promise((resolve, reject) => {
     const child = spawn("cmd.exe", ["/d", "/c", launcher, ...launcherArgs], {
+      // The server outlives the engine: start it in the launcher's own folder, never the engine's
+      // working directory (which may sit inside an app install that then cannot be updated).
+      cwd: path.dirname(launcher),
       detached: true,
       windowsHide: true,
       stdio: "ignore",

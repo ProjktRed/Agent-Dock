@@ -80,8 +80,8 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
   if (!launcher.trim()) return done([], "llama.cpp is not running and no launcher is set (Settings › Advanced › llama.cpp launcher). Start llama.cpp, then refresh.");
   if (!existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
   const child = process.platform === "win32"
-    ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { windowsHide: true, stdio: "ignore" })
-    : spawn(launcher, ["-ModelsDir", conn.modelsDir], { stdio: "ignore", detached: true });
+    ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore" })
+    : spawn(launcher, ["-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), stdio: "ignore", detached: true });
   child.on("error", () => { /* not executable: exitCode stays null, the wait below times out */ });
   try {
     const deadline = Date.now() + timeoutMs;
