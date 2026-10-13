@@ -1,6 +1,8 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Agent, CliConnection, Project, Settings, WorkflowRole } from "@shared/types";
+import type { Agent, CliConnection, EngineEvent, Project, Settings, WorkflowRole } from "@shared/types";
+import { parseLlamaSlots } from "../src/main/local-models";
+import { isHiddenEvent } from "../src/renderer/src/lib/events";
 import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
 import { buildStatus, cycleStage, deriveRunState } from "../src/main/lib/status";
@@ -406,5 +408,33 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(roleSlug("Security Review (strict)!")).toBe("security-review-strict");
     expect(classifyPrompt("You are Strict QA bot, a custom workflow role in a bounded automation loop")).toBe("custom");
     expect(classifyPrompt("You are the implementation worker in a bounded automation loop.")).toBe("implementation");
+  });
+});
+
+describe("token sources, live local usage and compaction", () => {
+  const ev = (type: string, extra: Record<string, unknown> = {}, ts = "2026-10-13T00:00:00Z") => ({ timestamp: ts, type, ...extra }) as EngineEvent;
+  it("keeps only the latest live sample per Cline attempt, and the final sample wins", () => {
+    const run = "2026-10-13T00:40:00Z";
+    const records = implementationUsage([
+      ev("cline-provider-metrics", { runStartedAt: run, partial: true, promptTokens: 1000, generatedTokens: 10 }),
+      ev("cline-provider-metrics", { runStartedAt: run, partial: true, promptTokens: 5000, generatedTokens: 90 }),
+      ev("cline-provider-metrics", { runStartedAt: run, promptTokens: 6000, generatedTokens: 120 }),
+      ev("cline-provider-metrics", { runStartedAt: "2026-10-13T01:00:00Z", partial: true, promptTokens: 300, generatedTokens: 3 }),
+      ev("cline-provider-metrics", { promptTokens: 7, generatedTokens: 1 }),
+    ], "p");
+    expect(records.map((r) => [r.input, r.output])).toEqual([[6000, 120], [300, 3], [7, 1]]);
+    expect(records.every((r) => r.local)).toBe(true);
+  });
+  it("counts only completed compactions and hides every compaction notice from activity", () => {
+    const events = [ev("cline-message", { message: "auto-compacting" }), ev("cline-message", { message: "auto-compacted" }), ev("cline-message", { message: "auto-compaction-skipped" }), ev("cline-compaction", { phase: "started" }), ev("cline-compaction", { phase: "completed" }), ev("cline-message", { message: "Editing App.tsx" })];
+    expect(countCompactions(events)).toBe(2);
+    expect(events.filter((e) => !isHiddenEvent(e)).map((e) => e.message)).toEqual(["Editing App.tsx"]);
+    expect(isHiddenEvent(ev("cline-provider-metrics"))).toBe(true);
+  });
+  it("reads context occupancy from llama.cpp /slots", () => {
+    const busy = parseLlamaSlots([{ id: 0, n_ctx: 98304, is_processing: true, n_prompt_tokens: 34926, next_token: [{ n_decoded: 655 }] }], "GLM");
+    expect(busy).toMatchObject({ state: "processing", used: 35581, size: 98304, model: "GLM" });
+    expect(parseLlamaSlots([{ n_ctx: 4096, is_processing: false, n_prompt_tokens: 0 }], "m")).toMatchObject({ state: "idle", used: null });
+    expect(parseLlamaSlots({ error: "model not loaded" }, "m").state).toBe("unavailable");
   });
 });

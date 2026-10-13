@@ -57,11 +57,53 @@ function parsedToolText(event) {
   } catch { return null; }
 }
 
+const COMPACTION_PHASES = { "auto-compacting": "started", "auto-compacted": "completed", "auto-compaction-skipped": "skipped" };
+
+const listText = (items) => (items.length > 2 ? `${items.slice(0, 2).join(", ")} (+${items.length - 2})` : items.join(", "));
+
+/**
+ * Cline 3 agent events: tools arrive as content_start/content_end with contentType "tool", a
+ * toolName (read_files, editor, run_commands, search_codebase, …) and its input. Reasoning
+ * arrives as contentType "reasoning". Null for anything else.
+ */
+export function normalizeCline3Event(event) {
+  if (event.contentType === "reasoning") return event.type === "content_start" ? { type: "cline-thinking-delta" } : null;
+  if (event.contentType !== "tool" || typeof event.toolName !== "string") return null;
+  const tool = event.toolName;
+  const input = event.input && typeof event.input === "object" ? event.input : {};
+  if (event.type === "content_end") {
+    const error = boundedText(typeof event.error === "string" ? event.error : event.error?.message);
+    return error ? { type: "cline-tool-failed", tool, message: error, action: `${tool} failed: ${error}` } : null;
+  }
+  if (event.type !== "content_start") return null;
+  if (tool === "read_files") {
+    const paths = (Array.isArray(input.files) ? input.files : []).map((f) => boundedText(f?.path)).filter(Boolean);
+    if (!paths.length && input.path) paths.push(boundedText(input.path));
+    return paths.length ? { type: "cline-file-read", path: paths[0], paths, action: `Reading ${listText(paths)}` } : { type: "cline-file-read", action: "Reading files" };
+  }
+  if (tool === "editor") {
+    const filePath = boundedText(input.path);
+    if (String(input.command ?? "").toLowerCase() === "view") return { type: "cline-file-read", path: filePath, action: `Reading ${filePath}` };
+    return filePath ? { type: "cline-file-modified", path: filePath, action: `Editing ${filePath}` } : null;
+  }
+  if (tool === "run_commands") {
+    const commands = (Array.isArray(input.commands) ? input.commands : [input.command]).map((c) => boundedText(typeof c === "string" ? c : c?.command)).filter(Boolean);
+    return commands.length ? { type: "cline-command", commands, action: `Running ${listText(commands)}` } : null;
+  }
+  if (tool === "search_codebase") {
+    const queries = (Array.isArray(input.queries) ? input.queries : [input.query]).map((q) => boundedText(q)).filter(Boolean);
+    return { type: "cline-search", ...(queries.length ? { query: queries.join(" | ") } : {}), action: queries.length ? `Searching for ${listText(queries)}` : "Searching workspace" };
+  }
+  if (tool === "submit_and_exit") return { type: "cline-tool", tool, action: "Finishing" };
+  return { type: "cline-tool", tool, action: `Using ${tool}` };
+}
+
 export function normalizeClineEvent(parsed) {
   if (!parsed || typeof parsed !== "object" || parsed.type === "run_result") return null;
   const event = parsed.type === "agent_event" && parsed.event && typeof parsed.event === "object"
     ? parsed.event
     : parsed;
+  if (parsed.type === "agent_event" && (event.contentType === "tool" || event.contentType === "reasoning")) return normalizeCline3Event(event);
   const parsedDetail = parsedToolText(event);
   const detail = parsedDetail ?? {};
   const kind = String(detail.tool ?? detail.type ?? event.tool ?? event.name ?? event.type ?? "").toLowerCase();
@@ -140,7 +182,10 @@ export function collectClineProcess(command, args, {
     diagnostic("CLINE_START", { command, pid: child.pid ?? null });
     Promise.resolve(onStart({ pid: child.pid ?? null })).catch(reject);
 
-    const queueEvent = (event) => {
+    const queueEvent = (incoming) => {
+      // Cline reports context compaction as plain messages; they are bookkeeping, not worker output.
+      const phase = incoming.type === "cline-message" ? COMPACTION_PHASES[String(incoming.message ?? "").trim()] : null;
+      const event = phase ? { type: "cline-compaction", phase } : incoming;
       const activityId = ++activitySequence;
       trace({ phase: "activity-created", activityId, activityType: event.type, length: event.message?.length ?? event.fragment?.length ?? null, preview: (event.message ?? event.fragment ?? "").slice(0, 40) });
       eventQueue = eventQueue.then(async () => {
@@ -161,8 +206,16 @@ export function collectClineProcess(command, args, {
       trace({ phase: "flushed", reason, length: buffered.length, preview: buffered.slice(0, 40) });
       return emitted;
     };
+    let thinking = false;
     const handleActivity = (activity) => {
       if (!activity) return;
+      // Reasoning streams in many chunks: one "Thinking…" entry per stretch, until something else happens.
+      if (activity.type === "cline-thinking-delta") {
+        if (!thinking) queueEvent({ type: "cline-thinking", action: "Thinking…" });
+        thinking = true;
+        return;
+      }
+      thinking = false;
       if (activity.type === "cline-message-delta") {
         messageBuffer = mergeStreamingText(messageBuffer, activity.fragment);
         trace({ phase: "buffered", length: activity.fragment.length, preview: activity.fragment.slice(0, 40), bufferLength: messageBuffer.length });
@@ -400,6 +453,7 @@ export class ClineCliWorker {
     beforeRun,
     toolGuard = false,
     readMetrics,
+    metricsIntervalMs = 30_000,
     checkExternalBusy = () => isAnyClineCliActive(clineJs),
     launch = launchCline,
   }) {
@@ -420,6 +474,7 @@ export class ClineCliWorker {
     this.beforeRun = beforeRun;
     this.toolGuard = toolGuard;
     this.readMetrics = readMetrics;
+    this.metricsIntervalMs = metricsIntervalMs;
     this.checkExternalBusy = checkExternalBusy;
     this.launch = launch;
   }
@@ -467,6 +522,35 @@ export class ClineCliWorker {
     }
     await onEvent({ type: "cline-provider-ready", ...identity });
     const before = this.readMetrics ? await this.readMetrics() : null;
+    const runStartedAt = new Date().toISOString();
+    const metricsEvent = (after, extra) => {
+      const promptTokens = Math.max(0, after.promptTokens - before.promptTokens);
+      const generatedTokens = Math.max(0, after.generatedTokens - before.generatedTokens);
+      const promptSeconds = Math.max(0, after.promptSeconds - before.promptSeconds);
+      const generationSeconds = Math.max(0, after.generationSeconds - before.generationSeconds);
+      return {
+        type: "cline-provider-metrics",
+        runStartedAt,
+        requestedProvider: identity.requestedProvider,
+        provider: identity.provider,
+        baseUrl: identity.baseUrl,
+        model: identity.model,
+        promptTokens,
+        generatedTokens,
+        promptTokensPerSecond: promptSeconds > 0 ? promptTokens / promptSeconds : 0,
+        generationTokensPerSecond: generationSeconds > 0 ? generatedTokens / generationSeconds : 0,
+        ...extra,
+      };
+    };
+    // Live token usage while the attempt runs (llama.cpp counts each finished request); the final
+    // sample after the attempt replaces these partial ones.
+    let sampler = null;
+    if (this.readMetrics && before) {
+      sampler = setInterval(() => {
+        this.readMetrics().then((now) => onEvent(metricsEvent(now, { partial: true }))).catch(() => {});
+      }, this.metricsIntervalMs);
+      sampler.unref?.();
+    }
     let result;
     let failure;
     try {
@@ -492,25 +576,11 @@ export class ClineCliWorker {
       }
       throw error;
     } finally {
+      if (sampler) clearInterval(sampler);
       if (this.readMetrics && before) {
         try {
           const after = await this.readMetrics();
-          const promptTokens = Math.max(0, after.promptTokens - before.promptTokens);
-          const generatedTokens = Math.max(0, after.generatedTokens - before.generatedTokens);
-          const promptSeconds = Math.max(0, after.promptSeconds - before.promptSeconds);
-          const generationSeconds = Math.max(0, after.generationSeconds - before.generationSeconds);
-          await onEvent({
-            type: "cline-provider-metrics",
-            requestedProvider: identity.requestedProvider,
-            provider: identity.provider,
-            baseUrl: identity.baseUrl,
-            model: identity.model,
-            promptTokens,
-            generatedTokens,
-            promptTokensPerSecond: promptSeconds > 0 ? promptTokens / promptSeconds : 0,
-            generationTokensPerSecond: generationSeconds > 0 ? generatedTokens / generationSeconds : 0,
-            failed: Boolean(failure || result?.exitCode !== 0),
-          });
+          await onEvent(metricsEvent(after, { failed: Boolean(failure || result?.exitCode !== 0) }));
         } catch (metricsError) {
           await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
         }

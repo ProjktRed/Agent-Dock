@@ -7,18 +7,16 @@ import { defaultModelId, effortLabel, useModelCatalog, withModel } from "../lib/
 import { Icon } from "../components/Icon";
 import { Disclosure, Dot, Empty, Modal, Spinner, St, Support, Tabs, Toggle } from "../components/ui";
 import { stageLabel } from "./Workflow";
+import { describeEvent, isHiddenEvent } from "../lib/events";
 
 const ROLE_EVENTS: Record<string, RegExp> = {
-  implementation: /^cline-/,
+  implementation: /^(cline-|implementation-)/,
   qa: /^(codex-qa|qa-)/,
-  assessment: /^codex-(assessing|finished)/,
+  assessment: /^codex-(assessing|finished|operation-consumed)/,
   elevation: /^(sol-reassessment|elevate)/,
 };
 
-function eventText(e: EngineEvent) {
-  const detail = e.message ?? e.qa ?? (e.model ? `model ${e.model}` : "");
-  return `${e.type}${e.attempt != null ? ` #${e.attempt}` : ""}${detail ? ` · ${String(detail).split(/\r?\n/)[0].slice(0, 120)}` : ""}`;
-}
+const eventText = (e: EngineEvent) => describeEvent(e);
 
 function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Agent) => void; onDelete: () => void }) {
   const { snap, healths, toast, go } = useApp();
@@ -302,7 +300,7 @@ function AgentActivity({ agent }: { agent: Agent }) {
   // A workflow role agent: its own role's events (role-started / role-result / role-error carry roleName).
   const workflowRole = agent.role === "custom" ? snap.roles.find((r) => r.id === agent.customRole) ?? null : null;
   const pattern = ROLE_EVENTS[agent.role] ?? /^role-/;
-  const events = (s?.events ?? []).filter((e) => pattern.test(e.type) && (!workflowRole || e.roleName === workflowRole.name));
+  const events = (s?.events ?? []).filter((e) => !isHiddenEvent(e) && pattern.test(e.type) && (!workflowRole || e.roleName === workflowRole.name));
   const roleName = workflowRole ? workflowRole.name : roleLabel[agent.role];
   const active = s?.processAlive && s.activeRole === roleName;
   const records = usage.filter((r) => r.role === agent.role);

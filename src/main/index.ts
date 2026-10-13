@@ -8,7 +8,8 @@ import { defaultAgents } from "./defaults";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
 import { checkCli, detectOnPath, pickRunnable, whereAll } from "./lib/clis";
-import { buildEngineArgs } from "./lib/engine-args";
+import { agentForRole, buildEngineArgs } from "./lib/engine-args";
+import { isCompactionDone } from "./lib/usage";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { addProject, inspectDirectory, taskHistory } from "./projects";
 import { listSkills } from "./skills";
@@ -17,7 +18,7 @@ import { AppStore } from "./store";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
-import { collectLlamaCpp, collectOllama, detectLlamaModelsDir } from "./local-models";
+import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -164,7 +165,7 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       // Automatic continuation off: hold at the next task boundary (the engine's Pause After Task).
       if (!workflow.autoContinue && next.processAlive) await engine.control(p, "pause", await launchArgs(p)).catch(() => {});
     }
-    if (event.type === "cline-message" && /^auto-compact(ed|ing)$/.test(String(event.message ?? "")) && settings.attention.informational === "windows") {
+    if (isCompactionDone(event) && settings.attention.informational === "windows") {
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");
     }
   }
@@ -418,6 +419,7 @@ function registerIpc() {
   });
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
   handle("usage", (id: string | null) => usage(id));
+  handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });
   handle("skills:list", () => listSkills(engineDir, store.data.settings.skills.importedDirs));
   handle("skills:import", async () => {
     const result = await dialog.showOpenDialog(win!, { title: "Import skill folder (contains SKILL.md)", properties: ["openDirectory"] });

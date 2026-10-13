@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, ProjectStatus } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration } from "../../lib/format";
+import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
@@ -52,8 +53,7 @@ function lastApproval(events: EngineEvent[]) {
 }
 
 function eventLine(e: EngineEvent): string {
-  const detail = e.message ?? e.qa ?? (e.model ? `model ${e.model}` : "");
-  return `${clock(e.timestamp)}  ${e.type}${e.attempt != null ? ` #${e.attempt}` : ""}${detail ? `  ${String(detail).split(/\r?\n/)[0].slice(0, 160)}` : ""}`;
+  return `${clock(e.timestamp)}  ${describeEvent(e)}`;
 }
 
 function PlanTree({ phases, current, activeTitle }: { phases: PlanPhase[]; current: number | null; activeTitle: string | null }) {
@@ -276,7 +276,7 @@ export function ProgressTab() {
               <div className="sub">No task loaded yet. Assessment chooses the first bounded task when the engine starts.</div>
             )}
             <Disclosure title="Activity" meta={`${s.events.length} recent events`}>
-              <div className="mono log selectable">{s.events.slice(-60).map(eventLine).join("\n") || "No activity yet."}</div>
+              <div className="mono log selectable">{s.events.filter((e) => !isHiddenEvent(e)).slice(-60).map(eventLine).join("\n") || "No activity yet."}</div>
             </Disclosure>
             <div>
               <button className="disc" onClick={async () => setLog(log === null ? await window.api.engineLog(activeProject.id) : null)} aria-expanded={log !== null}>

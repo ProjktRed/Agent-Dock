@@ -14,6 +14,7 @@ import type {
   SkillInfo,
   UpdateStatus,
   UsageSummary,
+  LocalContext,
   WorkflowRole,
 } from "./types";
 
@@ -84,6 +85,8 @@ export interface DesktopApi {
   launchCheck(projectId: string): Promise<LaunchCheck>;
   control(projectId: string, action: ControlAction): Promise<void>;
   usage(projectId: string | null): Promise<UsageSummary>;
+  /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
+  localContext(projectId: string): Promise<LocalContext>;
   history(projectId: string): Promise<HistoryEntry[]>;
   engineLog(projectId: string): Promise<string>;
   skills(): Promise<SkillInfo[]>;

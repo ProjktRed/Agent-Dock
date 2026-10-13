@@ -90,25 +90,48 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
   return records;
 }
 
-/** llama.cpp metrics the engine samples around every Cline attempt (`cline-provider-metrics`). */
+/**
+ * llama.cpp metrics the engine samples for every Cline attempt (`cline-provider-metrics`). While an
+ * attempt runs it writes partial samples (cumulative for that attempt, `runStartedAt` identifies
+ * it); only the latest sample per attempt counts, and the final one replaces the partials.
+ */
 export function implementationUsage(events: EngineEvent[], projectId: string): TokenRecord[] {
-  return events
-    .filter((e) => e.type === "cline-provider-metrics" && typeof e.promptTokens === "number")
-    .map((e) => ({
-      timestamp: e.timestamp,
-      role: "implementation" as const,
-      provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · local`,
-      model: typeof e.model === "string" ? e.model : null,
-      input: Number(e.promptTokens) || 0,
-      cached: 0,
-      output: Number(e.generatedTokens) || 0,
-      projectId,
-      taskId: e.taskId ?? null,
-    }));
+  const latest = new Map<string, EngineEvent>();
+  events.forEach((e, i) => {
+    if (e.type !== "cline-provider-metrics" || typeof e.promptTokens !== "number") return;
+    const key = typeof e.runStartedAt === "string" ? e.runStartedAt : `event-${i}`;
+    const current = latest.get(key);
+    // Events are in time order: a newer sample replaces a partial one; the final sample stays.
+    if (!current || current.partial === true) latest.set(key, e);
+  });
+  return [...latest.values()].map((e) => ({
+    timestamp: e.timestamp,
+    role: "implementation" as const,
+    provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · local`,
+    model: typeof e.model === "string" ? e.model : null,
+    input: Number(e.promptTokens) || 0,
+    cached: 0,
+    output: Number(e.generatedTokens) || 0,
+    projectId,
+    taskId: e.taskId ?? null,
+    local: true,
+  }));
+}
+
+const COMPACTION_TEXT = /^auto-compact(?:ing|ed|ion-skipped)$/;
+
+/** Cline context compaction bookkeeping (old logs: plain messages; new: cline-compaction events). Hidden from activity. */
+export function isCompactionEvent(e: EngineEvent): boolean {
+  return e.type === "cline-compaction" || (e.type === "cline-message" && COMPACTION_TEXT.test(String(e.message ?? e.action ?? "").trim()));
+}
+
+/** A compaction that actually happened (not "compacting" or "skipped"). */
+export function isCompactionDone(e: EngineEvent): boolean {
+  return e.type === "cline-compaction" ? e.phase === "completed" : e.type === "cline-message" && String(e.message ?? e.action ?? "").trim() === "auto-compacted";
 }
 
 export function countCompactions(events: EngineEvent[]): number {
-  return events.filter((e) => e.type === "cline-message" && /^auto-compact(?:ed|ing)$/.test(String(e.message ?? e.action ?? "").trim())).length;
+  return events.filter(isCompactionDone).length;
 }
 
 export async function readActivity(stateDir: string, limit: number): Promise<EngineEvent[]> {

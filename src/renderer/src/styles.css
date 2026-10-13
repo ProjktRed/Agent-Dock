@@ -351,3 +351,5 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .flow-arrow { align-self: center; color: var(--t2); font-size: 15px; }
 #attention-panel.flash { animation: attention-flash 1.2s ease-out; }
 @keyframes attention-flash { 0% { box-shadow: 0 0 0 3px var(--a); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.ctx .used { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--a); }
+.ctx .used.hot { background: #dab777; }

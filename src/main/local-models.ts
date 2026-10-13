@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { CliConnection, CollectedModel, CollectedModels } from "@shared/types";
+import type { Agent, CliConnection, CollectedModel, CollectedModels, LocalContext } from "@shared/types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -105,5 +105,37 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
         try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
       }
     }
+  }
+}
+
+/**
+ * Context occupancy from llama.cpp /slots: the prompt in the slot plus what it has generated so far.
+ * An idle slot still holds its last prompt in the KV cache, so that is reported as idle usage.
+ */
+export function parseLlamaSlots(value: unknown, model: string | null): LocalContext {
+  const slots = (Array.isArray(value) ? value : [value]).filter((s): s is Record<string, any> => Boolean(s) && typeof s === "object");
+  const slot = slots.find((s) => s.is_processing) ?? slots[0];
+  if (!slot || typeof slot.n_ctx !== "number") return { state: "unavailable", used: null, size: null, model, source: "llama.cpp /slots did not report a slot" };
+  const prompt = Number(slot.n_prompt_tokens ?? slot.prompt_tokens ?? 0) || 0;
+  const decoded = Number(slot.next_token?.[0]?.n_decoded ?? slot.n_decoded ?? 0) || 0;
+  return { state: slot.is_processing ? "processing" : "idle", used: prompt + decoded || null, size: slot.n_ctx, model, source: "llama.cpp /slots" };
+}
+
+/** What occupies the Implementation agent's context right now. Only llama.cpp reports it. */
+export async function readLocalContext(agent: Agent | null, clis: CliConnection[], runningModel: string | null = null, timeoutMs = 3000): Promise<LocalContext> {
+  // The model the engine reports running wins: it is what the server actually has loaded.
+  const model = runningModel || agent?.model || null;
+  const none = (state: LocalContext["state"], source: string): LocalContext => ({ state, used: null, size: null, model, source });
+  if (!agent || clis.find((c) => c.id === agent.cliId)?.kind !== "cline" || !agent.provider) return none("none", "No local Implementation agent");
+  const conn = clis.find((c) => c.kind === agent.provider);
+  if (agent.provider === "ollama") return none("not-reported", "Ollama does not report context occupancy");
+  if (!conn) return none("unavailable", "No llama.cpp connection");
+  const base = conn.location.replace(/\/+$/, "").replace(/\/v1$/, "");
+  // Router mode (models folder) keeps one slot set per model.
+  const url = `${base}/slots${conn.modelsDir && model ? `?model=${encodeURIComponent(model)}` : ""}`;
+  try {
+    return parseLlamaSlots(await getJson(url, timeoutMs), model);
+  } catch (error) {
+    return none("unavailable", `llama.cpp did not answer /slots (${(error as Error).message.slice(0, 120)}); it may not be running or the model is not loaded`);
   }
 }

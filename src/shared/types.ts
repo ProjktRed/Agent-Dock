@@ -371,6 +371,17 @@ export interface TokenRecord {
   output: number;
   projectId: string;
   taskId: string | null;
+  /** Local AI (Cline on llama.cpp / Ollama); otherwise a cloud CLI (Codex, Claude Code). */
+  local?: boolean;
+}
+
+/** What occupies the Implementation agent's context window right now (local providers only). */
+export interface LocalContext {
+  state: "processing" | "idle" | "not-reported" | "unavailable" | "none";
+  used: number | null;
+  size: number | null;
+  model: string | null;
+  source: string;
 }
 
 export interface UsageSummary {

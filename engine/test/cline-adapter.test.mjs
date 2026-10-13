@@ -133,7 +133,11 @@ test("llama.cpp readiness and metrics are checked around every Cline attempt", a
     assert.equal(ready[0].model, "glm-4.7-flash-ud-q3-k-xl");
     const metrics = events.filter((event) => event.type === "cline-provider-metrics");
     assert.equal(metrics.length, 2);
-    assert.deepEqual(metrics[0], {
+    // Each attempt's samples share runStartedAt (partial samples during long attempts use it too).
+    assert.match(metrics[0].runStartedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.notEqual(metrics[0].runStartedAt, undefined);
+    const { runStartedAt: _first, ...firstMetrics } = metrics[0];
+    assert.deepEqual(firstMetrics, {
       type: "cline-provider-metrics",
       requestedProvider: "llamacpp",
       provider: "openai-compatible",
