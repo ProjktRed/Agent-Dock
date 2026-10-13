@@ -219,3 +219,21 @@ test('read-only roles are told their sandbox, not the project, blocks writes', a
   assert.match(READ_ONLY_SANDBOX, /EPERM[\s\S]*Never treat it as a blocker/);
   assert.ok(buildRolePrompt(parseRoles([role()])[0], {}).includes(READ_ONLY_SANDBOX));
 });
+
+test('Retry after a blocked Assessment runs a fresh Assessment instead of replaying the stored verdict', async t => {
+  const { root, state } = await setup(t);
+  // What a blocked first run leaves behind: the completed Assessment receipt in live.json.
+  await state.record({ type:'codex-finished', operationId:'old', codexOperation:{ version:2, operationId:'old', operation:'assessment', status:'completed', inputs:{}, context:{}, result:{ status:'manual-review', task:null, output:'old sandbox verdict', correction:'', commit:'', manualReviewCause:'EPERM' } } });
+  assert.equal((await state.readLive()).codexOperation?.status, 'completed');
+  const verdicts = [];
+  const run = () => runNodeLoop({ workspace:root, stateDir:root, objective:'x', codex:{ activeCount:0 }, baseline:async()=>({ head:'base' }),
+    worker:{ withExclusive:fn=>fn(), run:()=>assert.fail('no task') },
+    assess:async()=>{ verdicts.push('fresh'); return { status:'manual-review', task:null, output:'fresh verdict '+verdicts.length, correction:'', commit:'', manualReviewCause:null }; },
+    readControl:()=>state.readControl(), onEvent:e=>state.record(e), pollMs:1 });
+  const first = await run();
+  assert.equal(first.status, 'blocked');
+  assert.equal(first.output, 'fresh verdict 1', 'the stored verdict was not replayed');
+  assert.equal((await state.readLive()).codexOperation ?? null, null, 'the blocked receipt is consumed');
+  const second = await run();
+  assert.equal(second.output, 'fresh verdict 2', 'every Retry asks Assessment again');
+});

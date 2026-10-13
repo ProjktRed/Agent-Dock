@@ -96,6 +96,7 @@ export class DashboardState {
       Object.assign(next,event.recovery);
       if(event.consumeCodexResult) next.codexOperation=null;
     }
+    if(event.type==='codex-operation-consumed') next.codexOperation=null;
     if(event.type==='known-issues-selected')next.knownIssues=event.knownIssues;
     if(['codex-assessing','codex-qa-started','sol-reassessment-started','resolver-started'].includes(event.type)) {
       next.activeReasoningRole=event.type==='resolver-started'?'Resolver':event.type==='codex-qa-started'?'QA':event.type==='sol-reassessment-started'?'Elevation':'Assessment';

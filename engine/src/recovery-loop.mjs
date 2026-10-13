@@ -35,6 +35,11 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   knowledgeFile ??= path.resolve(stateDir,'..','LOCAL_WORKER_ISSUES.md');
   const file=path.join(stateDir,'current-task.json');
   let saved=await read(file), pending=pendingCodex??await readPendingCodex(stateDir);
+  // A completed Assessment receipt is replayed so a crash never repeats work, but one that produced
+  // no task has nothing to resume: replaying it only repeats the old verdict, and Retry would never
+  // run a fresh Assessment. Consume it instead.
+  const consumeAssessment=async()=>{await rm(path.join(stateDir,'pending-codex.json'),{force:true});await emit('codex-operation-consumed');};
+  if(pending?.operation==='assessment'&&pending.status==='completed'&&!['task','done'].includes(pending.result?.status)){await consumeAssessment();pending=null;}
   let task=pending?(pending.operation==='assessment'?null:pending.context?.task??pending.inputs?.task):initialTask??correctionResume?.task;
   let r=saved?.automation?.recovery;
   const suppliedTaskChanged=r&&task&&task.id===saved.id&&recoveryFingerprint(task)!==recoveryFingerprint(Object.fromEntries(Object.entries(saved).filter(([k])=>k!=='automation')));
@@ -146,7 +151,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           if(!task) {
             const op=await operation('assessment',{objective,previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
             if(op.result.status==='done'){await emit('loop-complete');return{status:'done'};}
-            if(op.result.status!=='task')return block(op.result.output??'Assessment could not produce a safe task');
+            if(op.result.status!=='task'){await consumeAssessment();return block(op.result.output??'Assessment could not produce a safe task');}
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');
             assessmentOperationId=op.operationId;
           }
