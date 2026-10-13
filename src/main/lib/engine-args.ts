@@ -63,7 +63,7 @@ export interface EngineLaunchPlan {
  * With engine guardrails on (default) QA, Assessment, Resolver and Elevation share one orchestrator
  * CLI and models must belong to it. With guardrails off each role may use its own CLI
  * (--<role>-cli; the engine routes each role to its worker) and those checks become warnings.
- * Implementation runs through Cline (local provider), Codex or Claude Code. Enabled workflow roles
+ * Implementation runs through Cline, OpenCode, Codex or Claude Code. Enabled workflow roles
  * with an agent are passed as a roles file; loop limits only with guardrails off.
  */
 export function buildEngineArgs(input: {
@@ -92,8 +92,8 @@ export function buildEngineArgs(input: {
   const implCli = cliOf(impl);
   if (!impl) problems.push("No enabled Implementation agent.");
   else if (!impl.enabled) problems.push(`Implementation agent “${impl.name}” is disabled.`);
-  else if (!implCli || !["cline", "codex", "claude"].includes(implCli.kind)) problems.push(`Implementation agent “${impl.name}” must use Cline, Codex CLI or Claude Code.`);
-  else if (implCli.kind === "cline" && !impl.provider) problems.push(`Implementation agent “${impl.name}” has no local provider (llama.cpp or Ollama).`);
+  else if (!implCli || !["cline", "opencode", "codex", "claude"].includes(implCli.kind)) problems.push(`Implementation agent “${impl.name}” must use Cline, OpenCode, Codex CLI or Claude Code.`);
+  else if ((implCli.kind === "cline" || implCli.kind === "opencode") && !impl.provider) problems.push(`Implementation agent “${impl.name}” has no provider selected.`);
 
   const qa = agentForRole("qa", project, agents);
   const qaCli = cliOf(qa);
@@ -106,13 +106,29 @@ export function buildEngineArgs(input: {
   const orchestrator = orchestratorKind(qa) ?? "codex";
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
-  if (impl && implCli?.kind === "cline" && impl.provider) {
-    args.push("--provider", impl.provider, "--model", impl.model);
+  if (impl && (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl.provider) {
+    const selectedProviderConn = impl.provider === "openai" && impl.providerCliId ? clis.find((c) => c.id === impl.providerCliId) : undefined;
+    const providerConn = impl.provider === "openai"
+      ? selectedProviderConn
+        ? selectedProviderConn.kind === "openai" ? selectedProviderConn : undefined
+        : impl.providerCliId ? undefined : clis.find((c) => c.kind === "openai")
+      : clis.find((c) => c.kind === impl.provider);
+    if (implCli.kind === "opencode" && implCli.location && implCli.location !== "opencode") args.push("--opencode-exe", implCli.location);
+    if (impl.provider === "openai" && !providerConn) guard(`Implementation agent “${impl.name}” has no valid OpenAI-compatible provider connection.`);
+    const providerId = impl.provider === "openai" && providerConn && /^https:\/\/openrouter\.ai\/api\/v1\/?$/i.test(providerConn.location)
+      ? "openrouter"
+      : impl.provider;
+    args.push("--provider", providerId, "--model", impl.model);
+    if (implCli.kind === "opencode") args.push("--worker", "opencode");
     args.push("--cline-context-tokens", String(impl.contextTokens));
     args.push("--cline-max-output-tokens", String(impl.maxOutputTokens));
     args.push("--timeout-seconds", String(impl.timeoutSeconds));
     if (impl.reasoning && CLINE_THINKING.includes(impl.reasoning)) args.push("--cline-thinking", impl.reasoning);
-    const providerConn = clis.find((c) => c.kind === impl.provider);
+    if (impl.provider === "openai" && providerConn) {
+      const baseUrl = providerConn.location.replace(/\/$/, "");
+      args.push("--provider-base-url", baseUrl, "--provider-api-key-env", "AGENT_DOCK_PROVIDER_KEY");
+      if (!providerConn.hasSecret) guard(`Implementation provider “${providerConn.name}” has no saved API key.`);
+    }
     if (impl.provider === "llamacpp" && providerConn?.modelsDir) args.push("--llamacpp-models-dir", providerConn.modelsDir);
     if (impl.provider === "llamacpp" && settings.advanced.llamaCppLauncher.trim()) args.push("--llamacpp-launcher", settings.advanced.llamaCppLauncher.trim());
     const collected = providerConn?.collected?.models ?? [];

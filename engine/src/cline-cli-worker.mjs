@@ -14,6 +14,8 @@ const boundedText = (value, limit = 1_000) => typeof value === "string" && value
   ? value.trim().slice(0, limit)
   : null;
 
+const redactText = (value, secrets) => secrets.reduce((redacted, secret) => redacted.split(secret).join("[REDACTED]"), value);
+
 const MESSAGE_BUFFER_LIMIT = 4_000;
 const TEXT_DELTA_TYPES = new Set([
   "assistant_update",
@@ -149,6 +151,7 @@ export function collectClineProcess(command, args, {
   spawnProcess = spawn,
   drainTimeoutMs = 250,
   requireRunResult = true,
+  redactValues = [],
   diagnostic = defaultDiagnostic,
   onStart = () => {},
   onEvent = () => {},
@@ -243,7 +246,7 @@ export function collectClineProcess(command, args, {
     const parseLine = (line) => {
       if (!line.trim()) return;
       try {
-        const parsed = JSON.parse(line);
+        const parsed = JSON.parse(redactText(line, redactValues));
         const activity = normalizeClineEvent(parsed);
         if (activity && traceActivity) {
           const raw = parsed.type === "agent_event" ? parsed.event : parsed;
@@ -283,7 +286,7 @@ export function collectClineProcess(command, args, {
       flushMessage("boundary");
       try { await eventQueue; }
       catch (error) { reject(error); return; }
-      const output = `${stdout}${stderr}`;
+      const output = redactText(`${stdout}${stderr}`, redactValues);
       if (requireRunResult && !runResult) {
         const detail = malformedFinal ? `; final NDJSON was malformed: ${malformedFinal.message}` : "";
         const error = new Error(`Cline output did not contain a valid final run_result${detail}`);
@@ -420,6 +423,7 @@ export async function launchCline({
   guardPluginPath,
   guardLaunchArgs,
   guardEnv,
+  launchEnv,
   guardVerify,
   thinking,
 }) {
@@ -441,8 +445,11 @@ export async function launchCline({
     prompt,
     thinking,
   });
-  const env = guardPolicyPath ? { ...process.env, ...(guardEnv ?? guardLaunch.env) } : undefined;
-  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent });
+  const env = guardPolicyPath || launchEnv
+    ? { ...process.env, ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) }
+    : undefined;
+  const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
+  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent, redactValues });
   if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {
     throw new Error(RUNTIME_NOT_READY);
   }
@@ -463,6 +470,8 @@ export class ClineCliWorker {
     requestedProvider = provider,
     baseUrl,
     beforeRun,
+    cleanupAfterRun,
+    providerEnv,
     toolGuard = false,
     readMetrics,
     metricsIntervalMs = 30_000,
@@ -484,11 +493,28 @@ export class ClineCliWorker {
       thinking,
     };
     this.beforeRun = beforeRun;
+    this.cleanupAfterRun = cleanupAfterRun;
+    this.providerEnv = providerEnv;
+    this.providerSecrets = Object.values(providerEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
     this.toolGuard = toolGuard;
     this.readMetrics = readMetrics;
     this.metricsIntervalMs = metricsIntervalMs;
     this.checkExternalBusy = checkExternalBusy;
     this.launch = launch;
+  }
+
+  redactProviderSecrets(value) {
+    if (!this.providerSecrets.length || typeof value !== "string") return value;
+    return this.providerSecrets.reduce((redacted, secret) => redacted.split(secret).join("[REDACTED]"), value);
+  }
+
+  redactProviderEvent(value) {
+    if (typeof value === "string") return this.redactProviderSecrets(value);
+    if (Array.isArray(value)) return value.map((entry) => this.redactProviderEvent(entry));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, this.redactProviderEvent(entry)]));
+    }
+    return value;
   }
 
   async isBusy() {
@@ -532,8 +558,16 @@ export class ClineCliWorker {
       });
       throw error;
     }
-    await onEvent({ type: "cline-provider-ready", ...identity });
-    const before = this.readMetrics ? await this.readMetrics() : null;
+    let before;
+    try {
+      await onEvent({ type: "cline-provider-ready", ...identity });
+      before = this.readMetrics ? await this.readMetrics() : null;
+    } catch (error) {
+      if (this.cleanupAfterRun) {
+        try { await this.cleanupAfterRun(); } catch { /* preserve the readiness failure */ }
+      }
+      throw error;
+    }
     const runStartedAt = new Date().toISOString();
     const metricsEvent = (after, extra) => {
       const promptTokens = Math.max(0, after.promptTokens - before.promptTokens);
@@ -569,7 +603,9 @@ export class ClineCliWorker {
       const guard = this.toolGuard ? await prepareToolGuard({ stateDir: this.stateDir, workspace: this.options.workspace }) : null;
       if (guard) await verifyRestrictedTools(guard);
       const guardLaunch = guard ? clineGuard.launchConfiguration({ configDir: guard.configDir, hooksDir: guard.hooksDir, dataDir: this.options.dataDir, pluginPath: guard.pluginPath }) : null;
-      result = await this.launch({ ...this.options, ...hooks, prompt: prompt + (guard?.instructions ?? ""), ...(guard ? { configDir: guard.configDir, hooksDir: guard.hooksDir, guardLaunchArgs: guardLaunch.launchArgs, guardEnv: guardLaunch.env, guardVerify: guardLaunch.verify, guardPolicyPath: guard.policyPath, guardPluginPath: guard.pluginPath } : {}) });
+      const launchOnEvent = this.providerSecrets.length ? (event) => onEvent(this.redactProviderEvent(event)) : onEvent;
+      result = await this.launch({ ...this.options, ...hooks, onEvent: launchOnEvent, prompt: prompt + (guard?.instructions ?? ""), ...(this.providerEnv ? { launchEnv: this.providerEnv } : {}), ...(guard ? { configDir: guard.configDir, hooksDir: guard.hooksDir, guardLaunchArgs: guardLaunch.launchArgs, guardEnv: guardLaunch.env, guardVerify: guardLaunch.verify, guardPolicyPath: guard.policyPath, guardPluginPath: guard.pluginPath } : {}) });
+      if (typeof result.output === "string") result.output = this.redactProviderSecrets(result.output);
       if (guard) {
         const outcome = await readGuardOutcome(guard.policyPath);
         if (outcome.stopped) {
@@ -585,17 +621,29 @@ export class ClineCliWorker {
       failure = error;
       // Keep the failed attempt's own output; the loop records only the message.
       if (typeof error.output === "string") {
+        error.output = this.redactProviderSecrets(error.output);
         try { await writeFile(path.join(this.stateDir, "cline-last-failure.txt"), error.output.slice(-20_000)); } catch { /* diagnostic only */ }
       }
+      if (typeof error.message === "string") error.message = this.redactProviderSecrets(error.message);
       throw error;
     } finally {
       if (sampler) clearInterval(sampler);
-      if (this.readMetrics && before) {
-        try {
-          const after = await this.readMetrics();
-          await onEvent(metricsEvent(after, { failed: Boolean(failure || result?.exitCode !== 0) }));
-        } catch (metricsError) {
-          await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
+      try {
+        if (this.readMetrics && before) {
+          try {
+            const after = await this.readMetrics();
+            await onEvent(metricsEvent(after, { failed: Boolean(failure || result?.exitCode !== 0) }));
+          } catch (metricsError) {
+            await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
+          }
+        }
+      } finally {
+        if (this.cleanupAfterRun) {
+          try { await this.cleanupAfterRun(); }
+          catch (cleanupError) {
+            if (!failure) throw cleanupError;
+            await onEvent({ type: "cline-provider-config-cleanup-failed", error: cleanupError.message });
+          }
         }
       }
     }

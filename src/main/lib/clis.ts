@@ -66,6 +66,9 @@ function helpCapabilities(kind: CliConnection["kind"], help: string): Capability
       cap("Token metrics", "partial", "Measured through the llama.cpp /metrics endpoint, not by Cline"),
     ];
   }
+  if (kind === "opencode") {
+    return [cap("Isolated config directory", "detected", "The engine supplies a per-run config directory"), cap("Guard plugin", "detected", "The engine verifies the guard plugin before running")];
+  }
   return [];
 }
 

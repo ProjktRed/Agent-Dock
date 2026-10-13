@@ -91,7 +91,7 @@ export class EngineManager {
     return this.alive.has(projectId);
   }
 
-  private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[]): Promise<ProcessRecord> {
+  private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<ProcessRecord> {
     mkdirSync(project.stateDir, { recursive: true });
     const { command, env } = await this.resolveNode();
     const log = openSync(path.join(project.stateDir, "app-engine.log"), "a");
@@ -101,7 +101,7 @@ export class EngineManager {
         // Not the engine folder: processes the engine starts (a llama.cpp server keeps running on
         // purpose) inherit this, and a working directory inside the install blocks updates.
         cwd: project.stateDir,
-        env,
+        env: { ...env, ...envDelta },
         detached: true,
         windowsHide: true,
         stdio: ["ignore", log, log],
@@ -120,10 +120,10 @@ export class EngineManager {
     }
   }
 
-  async start(project: Project, args: string[], resolveBlock = false): Promise<void> {
+  async start(project: Project, args: string[], resolveBlock = false, envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
     if (await this.refreshAlive(project)) throw new Error("Automation is already running for this project.");
     const logBefore = (await this.engineLog(project, 10_000_000)).length;
-    const record = await this.spawnEngine(project, "cli.mjs", resolveBlock ? [...args, "--resolve-block", "true"] : args);
+    const record = await this.spawnEngine(project, "cli.mjs", resolveBlock ? [...args, "--resolve-block", "true"] : args, envDelta);
     // Preflight (provider, model, orchestrator sign-in) fails within seconds; report it instead of silently going idle.
     await new Promise((resolve) => setTimeout(resolve, 2500));
     if (!(await this.pidAlive(record.pid))) {
@@ -139,9 +139,9 @@ export class EngineManager {
   }
 
   /** Same semantics as the engine dashboard (engine/src/dashboard-cli.mjs onControl). */
-  async control(project: Project, action: ControlAction, args: string[]): Promise<void> {
+  async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
     const running = await this.refreshAlive(project);
-    if (action === "start") return this.start(project, args);
+    if (action === "start") return this.start(project, args, false, envDelta);
     if (action === "stop-now") {
       if (!running) return;
       if (process.platform === "win32") await run("taskkill", ["/PID", String(running.pid), "/T", "/F"], { timeoutMs: 10_000 });
@@ -159,8 +159,8 @@ export class EngineManager {
     const state = await this.state(project);
     await state.setControl(action);
     if (action === "resume") this.stopAfterTask.delete(project.id);
-    if ((action === "resume" || action === "resolve") && !running) await this.start(project, args, action === "resolve");
-    if (action === "elevate" && !running) await this.spawnEngine(project, "elevate-cli.mjs", args);
+    if ((action === "resume" || action === "resolve") && !running) await this.start(project, args, action === "resolve", envDelta);
+    if (action === "elevate" && !running) await this.spawnEngine(project, "elevate-cli.mjs", args, envDelta);
   }
 
   /** Called on every poll: completes "stop after current task" once the engine has paused at the task boundary. */

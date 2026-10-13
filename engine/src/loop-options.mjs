@@ -49,11 +49,14 @@ function clineThinking(value) {
   return value;
 }
 
-export const IMPLEMENTATION_CLIS = ["cline", "codex", "claude"];
+export const IMPLEMENTATION_CLIS = ["cline", "codex", "claude", "opencode"];
+export const PROVIDERS = ["llamacpp", "ollama", "openrouter", "openai"];
 
 /** --implementation-cli cline|codex|claude (+ --implementation-model / -effort / -fast for codex and claude). */
 export function parseImplementation(options) {
-  const cli = options["implementation-cli"] ?? "cline";
+  const worker = options.worker;
+  if (worker !== undefined && !["cline", "opencode"].includes(worker)) throw new Error("--worker must be cline or opencode");
+  const cli = options["implementation-cli"] ?? worker ?? "cline";
   if (!IMPLEMENTATION_CLIS.includes(cli)) throw new Error(`--implementation-cli must be one of ${IMPLEMENTATION_CLIS.join(", ")}`);
   const model = options["implementation-model"];
   const effort = options["implementation-effort"];
@@ -70,11 +73,17 @@ export function parseLoopOptions(argv) {
     options[key.slice(2)] = argv[i + 1];
   }
   const provider = options.provider ?? "llamacpp";
+  if (!PROVIDERS.includes(provider)) throw new Error(`--provider must be one of ${PROVIDERS.join(", ")}`);
+  if (provider === "openai" && !options["provider-base-url"]) throw new Error("--provider-base-url is required for --provider openai");
+  const providerApiKeyEnv = options["provider-api-key-env"] ?? "AGENT_DOCK_PROVIDER_KEY";
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(providerApiKeyEnv)) throw new Error("--provider-api-key-env must be a valid environment variable name");
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;
-  const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : DEFAULT_OLLAMA_MODEL;
+  const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : provider === "openrouter" ? "z-ai/glm-5.3-flash" : DEFAULT_OLLAMA_MODEL;
   return {
     ...options,
     provider,
+    providerBaseUrl: options["provider-base-url"] ?? null,
+    providerApiKeyEnv,
     model: options.model ?? modelFallback,
     clineContextTokens: positiveInteger(options["cline-context-tokens"], "cline-context-tokens", contextFallback),
     clineMaxOutputTokens: positiveInteger(options["cline-max-output-tokens"], "cline-max-output-tokens", DEFAULT_LLAMACPP_MAX_OUTPUT_TOKENS),

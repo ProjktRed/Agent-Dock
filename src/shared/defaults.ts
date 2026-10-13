@@ -28,6 +28,7 @@ export const DEFAULT_CLIS: CliConnection[] = [
   cli("codex", "codex", "Codex CLI", "codex"),
   cli("cline", "cline", "Cline CLI", "cline"),
   cli("claude", "claude", "Claude Code", "claude"),
+  cli("opencode", "opencode", "OpenCode", "opencode"),
   cli("llamacpp", "llamacpp", "llama.cpp server", "http://127.0.0.1:8081/v1"),
   cli("ollama", "ollama", "Ollama", "http://127.0.0.1:11434"),
 ];

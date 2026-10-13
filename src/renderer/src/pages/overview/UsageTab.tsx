@@ -5,7 +5,7 @@ import { ago, connectionMeta, tokens } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Modal, ProvenanceChip, Spinner } from "../../components/ui";
 
-const providerOf = (c: CliConnection) => ({ codex: "OpenAI", claude: "Anthropic", ollama: "Local runtime", llamacpp: "Local runtime", openai: "Custom provider", cline: "Multi-provider" })[c.kind];
+const providerOf = (c: CliConnection) => ({ codex: "OpenAI", claude: "Anthropic", ollama: "Local runtime", llamacpp: "Local runtime", openai: "Custom provider", cline: "Multi-provider", opencode: "Implementation worker" })[c.kind];
 const recordProvider = (c: CliConnection) => ({ codex: "OpenAI · Codex", claude: "Anthropic · Claude Code", llamacpp: "llamacpp · local", ollama: "ollama · local" } as Record<string, string>)[c.kind] ?? "";
 const PLAN_NAMES: Record<string, string> = { plus: "ChatGPT Plus", pro: "ChatGPT Pro", prolite: "ChatGPT Pro Lite", team: "ChatGPT Team", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu", free: "ChatGPT Free", go: "ChatGPT Go" };
 

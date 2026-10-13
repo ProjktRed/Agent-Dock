@@ -265,7 +265,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const input={task,acceptanceCriteria:r.qaPacket.acceptanceCriteria,baselineSha:r.baselineSha,currentDiff:r.qaPacket.diff,changedFiles:r.qaPacket.changedFiles,qaPacket:r.qaPacket,
               latestQaVerdict:r.failure,failure:{reason:r.failure.output,cause:r.failure.manualReviewCause},correctionCount:r.correctionCount,correctionHistory:r.correctionHistory,
               previousCorrections:r.correctionHistory.map(x=>x.prompt),workerSummaries:r.history.map(x=>({attempt:x.attempt,result:compactWorkerResult(x.workerResult??{})})),assessmentResults:r.assessmentResults??[],
-              resolverResult:r.resolverResult??null,workerCapabilities:await readWorkerCapabilities(stateDir)??r.resolverCapabilities??null,
+              resolverResult:r.resolverResult??null,workerCapabilities:await readWorkerCapabilities(stateDir,/^OpenCode editing guard stopped attempt: /.test(r.failure.output??'')?'opencode-guard':'cline-guard')??r.resolverCapabilities??null,
               verifiedKnowledge:await selectKnowledge(knowledgeFile,task.prompt+' '+r.failure.output)};
             const op=await operation(elevation?'elevate':'correction-assessment',input,elevation?elevate:assessCorrection,{automatic:r.elevationAutomatic,triggeredBy:elevation?`${r.correctionCount} Assessment corrections attempted`:'QA recoverable failure'});
             if(op.stopped)return{status:'stopped'};

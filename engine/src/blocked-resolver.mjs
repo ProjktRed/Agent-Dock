@@ -67,7 +67,7 @@ export async function loadResolverCase(stateDir){
   if(!await isUntracked(workspace,p))continue;
   if(await fileHash(workspace,p)===proof.sha256)verifiedScratch.push(proof);
  }
- const workerCapabilities=await readWorkerCapabilities(stateDir);
+ const workerCapabilities=await readWorkerCapabilities(stateDir,/^OpenCode editing guard stopped attempt: /.test(r.blockedReason??live?.blockedReason??'')?'opencode-guard':'cline-guard');
  const input={task,qaPacket:r.qaPacket,latestQaVerdict:r.failure??null,currentDiff:evidence.diff,failure:{reason:r.blockedReason??live?.blockedReason,cause:r.failure?.manualReviewCause??null},baselineSha:r.baselineSha,headMatches,unexpectedPaths:evidence.scope.unexpectedPaths,verifiedScratch,correctionHistory:r.correctionHistory,
   workerCapabilities,
   previousResolverStrategies:r.resolverRecoveries??[]};
@@ -75,7 +75,7 @@ export async function loadResolverCase(stateDir){
  return input;
 }
 export function canRecoverOperational(input){
- const labelAlternation=['Cline'];
+ const labelAlternation=['Cline','OpenCode'];
  const labelPattern=labelAlternation.length===1?escapeRegExp(labelAlternation[0]):`(?:${labelAlternation.map(escapeRegExp).join('|')})`;
  return input.headMatches===true&&input.unexpectedPaths?.length===0&&input.currentDiff?.truncated!==true&&!unsafeCauses.has(input.failure?.cause)&&
   new RegExp(`^${labelPattern} editing guard stopped attempt: (?:${OPERATIONALLY_RECOVERABLE_PREFIXES.map(escapeRegExp).join('|')})`).test(input.failure?.reason??'');

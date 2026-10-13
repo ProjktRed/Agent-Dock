@@ -1,7 +1,7 @@
 // Types shared between the Electron main process, preload bridge and renderer.
 
 export type Role = "implementation" | "qa" | "assessment" | "elevation" | "custom";
-export type CliKind = "codex" | "cline" | "claude" | "ollama" | "llamacpp" | "openai";
+export type CliKind = "codex" | "cline" | "claude" | "opencode" | "ollama" | "llamacpp" | "openai";
 export type ConnectionState =
   | "connected"
   | "disconnected"
@@ -38,8 +38,10 @@ export interface Agent {
   role: Role;
   customRole?: string;
   cliId: string;
-  /** Implementation agents on Cline only: the local provider Cline is pointed at. Codex / Claude Code implementation agents use model, reasoning and fast instead. */
-  provider?: "llamacpp" | "ollama";
+  /** Provider selected for a Cline or OpenCode implementation worker; custom Cline roles use local providers. */
+  provider?: "llamacpp" | "ollama" | "openai";
+  /** Specific OpenAI-compatible connection used by an implementation worker. */
+  providerCliId?: string;
   model: string;
   reasoning?: string;
   /** Orchestrator agents: run on the CLI's Fast speed tier (Codex service tier priority, Claude fast mode). */

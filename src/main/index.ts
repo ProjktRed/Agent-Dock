@@ -152,6 +152,17 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
   return check.args;
 }
 
+function providerEnv(p: Project): NodeJS.ProcessEnv {
+  const impl = agentForRole("implementation", p, agents());
+  if (!impl || impl.provider !== "openai") return {};
+  const selected = impl.providerCliId ? store.data.clis.find((c) => c.id === impl.providerCliId) : undefined;
+  const provider = selected
+    ? selected.kind === "openai" ? selected : undefined
+    : store.data.clis.find((c) => c.kind === "openai");
+  const secret = provider ? store.getSecret(provider.id) : null;
+  return secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {};
+}
+
 // ---------- status polling, notifications and app-enforced workflow rules ----------
 
 async function handleTransitions(p: Project, prev: ProjectStatus | undefined, next: ProjectStatus) {
@@ -409,7 +420,7 @@ function registerIpc() {
     if (starting && check.problems.length) throw new Error(check.problems.join(" "));
     if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
     const wasAlive = engine.isAlive(id);
-    await engine.control(p, action, await launchArgs(p, check));
+    await engine.control(p, action, await launchArgs(p, check), providerEnv(p));
     if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
       // The attached task is a one-shot first task.
       store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
@@ -463,7 +474,7 @@ async function resumeAfterRestart() {
     const midRun = ["running", "pausing", "stopping"].includes(status.runState) || ["current-task", "cline-working", "cline-complete", "codex-qa", "retry"].includes(status.stage);
     if (!midRun) continue;
     if (mode === "auto") {
-      await engine.control(p, "resume", await launchArgs(p)).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
+      await engine.control(p, "resume", await launchArgs(p), providerEnv(p)).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
     } else if (mode === "ask") {
       const choice = await dialog.showMessageBox({
         type: "question",
@@ -473,7 +484,7 @@ async function resumeAfterRestart() {
         message: `${p.name} was mid-task when the engine stopped.`,
         detail: `Stage: ${status.stage}. Resuming continues from the engine's saved state.`,
       });
-      if (choice.response === 0) await engine.control(p, "resume", await launchArgs(p)).catch((e) => notice({ kind: "error", message: e.message }));
+      if (choice.response === 0) await engine.control(p, "resume", await launchArgs(p), providerEnv(p)).catch((e) => notice({ kind: "error", message: e.message }));
     }
   }
 }

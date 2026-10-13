@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import { ClineCliWorker } from "./cline-cli-worker.mjs";
 import { CodexWorker, ROLE_EFFORT, ROLE_FAST, roleModel, useOrchestratorModels, useRoleOverrides } from "./codex-worker.mjs";
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { buildMixedOrchestrator, isMixed, roleClis, useMixedDefaults } from "./mixed-orchestrator.mjs";
@@ -11,9 +10,8 @@ import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
 import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
-import { prepareClineRuntime } from "./cline-runtime-config.mjs";
 import { TUNING, useTuning } from "./engine-tuning.mjs";
-import { createCloudImplementation, createRoles } from "./engine-setup.mjs";
+import { createImplementationWorker, createRoles } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 
@@ -32,29 +30,13 @@ const initialTask = options.task ? JSON.parse(await readFile(path.resolve(option
 if (initialTask) validateTask(initialTask);
 useTuning(options.tuning);
 console.log(JSON.stringify({ tuning: TUNING }));
-// Implementation: Cline (local provider) by default, or Codex / Claude Code (--implementation-cli).
-const cloudImplementation = await createCloudImplementation(options, { stateDir, workspace });
-let clineRuntime = null;
-let provider;
-let model;
-if (cloudImplementation) {
-  provider = cloudImplementation.provider;
-  model = cloudImplementation.model;
+const implementation = await createImplementationWorker(options, { stateDir, workspace });
+const provider = implementation.provider;
+const model = implementation.model;
+if (options.implementation.cli !== "cline") {
   console.log(JSON.stringify({ implementation: options.implementation }));
-} else {
-  clineRuntime = await prepareClineRuntime({
-    stateDir,
-    provider: options.provider,
-    model: options.model,
-    contextTokens: options.clineContextTokens,
-    maxOutputTokens: options.clineMaxOutputTokens,
-    timeoutSeconds: options.timeoutSeconds,
-    llamaCppModelsDir: options.llamacppModelsDir,
-    ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
-    thinking: options.clineThinking,
-  });
-  provider = clineRuntime.provider;
-  model = clineRuntime.model;
+} else if (implementation.runtime?.requestedProvider === "llamacpp" || implementation.runtime?.requestedProvider === "ollama") {
+  const clineRuntime = implementation.runtime;
   console.log(JSON.stringify({
     localModelRuntime: {
       requestedProvider: clineRuntime.requestedProvider,
@@ -68,6 +50,8 @@ if (cloudImplementation) {
       fallback: false,
     },
   }));
+} else if (implementation.runtime) {
+  console.log(JSON.stringify({ implementationProvider: implementation.runtime.requestedProvider ?? implementation.runtime.id, model }));
 }
 const useClaude = options.orchestrator === "claude";
 if (options.orchestrator && !["codex", "claude"].includes(options.orchestrator)) throw new Error("--orchestrator must be codex or claude");
@@ -91,19 +75,7 @@ console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(R
 const { roles, runRole } = await createRoles(options, { stateDir, workspace });
 if (roles.length) console.log(JSON.stringify({ workflowRoles: roles.map(({ instructions: _text, ...role }) => role) }));
 const state = new DashboardState({ stateDir });
-const worker = cloudImplementation?.worker ?? new ClineCliWorker({
-  toolGuard: options.toolGuard,
-  thinking: options.clineThinking,
-  stateDir, workspace, clineJs: options["cline-js"],
-  provider, model,
-  timeoutSeconds: options.timeoutSeconds,
-  contextTokens: options.clineContextTokens,
-  dataDir: clineRuntime.dataDir,
-  requestedProvider: clineRuntime.requestedProvider,
-  baseUrl: clineRuntime.baseUrl,
-  beforeRun: clineRuntime.ensureReady,
-  readMetrics: clineRuntime.readMetrics,
-});
+const worker = implementation.worker;
 const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
   cwd: workspace,
   windowsHide: true,

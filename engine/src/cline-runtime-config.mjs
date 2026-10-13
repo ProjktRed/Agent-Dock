@@ -1,6 +1,8 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { atomicWriteJson } from "./dashboard-state.mjs";
+import { createProviderDescriptor } from "./runtime/provider.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
@@ -130,6 +132,8 @@ export async function prepareClineRuntime({
   startupPollMs = 500,
   llamaCppModelsDir = null,
   thinking = "none",
+  providerBaseUrl,
+  providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY",
 }) {
   if (provider === "llamacpp") {
     const baseUrl = llamaCppUrl.replace(/\/$/, "");
@@ -205,6 +209,71 @@ export async function prepareClineRuntime({
       startedServer,
       ensureReady,
       readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl, routerModel),
+    };
+  }
+  if (provider === "openrouter" || provider === "openai") {
+    const descriptor = createProviderDescriptor({
+      provider, model, contextTokens, maxOutputTokens, timeoutSeconds,
+      providerBaseUrl, providerApiKeyEnv, fetchImpl,
+    });
+    const dataDir = path.join(path.resolve(stateDir), "cline-data");
+    const settingsDir = path.join(dataDir, "settings");
+    const providersPath = path.join(settingsDir, "providers.json");
+    const key = process.env[descriptor.apiKeyEnv];
+    const clineProvider = provider === "openrouter" ? "openrouter" : "openai-compatible";
+    const writeBackendConfig = async () => {
+      await mkdir(settingsDir, { recursive: true, mode: 0o700 });
+      await chmod(dataDir, 0o700);
+      await chmod(settingsDir, 0o700);
+      const settings = {
+        provider: clineProvider,
+        model,
+        ...(provider === "openai" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
+        contextWindow: contextTokens,
+        maxTokens: maxOutputTokens,
+        timeout: timeoutSeconds * 1000,
+        capabilities: ["tools", "streaming"],
+      };
+      const document = {
+        version: 1,
+        lastUsedProvider: clineProvider,
+        modes: {},
+        providers: {
+          [clineProvider]: {
+            settings,
+            updatedAt: new Date().toISOString(),
+            tokenSource: "manual",
+          },
+        },
+      };
+      await rm(providersPath, { force: true });
+      const handle = await open(providersPath, "wx", 0o600);
+      try { await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`); }
+      finally { await handle.close(); }
+      await chmod(providersPath, 0o600);
+    };
+    const ensureReady = async () => {
+      try {
+        const identity = await descriptor.preflight();
+        await writeBackendConfig();
+        return identity;
+      } catch (error) {
+        await rm(providersPath, { force: true });
+        throw error;
+      }
+    };
+    const cleanupAfterRun = async () => {
+      await rm(providersPath, { force: true });
+    };
+    await descriptor.preflight();
+    return {
+      dataDir, contextTokens, maxOutputTokens, declaredContextTokens: null,
+      requestedProvider: provider, provider: clineProvider, model,
+      baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
+      ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
+      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || (provider === "openai" && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
+        : {}),
     };
   }
   if (provider !== "ollama") {

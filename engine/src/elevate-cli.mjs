@@ -10,11 +10,9 @@ import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
 import { runManualElevate } from "./manual-elevate.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { verifyReview, runNodeLoop } from "./node-loop.mjs";
-import { ClineCliWorker } from "./cline-cli-worker.mjs";
-import { prepareClineRuntime } from "./cline-runtime-config.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
-import { createCloudImplementation, createRoles } from "./engine-setup.mjs";
+import { createImplementationWorker, createRoles } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 const exec = promisify(execFile);
@@ -48,21 +46,10 @@ try {
     : useClaude
     ? new ClaudeWorker({ stateDir, workspace, claudeCommand: options["claude-command"] ?? "claude", additionalWritableDirs })
     : new CodexWorker({ stateDir, workspace, launcher, windowsSandbox: options["codex-windows-sandbox"], additionalWritableDirs });
-  const cloudImplementation = await createCloudImplementation(options, { stateDir, workspace });
+  const implementation = await createImplementationWorker(options, { stateDir, workspace, state, lazy: true });
   const { roles, runRole } = await createRoles(options, { stateDir, workspace });
   launchReady = true;
-  let cline;
-  const worker = cloudImplementation?.worker ?? {
-    withExclusive: async fn => {
-      if (!cline) {
-        const runtime = await prepareClineRuntime({stateDir,provider:options.provider,model:options.model,contextTokens:options.clineContextTokens,maxOutputTokens:options.clineMaxOutputTokens,timeoutSeconds:options.timeoutSeconds,llamaCppModelsDir:options.llamacppModelsDir,...(options.llamacppLauncher?{llamaCppLauncher:options.llamacppLauncher}:{}),thinking:options.clineThinking});
-        cline = new ClineCliWorker({toolGuard:options.toolGuard,thinking:options.clineThinking,stateDir,workspace,clineJs:options["cline-js"],provider:runtime.provider,model:runtime.model,timeoutSeconds:options.timeoutSeconds,contextTokens:options.clineContextTokens,dataDir:runtime.dataDir,requestedProvider:runtime.requestedProvider,baseUrl:runtime.baseUrl,beforeRun:runtime.ensureReady,readMetrics:runtime.readMetrics});
-        await state.configureRuntime({contextTokens:options.clineContextTokens,timeoutSeconds:options.timeoutSeconds,model:runtime.model,provider:runtime.provider});
-      }
-      return cline.withExclusive(fn);
-    },
-    run: (...args) => cline.run(...args),
-  };
+  const worker = implementation.worker;
   const result = await runManualElevate({
     workspace,stateDir,codex,worker,objective:options.objective,roles,runRole,
     solReassessmentEnabled:options.solReassessment,

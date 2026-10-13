@@ -28,12 +28,17 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const implementation = draft.role === "implementation";
   const custom = draft.role === "custom";
   const guarded = snap.settings.advanced.engineGuardrails !== false;
-  // Implementation: Cline (local provider), Codex or Claude Code. Workflow roles and orchestrator roles: Codex or Claude Code.
-  const cliOptions = snap.clis.filter((c) => (implementation ? ["cline", "codex", "claude"].includes(c.kind) : c.kind === "codex" || c.kind === "claude" || c.id === draft.cliId));
+  // Implementation: Cline, OpenCode, Codex or Claude Code. Workflow roles and orchestrator roles: Codex or Claude Code.
+  const cliOptions = snap.clis.filter((c) => (implementation ? ["cline", "opencode", "codex", "claude"].includes(c.kind) : c.kind === "codex" || c.kind === "claude" || c.id === draft.cliId));
   const cli = snap.clis.find((c) => c.id === draft.cliId);
   const local = (implementation || custom) && cli?.kind === "cline";
+  const openCode = implementation && cli?.kind === "opencode";
   const workflowRole = custom ? snap.roles.find((r) => r.id === draft.customRole || r.name.toLowerCase() === (draft.customRole ?? "").trim().toLowerCase()) ?? null : null;
-  const providerCli = local ? snap.clis.find((c) => c.kind === (draft.provider ?? "llamacpp")) : null;
+  const providerCli = local
+    ? draft.provider === "openai"
+      ? snap.clis.find((c) => c.id === draft.providerCliId) ?? snap.clis.find((c) => c.kind === "openai")
+      : snap.clis.find((c) => c.kind === (draft.provider ?? "llamacpp"))
+    : openCode ? snap.clis.find((c) => c.id === draft.providerCliId) ?? snap.clis.find((c) => c.kind === "openai") : null;
   // Local models: the list collected from the provider (CLIs › Models) wins over the live health check.
   const collected = providerCli?.collected?.models ?? [];
   const discovered: { id: string; detail: string; thinking?: boolean | null }[] = collected.length ? collected : providerCli ? healths[providerCli.id]?.models ?? [] : [];
@@ -52,6 +57,10 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
       // Back to a local provider: the cloud model, effort and speed don't apply.
       const provider = draft.provider ?? "llamacpp";
       return setDraft({ ...draft, cliId, provider, ...(kind ? { model: provider === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel, reasoning: "none", fast: false } : {}) });
+    }
+    if (implementation && next?.kind === "opencode") {
+      const provider = snap.clis.find((c) => c.kind === "openai");
+      return setDraft({ ...draft, cliId, provider: "openai", providerCliId: provider?.id, ...(provider?.defaultModel ? { model: provider.defaultModel } : {}) });
     }
     if (!(orchestrator || custom || implementation) || !nextKind || nextKind === kind) return setDraft({ ...draft, cliId, provider: custom && next?.kind === "cline" ? draft.provider ?? "llamacpp" : draft.provider });
     const nextList = catalog?.[nextKind];
@@ -106,13 +115,26 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           {implementation && kind && <span className="hint">{cli?.name} implements in the project folder. While it runs, file changes are limited to each task's paths{kind === "codex" ? " (by a scope hook the engine adds)" : ""}{snap.settings.workflow.toolGuard ? " and the shell to the task's checks (tool guard)" : ""}. It never commits; scope checks and QA still apply.</span>}
           {orchestrator && <span className="hint">{guarded ? "The engine runs one orchestrator: QA, Assessment and Elevation use the same CLI. Turn off engine guardrails (Settings › Advanced) to mix." : "Engine guardrails are off: this role may use its own CLI."}</span>}
         </label>
-        {local && (
+        {(local || openCode) && (
           <label className="field">
-            <span className="row" style={{ gap: 8 }}>Local provider<Support kind="engine" /></span>
-            <select className="sel" value={draft.provider ?? "llamacpp"} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Agent["provider"], model: e.target.value === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel })}>
-              <option value="llamacpp">llama.cpp (OpenAI-compatible)</option>
-              <option value="ollama">Ollama</option>
-            </select>
+            <span className="row" style={{ gap: 8 }}>{openCode ? "Provider connection" : "Local provider"}<Support kind="engine" /></span>
+            {local ? (
+              <select className="sel" value={draft.provider === "openai" ? `connection:${providerCli?.id ?? ""}` : draft.provider ?? "llamacpp"} onChange={(e) => {
+                const selected = e.target.value;
+                const remote = selected.startsWith("connection:") ? snap.clis.find((c) => c.id === selected.slice("connection:".length)) : undefined;
+                const provider = selected === "ollama" ? "ollama" : "llamacpp";
+                setDraft({ ...draft, provider: remote ? "openai" : provider, providerCliId: remote?.id, model: remote?.defaultModel ?? (provider === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel) });
+              }}>
+                <option value="llamacpp">llama.cpp (OpenAI-compatible)</option>
+                <option value="ollama">Ollama</option>
+                {implementation && snap.clis.filter((c) => c.kind === "openai").map((c) => <option key={c.id} value={`connection:${c.id}`}>{c.name} (OpenAI-compatible){c.hasSecret ? " · key saved" : " · no key"}</option>)}
+              </select>
+            ) : (
+              <select className="sel" value={providerCli?.id ?? ""} onChange={(e) => setDraft({ ...draft, provider: "openai", providerCliId: e.target.value, model: snap.clis.find((c) => c.id === e.target.value)?.defaultModel ?? draft.model })}>
+                {snap.clis.filter((c) => c.kind === "openai").map((c) => <option key={c.id} value={c.id}>{c.name}{c.hasSecret ? " · key saved" : " · no key"}</option>)}
+              </select>
+            )}
+            {openCode && !providerCli && <span className="hint">Add an OpenAI-compatible provider in CLIs first.</span>}
           </label>
         )}
         <div className="field">
@@ -420,7 +442,7 @@ export function AgentsPage() {
               return (
                 <button key={a.id} className={`item ${sel.id === a.id ? "on" : ""} ${a.enabled ? "" : "off"}`} onClick={() => setSelId(a.id)} aria-pressed={sel.id === a.id}>
                   <div className="row"><span className="name" style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</span><span className="chip">{a.role === "custom" ? roleName(a) : roleLabel[a.role]}</span><span className="grow" /><span className={`sub ${a.enabled ? "" : "mut"}`}>{a.enabled ? "" : "Disabled"}</span></div>
-                  <div className="row sub" style={{ fontSize: 11.5, gap: 6 }}><span>{cli?.name ?? "No CLI"}</span>{a.provider && <><span>·</span><span>{a.provider === "llamacpp" ? "llama.cpp" : "Ollama"}</span></>}</div>
+                  <div className="row sub" style={{ fontSize: 11.5, gap: 6 }}><span>{cli?.name ?? "No CLI"}</span>{a.provider && <><span>·</span><span>{a.provider === "llamacpp" ? "llama.cpp" : a.provider === "ollama" ? "Ollama" : snap.clis.find((c) => c.id === a.providerCliId)?.name ?? "OpenAI-compatible"}</span></>}</div>
                   <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.model || "—"}</span>{a.reasoning && a.role !== "implementation" && <span className="sub">{effortLabel(a.reasoning)}</span>}{a.fast && <span className="chip">Fast</span>}</div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 12 }}>
                     <span className={`row ${h ? connectionMeta[h.state].tone : "mut"}`} style={{ gap: 5 }}><Dot tone="" />{h ? connectionMeta[h.state].label : "Not checked"}</span>
