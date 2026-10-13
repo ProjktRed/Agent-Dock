@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import path from "node:path";
 import { diagnostic } from "./diagnostics.mjs";
 import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
-import { migrateRecoveryState, recoveryClassification } from './recovery-policy.mjs';
+import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } from './recovery-policy.mjs';
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
 
 async function readJson(file, fallback) {
@@ -182,6 +182,7 @@ export class DashboardState {
       "qa-evidence-started": ["codex-qa", "idle", "running", false],
       "qa-evidence-finished": ["codex-qa", "idle", "running", false],
       "qa-fail": ["fail", "idle", "fail", false],
+      "qa-retry": ["codex-qa", "idle", "running", false],
       "role-gate-failed": ["fail", "idle", "fail", false],
       retry: ["retry", "idle", "waiting", false],
       "qa-pass": ["pass", "idle", "pass", false],
@@ -204,6 +205,7 @@ export class DashboardState {
     }
     if(['user-attention','manual-review'].includes(event.type)&&next.stage==='USER_ATTENTION') {next.userAttention=true;next.userAttentionReason=event.qa;next.userAttentionSince??=new Date().toISOString();}
     if(event.type==='blocked') {next.userAttention=false;next.blockedReason=event.qa;next.elevateRunning=false;}
+    if(event.type==='qa-retry') {next.blockedReason=null;next.resolverResult=null;}
     if(event.type==='qa-pass') {next.userAttention=false;next.userAttentionReason=null;next.elevateResult=null;}
     if (event.type === "codex-usage-limit" || event.type === "waiting-for-codex") {
       if (event.operation === "assessment" || event.operation === 'correction-assessment') next.qaStatus = "waiting";
@@ -274,6 +276,14 @@ export class DashboardState {
       next.stopAfterSafePoint = false;
       next.resumeGeneration = Number(current.resumeGeneration ?? 0) + 1;
     } else if (action === "stop") next.stopAfterSafePoint = true;
+    else if(action==='retry-qa') {
+      let recovery=null;
+      try{recovery=JSON.parse(await readFile(path.join(this.stateDir,'current-task.json'),'utf8'))?.automation?.recovery??null;}catch{}
+      const availability=qaRetryAvailability(recovery);
+      if(!availability.available)throw Error('Retry QA unavailable: '+availability.reason);
+      next.qaRetryGeneration=Number(current.qaRetryGeneration??0)+1;
+      next.stopAfterSafePoint=false;
+    }
     else if(action==='resolve') {
       const live=await this.readLive(),input=await loadResolverCase(this.stateDir);
       const availability=resolverAvailability({live,input});

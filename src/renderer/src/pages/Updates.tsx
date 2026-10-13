@@ -22,7 +22,7 @@ export function Updates() {
   const [branch, setBranch] = useState(u.branch);
   const patch = (next: Partial<typeof u>) => saveSettings({ ...snap.settings, updates: { ...u, ...next } });
   if (!status) return <div className="skel" style={{ width: "40%" }} />;
-  const dev = status.state === "dev";
+  const dev = status.state === "dev" || status.state === "portable";
   const busy = status.state === "checking" || status.state === "building" || status.state === "ready";
 
   return (
@@ -43,6 +43,7 @@ export function Updates() {
             {status.state === "checking" ? <Spinner /> : <Icon name="refresh" size="sm" />}Check now
           </button>
         </div>
+        {status.state === "portable" && <div className="banner"><Icon name="lock" className="info" /><span>Portable copy: updates are off, so it never rebuilds itself on the PC it is plugged into. Its settings and projects live in the <span className="mono">data</span> folder next to <span className="mono">AgentDock.exe</span>. To update it, replace the app files with a newer portable build and keep that folder.</span></div>}
         {status.state === "up-to-date" && <div className="row ok"><St kind="done" />Up to date with {status.branch} · checked {ago(status.checkedAt)}</div>}
         {status.state === "error" && <div className="banner errb"><Icon name="warn" className="err" /><span>{status.error}</span></div>}
         {(status.state === "available" || status.state === "building" || status.state === "ready") && status.latest && (

@@ -78,6 +78,7 @@ export function buildStatus(args: {
   elevate: { available: boolean; reason: string | null };
   resolver: { available: boolean; reason: string | null };
   assessmentRetry?: boolean;
+  qaRetry?: boolean;
   now?: number;
 }): ProjectStatus {
   const { live, control } = args;
@@ -120,6 +121,7 @@ export function buildStatus(args: {
     resolverAvailable: args.resolver.available,
     resolverReason: args.resolver.reason,
     assessmentRetry: args.assessmentRetry ?? false,
+    qaRetry: args.qaRetry ?? false,
     events: args.events,
     git: args.git,
     plan: args.plan,

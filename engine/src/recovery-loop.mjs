@@ -8,7 +8,7 @@ import {prepareQaPacket,collectGitEvidence,classifyQaCommand} from './qa-packet.
 import {buildInitialPrompt,buildCorrectionPrompt,describeAllowedPaths} from './workflow.mjs';
 import {readPendingCodex,runRecoverableCodex,validateTask,verifyReview} from './node-loop.mjs';
 import {ELEVATE_MODEL} from './codex-worker.mjs';
-import {correctionText,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
+import {correctionText,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
 import {TUNING} from './engine-tuning.mjs';
@@ -111,6 +111,13 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
     if(r) {
       validateTask(task);
       if(r.version!==1 || !r.baselineSha || !Number.isInteger(r.correctionCount) || !Array.isArray(r.correctionHistory)) return block('Malformed recovery state');
+      // Retry QA (the user fixed what stopped QA): collect fresh evidence for the same finished
+      // attempt and review it again. HEAD and scope are reconciled below before QA runs.
+      const retryControl=await readControl();
+      if(r.phase==='blocked'&&Number(retryControl.qaRetryGeneration??0)>Number(r.qaRetryGeneration??0)&&qaRetryAvailability(r).available){
+        r.qaRetryGeneration=Number(retryControl.qaRetryGeneration);r.phase='evidence';r.blockedReason=null;
+        await save();await emit('qa-retry',{attempt:r.attempt});
+      }
       if(r.phase==='blocked'){
         const result=await resolveExclusive({pendingCodex:pending,automatic:!manualResolver});
         if(result.status!=='ready')return result;

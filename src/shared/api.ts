@@ -18,7 +18,7 @@ import type {
   WorkflowRole,
 } from "./types";
 
-export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve";
+export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve" | "retry-qa";
 
 export interface LaunchCheck {
   problems: string[];
@@ -88,6 +88,8 @@ export interface DesktopApi {
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;
   history(projectId: string): Promise<HistoryEntry[]>;
+  /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
+  gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;
   skills(): Promise<SkillInfo[]>;
   importSkillFolder(): Promise<SkillInfo[]>;

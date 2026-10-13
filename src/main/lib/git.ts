@@ -56,3 +56,30 @@ export async function gitInfo(workspace: string): Promise<GitInfo> {
     error: status.code === 0 ? undefined : status.stderr.trim() || "git status failed",
   };
 }
+
+export interface GitOwnerProblem {
+  /** The repository's shared .git folder (outside the project for a git worktree). */
+  dir: string;
+  owner: string;
+  user: string;
+}
+
+/**
+ * Windows: the project's shared .git folder owned by another account (for example
+ * CodexSandboxOffline, when a sandboxed Codex created the repository). QA commits there, and
+ * Codex's sandbox must change that folder's permissions to allow it, which only its owner can.
+ */
+export async function sharedGitOwnerProblem(projectPath: string): Promise<GitOwnerProblem | null> {
+  if (process.platform !== "win32") return null;
+  const common = await run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: projectPath, timeoutMs: 5000 });
+  if (common.code !== 0 || !common.stdout.trim()) return null;
+  const dir = path.resolve(projectPath, common.stdout.trim());
+  const result = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Acl -LiteralPath '${dir.replace(/'/g, "''")}').Owner`], { timeoutMs: 15000 });
+  const owner = result.stdout.trim();
+  const user = `${process.env.USERDOMAIN ?? ""}\${process.env.USERNAME ?? ""}`;
+  if (result.code !== 0 || !owner || owner.toLowerCase() === user.toLowerCase()) return null;
+  return { dir, owner, user };
+}
+
+/** The Administrator command that makes the user the owner again (permissions are left as they are). */
+export const ownerFixCommand = (p: GitOwnerProblem) => `icacls "${p.dir}" /setowner "${p.user}" /T /C`;

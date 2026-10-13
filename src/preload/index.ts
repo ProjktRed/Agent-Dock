@@ -34,6 +34,7 @@ const api: DesktopApi = {
   usage: invoke("usage") as DesktopApi["usage"],
   localContext: invoke("usage:localContext") as DesktopApi["localContext"],
   history: invoke("project:history") as DesktopApi["history"],
+  gitOwner: invoke("project:gitOwner") as DesktopApi["gitOwner"],
   engineLog: invoke("engine:log") as DesktopApi["engineLog"],
   skills: invoke("skills:list") as DesktopApi["skills"],
   importSkillFolder: invoke("skills:import") as DesktopApi["importSkillFolder"],

@@ -15,7 +15,7 @@ import { readActivity } from "./lib/usage";
 // Bypass the bundler: engine modules are plain ESM files loaded at runtime from disk.
 const nativeImport = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, any>>;
 
-export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve";
+export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve" | "retry-qa";
 
 interface ProcessRecord {
   pid: number;
@@ -159,7 +159,7 @@ export class EngineManager {
     const state = await this.state(project);
     await state.setControl(action);
     if (action === "resume") this.stopAfterTask.delete(project.id);
-    if ((action === "resume" || action === "resolve") && !running) await this.start(project, args, action === "resolve");
+    if ((action === "resume" || action === "resolve" || action === "retry-qa") && !running) await this.start(project, args, action === "resolve");
     if (action === "elevate" && !running) await this.spawnEngine(project, "elevate-cli.mjs", args);
   }
 
@@ -208,12 +208,22 @@ export class EngineManager {
     // Blocked before any task was underway (Assessment itself stopped): nothing for the Resolver,
     // and restarting the engine simply runs Assessment again.
     let assessmentRetry = false;
-    if (live?.stage === "BLOCKED" && !record && !resolver.available) {
+    // Blocked with a finished, in-scope attempt (QA could not run, e.g. a tool or permission
+    // problem the user has since fixed): Retry QA reviews that attempt again.
+    let qaRetry = false;
+    if (live?.stage === "BLOCKED" && !record) {
       const current = await readJson<{ automation?: { recovery?: { phase?: string } } } | null>(path.join(project.stateDir, "current-task.json"), null).catch(() => null);
-      const phase = current?.automation?.recovery?.phase;
-      assessmentRetry = !phase || phase === "passed";
+      const recovery = current?.automation?.recovery;
+      const phase = recovery?.phase;
+      if (!resolver.available) assessmentRetry = !phase || phase === "passed";
+      try {
+        const policy = await this.load("recovery-policy.mjs");
+        qaRetry = Boolean(policy.qaRetryAvailability(recovery ?? null).available);
+      } catch {
+        // engine without Retry QA
+      }
     }
-    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry });
+    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry });
   }
 
   async engineLog(project: Project, maxBytes = 20_000): Promise<string> {
