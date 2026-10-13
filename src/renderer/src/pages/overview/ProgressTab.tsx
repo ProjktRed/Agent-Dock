@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, ProjectStatus } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration } from "../../lib/format";
+import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
 
@@ -19,11 +20,13 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
   if (!["attention", "blocked", "waiting-limit"].includes(kind)) return null;
   const meta = {
     attention: { title: "Attention required: manual review", tone: "attnb", text: s.attentionReason, help: "The engine stopped for your review. Elevation can propose a revised correction, which then goes through independent QA." },
-    blocked: { title: "Blocked: safe continuation is not possible", tone: "errb", text: s.blockedReason, help: "Scope, HEAD, permission or state problems never continue automatically. The diff is left in place for inspection." },
+    blocked: s.assessmentRetry
+      ? { title: "Blocked: Assessment could not choose a task", tone: "errb", text: s.blockedReason, help: "Assessment stopped before any task started, so nothing was changed. Fix the cause it reports if there is one, then retry: the engine runs Assessment again." }
+      : { title: "Blocked: safe continuation is not possible", tone: "errb", text: s.blockedReason, help: "Scope, HEAD, permission or state problems never continue automatically. The diff is left in place for inspection." },
     "waiting-limit": { title: "Waiting: orchestrator usage limit", tone: "warnb", text: s.limitMessage, help: "Resume reruns only the interrupted Assessment or QA operation with the same inputs." },
   }[kind as "attention" | "blocked" | "waiting-limit"];
   return (
-    <section className={`banner ${meta.tone} fade-in`} role="alert" style={{ padding: 18 }}>
+    <section id="attention-panel" className={`banner ${meta.tone} fade-in`} role="alert" style={{ padding: 18 }}>
       <Icon name="warn" className={kind === "blocked" ? "err" : "attn"} />
       <div className="grow stack" style={{ gap: 10 }}>
         <div style={{ fontWeight: 600, color: "var(--t)" }}>{meta.title}</div>
@@ -34,9 +37,10 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
           {s.elevateAvailable && <button className="btn primary sm" onClick={() => control(projectId, "elevate", "Elevation requested")}>Elevate</button>}
           {s.resolverAvailable && <button className="btn primary sm" onClick={() => control(projectId, "resolve", "Resolver requested")}>Resolve block</button>}
           {(kind === "waiting-limit" || kind === "attention") && <button className="btn sm" onClick={() => control(projectId, "resume", "Resumed")}>Resume</button>}
+          {kind === "blocked" && s.assessmentRetry && <button className="btn primary sm" onClick={() => control(projectId, "resume", "Assessment restarted")}>Retry Assessment</button>}
           {activeProject && <button className="btn ghost sm" onClick={() => window.api.openPath(activeProject.path)}><Icon name="external" size="sm" />Open workspace</button>}
           {!s.elevateAvailable && kind === "attention" && s.elevateReason && <span className="sub">Elevate unavailable: {s.elevateReason}</span>}
-          {!s.resolverAvailable && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
+          {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
         </div>
       </div>
     </section>
@@ -103,7 +107,12 @@ function checkKind(value: string): StatusKind {
 }
 
 export function ProgressTab() {
-  const { activeProject, activeStatus: s } = useApp();
+  const { activeProject, activeStatus: s, snap } = useApp();
+  // Implementation runs on Cline (local model), Codex or Claude Code; label the step with the agent's CLI.
+  const impl = agentForRoleClient("implementation", activeProject, snap.agents);
+  const implCli = snap.clis.find((c) => c.id === impl?.cliId);
+  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" ? `Cline · ${impl.provider === "ollama" ? "Ollama" : "llama.cpp"}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
+  const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -183,7 +192,7 @@ export function ProgressTab() {
                     <St kind={kind} />
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
                   </div>
-                  <div className="sub">{c.agent}</div>
+                  <div className="sub">{c.key === "implementation" ? implLabel : c.agent}</div>
                   {active && <div style={{ fontSize: 12, color: "#b9c7d8" }}>{s.activeModel ?? s.label}</div>}
                 </div>
                 {i < CYCLE.length - 1 && <span className="arrow" aria-hidden="true"><Icon name="chevronRight" /></span>}
@@ -193,7 +202,7 @@ export function ProgressTab() {
         </div>
         <div>
           <div className="loop" aria-hidden="true" />
-          <div className="loop-l">A failed QA returns a bounded correction to Implementation; every fifth attempt the strategy is reassessed</div>
+          <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
         </div>
         <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: 12 }}>
           <span><span className="sub">Stage</span> {s.stage}</span>

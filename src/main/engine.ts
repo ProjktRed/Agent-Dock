@@ -205,7 +205,15 @@ export class EngineManager {
         }
       }
     }
-    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver });
+    // Blocked before any task was underway (Assessment itself stopped): nothing for the Resolver,
+    // and restarting the engine simply runs Assessment again.
+    let assessmentRetry = false;
+    if (live?.stage === "BLOCKED" && !record && !resolver.available) {
+      const current = await readJson<{ automation?: { recovery?: { phase?: string } } } | null>(path.join(project.stateDir, "current-task.json"), null).catch(() => null);
+      const phase = current?.automation?.recovery?.phase;
+      assessmentRetry = !phase || phase === "passed";
+    }
+    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry });
   }
 
   async engineLog(project: Project, maxBytes = 20_000): Promise<string> {

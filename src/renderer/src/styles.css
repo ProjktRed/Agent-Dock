@@ -349,3 +349,5 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .flow-step.custom.off { opacity: 0.55; }
 .flow-step.end { box-shadow: none; border: 1.5px dashed rgba(148, 168, 191, 0.35); background: transparent; }
 .flow-arrow { align-self: center; color: var(--t2); font-size: 15px; }
+#attention-panel.flash { animation: attention-flash 1.2s ease-out; }
+@keyframes attention-flash { 0% { box-shadow: 0 0 0 3px var(--a); } 100% { box-shadow: 0 0 0 0 transparent; } }

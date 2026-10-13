@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../../store";
 import { runTone, roleLabel } from "../../lib/format";
 import { Icon } from "../../components/Icon";
@@ -13,6 +13,12 @@ type Tab = "progress" | "usage" | "tokens";
 export function OverviewPage() {
   const { activeProject, activeStatus, snap, go } = useApp();
   const [tab, setTab] = useState<Tab>("progress");
+  // Title bar "Resolve attention": the attention card is on the Progress tab.
+  useEffect(() => {
+    const show = () => setTab("progress");
+    window.addEventListener("app:show-attention", show);
+    return () => window.removeEventListener("app:show-attention", show);
+  }, []);
 
   if (!activeProject) {
     return (

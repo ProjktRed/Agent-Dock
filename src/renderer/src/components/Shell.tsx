@@ -8,6 +8,18 @@ import { useUpdateStatus } from "../pages/Updates";
 import { openSettingsSection } from "../pages/Settings";
 import { Logo } from "./Logo";
 
+/** Bring the attention card into view: Overview switches to its Progress tab, then the card scrolls in. */
+function showAttentionPanel() {
+  window.dispatchEvent(new Event("app:show-attention"));
+  setTimeout(() => {
+    const panel = document.getElementById("attention-panel");
+    panel?.scrollIntoView({ behavior: "smooth", block: "center" });
+    panel?.classList.remove("flash");
+    void panel?.offsetWidth;
+    panel?.classList.add("flash");
+  }, 120);
+}
+
 const NAV: { route: Route; label: string; icon: IconName }[] = [
   { route: "overview", label: "Overview", icon: "overview" },
   { route: "projects", label: "Projects", icon: "folder" },
@@ -204,7 +216,7 @@ export function RunControls({ status, projectId, size = "sm" }: { status: Projec
   if (state === "paused" || (!alive && ["stopped", "waiting-limit"].includes(state)) || (alive && state === "waiting-limit"))
     buttons.push(<button key="r" className={`${btn} primary`} onClick={() => control(projectId, "resume", "Resumed")} title="Resume (Ctrl+Shift+P)"><Icon name="play" size="sm" />Resume</button>);
   if (!alive && ["idle", "complete"].includes(state)) buttons.push(<button key="s" className={`${btn} primary`} onClick={() => control(projectId, "start", "Automation started")} title="Run (F5)"><Icon name="play" size="sm" />Run</button>);
-  if (["attention", "blocked"].includes(state)) buttons.push(<button key="ra" className={`${btn} primary`} onClick={() => go("overview")}>Resolve attention</button>);
+  if (["attention", "blocked"].includes(state)) buttons.push(<button key="ra" className={`${btn} primary`} onClick={() => { go("overview"); showAttentionPanel(); }}>Resolve attention</button>);
   if (alive) buttons.push(<button key="x" className={`${btn} icon`} onClick={() => setStopOpen(true)} aria-label="Stop automation" title="Stop… (Shift+F5)"><Icon name="stop" size="sm" className="err" /></button>);
   return (
     <div className="row" style={{ gap: 10 }}>

@@ -353,6 +353,8 @@ export interface ProjectStatus {
   elevateReason: string | null;
   resolverAvailable: boolean;
   resolverReason: string | null;
+  /** Blocked during Assessment, with no task underway: Retry runs Assessment again. */
+  assessmentRetry: boolean;
   events: EngineEvent[];
   git: GitInfo;
   plan: PlanProgress;
