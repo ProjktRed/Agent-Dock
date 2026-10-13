@@ -44,3 +44,9 @@ export async function createRoles(options, { stateDir, workspace }) {
   }
   return { roles, runRole: createRoleRunner(workers) };
 }
+
+/** A failed startup git query, rethrown with git's own reason (e.g. "detected dubious ownership"). */
+export function gitStartupError(error) {
+  const reason = String(error?.stderr || error?.message || error).split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? 'unknown error';
+  throw new Error(`git cannot read the workspace repository: ${reason}`);
+}

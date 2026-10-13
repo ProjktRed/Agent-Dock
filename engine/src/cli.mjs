@@ -13,7 +13,7 @@ import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { prepareClineRuntime } from "./cline-runtime-config.mjs";
 import { TUNING, useTuning } from "./engine-tuning.mjs";
-import { createCloudImplementation, createRoles } from "./engine-setup.mjs";
+import { createCloudImplementation, createRoles, gitStartupError } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 
@@ -107,7 +107,7 @@ const worker = cloudImplementation?.worker ?? new ClineCliWorker({
 const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
   cwd: workspace,
   windowsHide: true,
-});
+}).catch(gitStartupError);
 const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
 const gitCommonIsOutsideWorkspace = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
 const codex = mixed

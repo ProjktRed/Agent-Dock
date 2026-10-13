@@ -61,25 +61,38 @@ export interface GitOwnerProblem {
   /** The repository's shared .git folder (outside the project for a git worktree). */
   dir: string;
   owner: string;
+  /** DOMAIN\name, for display. */
   user: string;
+  /** The user's SID: the fix command names the account by SID, so no name lookup can pick another one. */
+  sid: string;
 }
 
 /**
  * Windows: the project's shared .git folder owned by another account (for example
  * CodexSandboxOffline, when a sandboxed Codex created the repository). QA commits there, and
  * Codex's sandbox must change that folder's permissions to allow it, which only its owner can.
+ * Owners are compared by SID.
  */
 export async function sharedGitOwnerProblem(projectPath: string): Promise<GitOwnerProblem | null> {
   if (process.platform !== "win32") return null;
-  const common = await run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: projectPath, timeoutMs: 5000 });
+  // safe.directory=*: a foreign owner makes git refuse the repository ("dubious ownership"),
+  // which is exactly the case this has to report. The query only reads the path.
+  const common = await run("git", ["-c", "safe.directory=*", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: projectPath, timeoutMs: 5000 });
   if (common.code !== 0 || !common.stdout.trim()) return null;
   const dir = path.resolve(projectPath, common.stdout.trim());
-  const result = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Acl -LiteralPath '${dir.replace(/'/g, "''")}').Owner`], { timeoutMs: 15000 });
-  const owner = result.stdout.trim();
-  const user = `${process.env.USERDOMAIN ?? ""}\${process.env.USERNAME ?? ""}`;
-  if (result.code !== 0 || !owner || owner.toLowerCase() === user.toLowerCase()) return null;
-  return { dir, owner, user };
+  const script = [
+    `$acl = Get-Acl -LiteralPath '${dir.replace(/'/g, "''")}'`,
+    "$me = [System.Security.Principal.WindowsIdentity]::GetCurrent()",
+    "$acl.Owner",
+    "$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+    "$me.Name",
+    "$me.User.Value",
+  ].join("; ");
+  const result = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { timeoutMs: 15000 });
+  const [owner, ownerSid, user, sid] = result.stdout.split(/\r?\n/).map((l) => l.trim());
+  if (result.code !== 0 || !ownerSid || !sid || ownerSid.toLowerCase() === sid.toLowerCase()) return null;
+  return { dir, owner: owner && !owner.startsWith("O:") ? owner : ownerSid, user: user || sid, sid };
 }
 
 /** The Administrator command that makes the user the owner again (permissions are left as they are). */
-export const ownerFixCommand = (p: GitOwnerProblem) => `icacls "${p.dir}" /setowner "${p.user}" /T /C`;
+export const ownerFixCommand = (p: GitOwnerProblem) => `icacls "${p.dir}" /setowner "*${p.sid}" /T /C`;
