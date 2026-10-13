@@ -1,4 +1,0 @@
-{"type":"cline-message","message":"Formatting the in-scope file.","action":"Formatting the in-scope file."}
-{"type":"cline-command","commands":["npx prettier --write src/alpha.ts"],"action":"Running npx prettier --write src/alpha.ts"}
-{"type":"cline-message","message":"Done.","action":"Done."}
-{"type":"cline-message","message":"Done.","action":"Done."}
