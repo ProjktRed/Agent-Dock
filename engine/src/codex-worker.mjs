@@ -162,6 +162,10 @@ export class CodexUsageLimitError extends Error {
   }
 }
 
+// Read-only roles kept mistaking their own sandbox for a broken environment: a test runner that
+// cannot create its temp folder (EPERM) was reported as manual review and blocked the loop.
+export const READ_ONLY_SANDBOX = "Your sandbox is read-only on purpose. Commands that write anything (test runners, builds, tools that create temp or cache folders) can fail here with EPERM, EACCES or similar permission errors. That limit applies to this sandbox only: the implementation worker and QA run with write access. Never treat it as a blocker or as a reason for manual-review or blocked. Base your decision on reading the code; QA runs the checks.";
+
 export function buildQaPrompt(qaPacket) {
   return [
     "You are QA: GPT-6.1 Sol Medium performing one bounded independent acceptance operation. Use the QA packet first.",
@@ -319,6 +323,7 @@ export class CodexWorker {
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",
       "Do not weaken tests or use type assertions such as any to evade a contract mismatch; include the genuinely affected fixtures in allowedPaths or choose a smaller coherent task.",
       "The task prompt is addressed to Cline, which may only implement. Do not include staging, committing, acceptance, or next-task creation as Cline requirements. Codex QA alone owns acceptance and commits after implementation exits.",
+      READ_ONLY_SANDBOX,
       "If the objective is complete return done. If blocked or scope unclear return manual-review with an explanation.",
       "Do not launch Cline, another Codex, background processes, or wait for development. Return JSON and exit.",
       "User objective: " + objective,
@@ -341,6 +346,7 @@ export class CodexWorker {
       'You are Resolver: GPT-6.1 Sol Medium. Analyze one blocked task and recommend a bounded recovery.',
       managerHandoffSkill(),
       'Read only INPUT. Do not edit files, delete/move files, commit, change HEAD, grant permissions, launch workers or expand allowedPaths.',
+      READ_ONLY_SANDBOX,
       'Only Node may preserve verified current-run scratch files outside the repository. Unknown/pre-existing/modified/tracked files and Git/state/security/permission failures remain blocked.',
       'For an operational Cline editing-guard rejection with unchanged HEAD and no unexpected paths, recommend one materially different bounded tool strategy using workerCapabilities. Never authorize the rejected command, relax guards or expand scope. Supply exact allowed alternatives and preserve all prior QA findings. Assessment drafts the correction; QA still independently accepts it.',
       'For scope failures, return correction only when verifiedScratch and headMatches support safe preservation. Otherwise diagnose the block without claiming it solved. Review previousResolverStrategies: do not repeat them. At most '+TUNING.resolverMaxStrategies+' different recovery strategies may be applied.',
@@ -356,6 +362,7 @@ export class CodexWorker {
       elevation ? "You are Elevation: GPT-6 Astra. Reassess the strategy, not merely the next symptom." : "You are Assessment: GPT-6.1 Sol. Analyze this recoverable failure and prepare one bounded correction.",
       managerHandoffSkill(),
       "Read only INPUT. Preserve correct work, original task, baseline and scope. Do not edit code, commit, launch workers or choose another task.",
+      READ_ONLY_SANDBOX,
       "Analyze what is correct, incorrect, incomplete, remaining criteria, why previous strategies failed, and what must be preserved.",
       "Use only tools in workerCapabilities.nativeTools when supplied; an empty list means availability is unverified. Inspect workerCapabilities.editFailures for exact failed inputs/errors. Do not assume apply_patch exists for GLM. Use one small edit, freshly read unique context, at most 2000 characters per editor field; never rewrite a pre-existing (git-tracked) file wholesale or reconstruct escaped literals. Exception: a file this task created (untracked, shown as CREATED BY THIS TASK in the worker prompt) that is structurally broken should be overwritten completely with its full corrected content, not patched piecemeal; keep that file small enough to write in one step. Verify property paths against actual code evidence. Do not request shell source-writing, helper files, redirection, unsupported tools or PowerShell pipelines. Resolver recommendations are advisory and never permission to weaken the guard.",
       "Make nextWorkerInstructions concise (target at most 1200 characters): give one concrete next change, its exact file/symbol, and the required test. Do not repeat the full task, old findings, correction history, or skill text. Preserve the original acceptance criteria; completing one change does not complete any remaining criteria.",

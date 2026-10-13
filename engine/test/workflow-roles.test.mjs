@@ -205,3 +205,17 @@ test('Codex implementation runs with the engine-written scope hook and refuses t
   await assert.rejects(worker.run('Add x', { task }), /without the scope hook/);
   await assert.rejects(worker.run('Add x', { task:{ ...task, allowedPaths:[] } }), /allowed paths/);
 });
+
+test('read-only roles are told their sandbox, not the project, blocks writes', async () => {
+  const { CodexWorker, READ_ONLY_SANDBOX } = await import('../src/codex-worker.mjs');
+  const worker = Object.create(CodexWorker.prototype), prompts = [];
+  worker.invoke = async (prompt) => { prompts.push(prompt); return { status:'done' }; };
+  await worker.assess({ objective:'x' });
+  await worker.assessCorrection({ task });
+  await worker.reassessManualReview({ task });
+  await worker.resolveBlocked({ task });
+  assert.equal(prompts.length, 4);
+  for (const p of prompts) assert.ok(p.includes(READ_ONLY_SANDBOX));
+  assert.match(READ_ONLY_SANDBOX, /EPERM[\s\S]*Never treat it as a blocker/);
+  assert.ok(buildRolePrompt(parseRoles([role()])[0], {}).includes(READ_ONLY_SANDBOX));
+});

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { managerHandoffSkill } from "./task-handoff-skill.mjs";
 import { REASONING_EFFORTS } from "./loop-options.mjs";
+import { READ_ONLY_SANDBOX } from "./codex-worker.mjs";
 
 // User-defined workflow roles (--roles-file). Every role is read-only: it never edits files,
 // commits or changes HEAD, so scope/HEAD verification and QA's single commit stay intact.
@@ -73,6 +74,7 @@ export function buildRolePrompt(role, input) {
     managerHandoffSkill(),
     STAGE_PURPOSE[role.stage],
     "You are read-only: do not edit, create, move or delete files, stage, commit, change HEAD or git configuration, launch workers, or choose tasks. Read only what INPUT and the task need.",
+    READ_ONLY_SANDBOX,
     role.gate
       ? "Return changes-needed only for concrete, verifiable problems the implementer can fix inside the task's allowedPaths; the change then goes back for correction instead of to QA. Otherwise return pass."
       : "Your verdict is advisory and never blocks the loop.",
