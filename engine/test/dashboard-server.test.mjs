@@ -100,7 +100,7 @@ test("activity history clear removes old rows without changing task, QA, or cont
     const liveBefore = await state.readLive();
     const controlBefore = await state.readControl();
     assert.ok((await state.readEvents()).length > 0);
-    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST" });
+    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(response.status, 200);
     assert.deepEqual(await state.readEvents(), []);
     assert.deepEqual(await state.readLive(), liveBefore);
@@ -116,7 +116,7 @@ test("activity history clear is refused while Cline is running", async () => {
   const { root, state, dashboard } = await fixture();
   try {
     const liveBefore = await state.readLive();
-    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST" });
+    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.notEqual(response.status, 200);
     assert.ok((await state.readEvents()).length > 0);
     assert.deepEqual(await state.readLive(), liveBefore);
@@ -180,4 +180,27 @@ test("manual-review status exposes Elevate and the control callback fires once",
     await run.dashboard.close();
     await rm(run.root, { recursive: true, force: true });
   }
+});
+
+test("dashboard refuses cross-site, rebound-host and non-JSON write requests", async () => {
+  const { root, state, dashboard } = await fixture();
+  try {
+    const { port } = new URL(dashboard.url);
+    const { request } = await import("node:http");
+    const send = (method, pathname, headers, body) => new Promise((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, method, path: pathname, headers }, (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
+      req.on("error", reject);
+      req.end(body);
+    });
+    const controlBefore = await state.readControl();
+    const json = { "content-type": "application/json" };
+    const pause = JSON.stringify({ action: "pause" });
+    assert.equal(await send("GET", "/api/status", { host: `attacker.example:${port}` }), 403);
+    assert.equal(await send("POST", "/api/control", { "content-type": "text/plain" }, pause), 403);
+    assert.equal(await send("POST", "/api/control", { ...json, origin: "https://attacker.example" }, pause), 403);
+    assert.equal(await send("POST", "/api/control", { ...json, "sec-fetch-site": "cross-site" }, pause), 403);
+    assert.deepEqual(await state.readControl(), controlBefore);
+    assert.equal(await send("GET", "/api/status", { host: `localhost:${port}` }), 200);
+    assert.equal(await send("POST", "/api/control", { ...json, origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" }, pause), 200);
+  } finally { await dashboard.close(); await rm(root, { recursive: true, force: true }); }
 });

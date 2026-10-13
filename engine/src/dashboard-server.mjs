@@ -84,10 +84,29 @@ async function serveAsset(response, pathname) {
   return true;
 }
 
+/**
+ * The dashboard listens on loopback only, but any web page in the user's browser can still reach it.
+ * Requests must name this server in Host (blocks DNS rebinding), must not come from another origin,
+ * and writes must be JSON (a cross-site JSON POST needs a CORS preflight, which is never answered).
+ */
+export function requestRefusal(request, port) {
+  const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  if (!allowedHosts.includes(String(request.headers.host ?? "").toLowerCase())) return "Host not allowed";
+  const origin = request.headers.origin;
+  if (origin && !allowedHosts.some((host) => origin.toLowerCase() === `http://${host}`)) return "Origin not allowed";
+  if (["cross-site", "same-site"].includes(request.headers["sec-fetch-site"])) return "Cross-site request refused";
+  if (request.method !== "GET" && request.method !== "HEAD" && !/^application\/json\b/i.test(request.headers["content-type"] ?? "")) {
+    return "Content-Type must be application/json";
+  }
+  return null;
+}
+
 export async function startDashboardServer({ stateDir, workspace, port = 4173, onControl = async () => {} }) {
   const state = new DashboardState({ stateDir });
   const server = createServer(async (request, response) => {
     try {
+      const refusal = requestRefusal(request, server.address()?.port);
+      if (refusal) return sendJson(response, 403, { error: refusal });
       const url = new URL(request.url, "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/status") {
         const [live, control, events, git] = await Promise.all([

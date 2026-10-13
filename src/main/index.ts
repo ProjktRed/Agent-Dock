@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
@@ -16,6 +16,7 @@ import { listSkills } from "./skills";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
+import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
@@ -57,7 +58,8 @@ try {
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(app.getAppPath(), "engine");
 const store = new AppStore(app.getPath("userData"));
 const stateRoot = path.join(app.getPath("userData"), "projects");
-const roles = new RolesService(path.join(app.getPath("userData"), "roles"));
+const rolesDir = path.join(app.getPath("userData"), "roles");
+const roles = new RolesService(rolesDir);
 let engineInfo: EngineInfo;
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -264,7 +266,7 @@ function createWindow() {
     show: false,
     icon: appIcon(256),
     title: "Agent Dock",
-    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: false, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   win.on("focus", checkOnFocus);
   win.once("ready-to-show", () => {
@@ -277,8 +279,13 @@ function createWindow() {
     }
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isExternalWebUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
+  });
+  // The window only ever shows the bundled renderer; links open in the browser instead.
+  win.webContents.on("will-navigate", (event, url) => {
+    event.preventDefault();
+    if (isExternalWebUrl(url)) void shell.openExternal(url);
   });
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void win.loadFile(path.join(__dirname, "../renderer/index.html"));
@@ -335,7 +342,12 @@ async function usage(projectId: string | null): Promise<UsageSummary> {
 }
 
 function registerIpc() {
-  const handle = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (_e, ...args) => fn(...args));
+  const handle = (channel: string, fn: (...args: any[]) => unknown) =>
+    ipcMain.handle(channel, (event, ...args) => {
+      // Only the app's own window may call into the main process.
+      if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error("IPC sender not allowed");
+      return fn(...args);
+    });
 
   handle("snapshot", snapshot);
   handle("settings:save", async (settings: Settings) => {
@@ -493,7 +505,22 @@ function registerIpc() {
   handle("update:status", () => updater.status);
   handle("update:check", () => updater.check(store.data.settings));
   handle("update:apply", () => applyUpdate());
-  handle("shell:open", (target: string) => shell.openPath(target).then(() => undefined));
+  handle("shell:open", async (target: string) => {
+    const roots = [
+      ...store.data.projects.flatMap((p) => [p.path, p.stateDir]),
+      path.join(engineDir, "skills"),
+      ...store.data.settings.skills.importedDirs,
+      rolesDir,
+    ];
+    let isDirectory = false;
+    try {
+      isDirectory = statSync(target).isDirectory();
+    } catch {
+      // missing target: shell.openPath reports it
+    }
+    if (!canOpenPath(target, roots, isDirectory)) throw new Error("This path cannot be opened from Agent Dock.");
+    await shell.openPath(target);
+  });
   handle("window", (action: "minimize" | "maximize" | "close") => {
     if (action === "minimize") win?.minimize();
     if (action === "maximize") (win?.isMaximized() ? win.unmaximize() : win?.maximize());

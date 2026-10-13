@@ -11,6 +11,7 @@ import { classifyPrompt, countCompactions, implementationUsage, parseInvocationU
 import { parsePorcelain } from "../src/main/lib/git";
 import { firstVersion, pickRunnable } from "../src/main/lib/clis";
 import { parseSkillFile } from "../src/main/skills";
+import { canOpenPath, isExternalWebUrl } from "../src/main/lib/safe-open";
 import { taskHistory } from "../src/main/projects";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, defaultAgents } from "../src/main/defaults";
 
@@ -436,5 +437,26 @@ describe("token sources, live local usage and compaction", () => {
     expect(busy).toMatchObject({ state: "processing", used: 35581, size: 98304, model: "GLM" });
     expect(parseLlamaSlots([{ n_ctx: 4096, is_processing: false, n_prompt_tokens: 0 }], "m")).toMatchObject({ state: "idle", used: null });
     expect(parseLlamaSlots({ error: "model not loaded" }, "m").state).toBe("unavailable");
+  });
+});
+
+describe("safe open", () => {
+  const root = path.resolve("/work/project");
+  it("opens folders and plain documents inside known roots only", () => {
+    expect(canOpenPath(root, [root], true)).toBe(true);
+    expect(canOpenPath(path.join(root, "IMPLEMENTATION_PLAN.md"), [root], false)).toBe(true);
+    expect(canOpenPath(path.join(root, "evil.exe"), [root], false)).toBe(false);
+    expect(canOpenPath(path.join(root, "run.BAT"), [root], false)).toBe(false);
+    expect(canOpenPath(path.join(root, "..", "other"), [root], true)).toBe(false);
+    expect(canOpenPath(path.resolve("/work/project-other"), [root], true)).toBe(false);
+    expect(canOpenPath("", [root], true)).toBe(false);
+    expect(canOpenPath(42, [root], true)).toBe(false);
+  });
+  it("sends only web links to the browser", () => {
+    expect(isExternalWebUrl("https://github.com")).toBe(true);
+    expect(isExternalWebUrl("http://127.0.0.1:4173")).toBe(true);
+    expect(isExternalWebUrl("file:///C:/Windows/System32/calc.exe")).toBe(false);
+    expect(isExternalWebUrl("ms-settings:")).toBe(false);
+    expect(isExternalWebUrl("not a url")).toBe(false);
   });
 });
