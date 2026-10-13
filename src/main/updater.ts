@@ -26,8 +26,10 @@ export class Updater {
     private readonly installed: BuildInfo | null,
     private readonly emit: (status: UpdateStatus) => void,
     private readonly resolveNode: () => Promise<string | null>,
+    /** A portable copy (portable.json) with updates off: never checks, builds or swaps. */
+    private readonly portableNoUpdates = false,
   ) {
-    this.status = { state: installed && packaged ? "idle" : "dev", installed, source: installed?.source ?? "", branch: installed?.branch ?? "", latest: null, commits: [], checkedAt: null, error: null, log: [] };
+    this.status = { state: portableNoUpdates ? "portable" : installed && packaged ? "idle" : "dev", installed, source: installed?.source ?? "", branch: installed?.branch ?? "", latest: null, commits: [], checkedAt: null, error: null, log: [] };
   }
 
   static async readBuildInfo(appPath: string): Promise<BuildInfo | null> {
@@ -93,6 +95,7 @@ export class Updater {
 
   private async probe(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
     const { source, branch } = this.target(settings);
+    if (this.portableNoUpdates) return this.status;
     if (!this.packaged || !this.installed) {
       this.set({ state: "dev", source, branch, error: null });
       return this.status;

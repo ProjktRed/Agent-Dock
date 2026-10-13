@@ -256,7 +256,8 @@ export interface BuildInfo {
 }
 
 export interface UpdateStatus {
-  state: "dev" | "idle" | "checking" | "up-to-date" | "available" | "building" | "ready" | "error";
+  /** "portable": a portable copy with updates turned off (portable.json). */
+  state: "dev" | "portable" | "idle" | "checking" | "up-to-date" | "available" | "building" | "ready" | "error";
   installed: BuildInfo | null;
   source: string;
   branch: string;
@@ -357,6 +358,8 @@ export interface ProjectStatus {
   resolverReason: string | null;
   /** Blocked during Assessment, with no task underway: Retry runs Assessment again. */
   assessmentRetry: boolean;
+  /** Blocked with a finished, in-scope attempt: Retry QA reviews it again. */
+  qaRetry: boolean;
   events: EngineEvent[];
   git: GitInfo;
   plan: PlanProgress;

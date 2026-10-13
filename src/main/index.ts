@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
@@ -15,10 +15,32 @@ import { addProject, inspectDirectory, taskHistory } from "./projects";
 import { listSkills } from "./skills";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
+import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
+
+// Portable copy: a portable.json beside AgentDock.exe keeps every setting, project and log in a
+// data folder next to it (a flash drive carries the whole setup). Must run before anything reads userData.
+const portable = (() => {
+  if (!app.isPackaged) return null;
+  const dir = path.dirname(process.execPath);
+  const file = path.join(dir, "portable.json");
+  if (!existsSync(file)) return null;
+  let options: { updates?: boolean } = {};
+  try {
+    options = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    // an empty or invalid marker still means portable
+  }
+  return { dir, data: path.join(dir, "data"), updates: options.updates === true };
+})();
+if (portable) {
+  app.setPath("userData", portable.data);
+  app.setPath("crashDumps", path.join(portable.data, "crash-dumps"));
+  app.setAppLogsPath(path.join(portable.data, "logs"));
+}
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -68,6 +90,7 @@ async function applyUpdate() {
 }
 
 async function checkForUpdatesOnLaunch() {
+  if (updater.status.state === "portable") return;
   await updater.readLastSwap();
   if (updater.status.state === "error") {
     notice({ kind: "error", message: updater.status.error ?? "The last update failed." });
@@ -86,6 +109,7 @@ const FOCUS_CHECK_MS = 10 * 60_000;
 function scheduleUpdateChecks() {
   if (updateTimer) clearInterval(updateTimer);
   updateTimer = null;
+  if (updater.status.state === "portable") return;
   const { autoCheck, checkMinutes } = store.data.settings.updates;
   if (autoCheck && checkMinutes > 0) updateTimer = setInterval(() => void checkForUpdates(true), checkMinutes * 60_000);
 }
@@ -411,14 +435,27 @@ function registerIpc() {
     void pollOnce();
   });
   handle("project:history", async (id: string) => taskHistory(await readActivity(project(id).stateDir, 20_000)));
+  handle("project:gitOwner", async (id: string) => {
+    const problem = await sharedGitOwnerProblem(project(id).path);
+    return problem ? { ...problem, command: ownerFixCommand(problem) } : null;
+  });
   handle("engine:status", (id: string) => engine.status(project(id)));
   handle("engine:check", (id: string) => launchCheck(project(id)));
   handle("engine:control", async (id: string, action: ControlAction) => {
     const p = project(id);
     const check = launchCheck(p);
-    const starting = ["start", "resume", "resolve"].includes(action) && !engine.isAlive(id);
+    const starting = ["start", "resume", "resolve", "retry-qa"].includes(action) && !engine.isAlive(id);
     if (starting && check.problems.length) throw new Error(check.problems.join(" "));
     if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
+    // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
+    if (starting) {
+      const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
+      if (owner) {
+        const message = `QA cannot commit in ${p.name}: ${owner.dir} belongs to ${owner.owner}, not ${owner.user}. In an Administrator PowerShell run: ${ownerFixCommand(owner)}`;
+        if (action === "retry-qa") throw new Error(message);
+        notice({ kind: "warning", message });
+      }
+    }
     const wasAlive = engine.isAlive(id);
     await engine.control(p, action, await launchArgs(p, check), providerEnv(p));
     if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
@@ -533,7 +570,7 @@ app.whenReady().then(async () => {
   await limits.load();
   models = new ModelsService(path.join(store.dir, "models.json"), resolveOrchestrator, (s) => send("models", s));
   await models.load();
-  updater = new Updater(app.isPackaged, await Updater.readBuildInfo(app.getAppPath()), (s) => send("update", s), async () => pickRunnable(await whereAll("node")));
+  updater = new Updater(app.isPackaged, await Updater.readBuildInfo(app.getAppPath()), (s) => send("update", s), async () => pickRunnable(await whereAll("node")), Boolean(portable && !portable.updates));
   const preferred = store.data.settings.general.defaultProject;
   if (preferred !== "last" && store.data.projects.some((p) => p.id === preferred && !p.archived)) store.data.settings.activeProjectId = preferred;
   if (!store.data.agents) {

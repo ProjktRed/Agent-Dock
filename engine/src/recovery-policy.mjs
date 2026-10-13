@@ -30,3 +30,18 @@ export function correctionText(result, packet) {
     'Completing this correction does not waive remaining original acceptance criteria.',
     `Validation: ${packet.task?.qaCommand ?? packet.qaEvidence?.command?.command ?? ''}`].join('\n');
 }
+
+/**
+ * Whether QA may review the blocked attempt again (after the user fixed what stopped QA, such as
+ * a tool or permission problem): the attempt must be finished, clean and inside its approved paths.
+ * The loop still reconciles HEAD and scope before QA runs.
+ */
+export function qaRetryAvailability(r) {
+  if (!r) return { available: false, reason: 'No task in progress' };
+  if (r.phase !== 'blocked') return { available: false, reason: 'The task is not blocked' };
+  if (!r.qaPacket || !r.workerResult) return { available: false, reason: 'No finished attempt to review' };
+  if (r.qaPacket.attempt !== r.attempt) return { available: false, reason: 'The last attempt has no evidence yet' };
+  if (r.workerResult.exitCode !== 0) return { available: false, reason: 'The worker did not finish cleanly' };
+  if (r.qaPacket.qaEvidence?.scope?.status !== 'PASS') return { available: false, reason: 'The change is outside its approved paths' };
+  return { available: true, reason: null };
+}

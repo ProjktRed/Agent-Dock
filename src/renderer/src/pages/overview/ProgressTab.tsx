@@ -18,6 +18,20 @@ const CYCLE = [
 function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
   const { control, activeProject } = useApp();
   const kind = s.runState;
+  // Codex's Windows sandbox failed to prepare a folder QA writes to (usually the shared .git).
+  const sandboxError = kind === "blocked" && /helper_unknown_error|setup refresh had errors/i.test(s.blockedReason ?? "");
+  const [owner, setOwner] = useState<{ dir: string; owner: string; user: string; command: string } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!sandboxError) return;
+    let live = true;
+    const check = () => window.api.gitOwner(projectId).then((o) => live && setOwner(o)).catch(() => live && setOwner(null));
+    void check();
+    const t = setInterval(check, 15_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [sandboxError, projectId]);
   if (!["attention", "blocked", "waiting-limit"].includes(kind)) return null;
   const meta = {
     attention: { title: "Attention required: manual review", tone: "attnb", text: s.attentionReason, help: "The engine stopped for your review. Elevation can propose a revised correction, which then goes through independent QA." },
@@ -34,11 +48,29 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
         {meta.text && <div className="mono log" style={{ maxHeight: 140 }}>{meta.text}</div>}
         {s.limitRetryAt && <div className="sub">Provider reports retry after: {s.limitRetryAt}</div>}
         <div className="sub">{meta.help}</div>
+        {sandboxError && (
+          <div className="well pad stack" style={{ gap: 8 }}>
+            <b style={{ fontWeight: 600 }}>Codex could not start any command for QA</b>
+            {owner === undefined ? (
+              <span className="sub">Checking the repository's .git folder…</span>
+            ) : owner ? (
+              <>
+                <span className="sub">Its Windows sandbox has to change the permissions of <span className="mono">{owner.dir}</span> so QA can commit, but that folder belongs to <b>{owner.owner}</b>, not to you ({owner.user}). This happens when a sandboxed Codex created the repository.</span>
+                <span className="sub">Open Windows PowerShell as Administrator and run this once. It makes you the owner and leaves the permissions as they are:</span>
+                <div className="mono log selectable" style={{ maxHeight: 60 }}>{owner.command}</div>
+                <span className="sub">Then press Retry QA. This page rechecks the folder every 15 seconds.</span>
+              </>
+            ) : (
+              <span className="sub">The repository's .git folder now belongs to you{s.qaRetry ? ", so QA can run again: press Retry QA." : "."} If it fails again, Codex's sandbox log is in <span className="mono">%USERPROFILE%\.codex\.sandbox</span>.</span>
+            )}
+          </div>
+        )}
         <div className="row wrap" style={{ gap: 10 }}>
           {s.elevateAvailable && <button className="btn primary sm" onClick={() => control(projectId, "elevate", "Elevation requested")}>Elevate</button>}
           {s.resolverAvailable && <button className="btn primary sm" onClick={() => control(projectId, "resolve", "Resolver requested")}>Resolve block</button>}
           {(kind === "waiting-limit" || kind === "attention") && <button className="btn sm" onClick={() => control(projectId, "resume", "Resumed")}>Resume</button>}
           {kind === "blocked" && s.assessmentRetry && <button className="btn primary sm" onClick={() => control(projectId, "resume", "Assessment restarted")}>Retry Assessment</button>}
+          {kind === "blocked" && s.qaRetry && <button className="btn primary sm" disabled={sandboxError && Boolean(owner)} title={sandboxError && owner ? "Fix the folder owner first" : "Collect fresh check results for the finished attempt and let QA review it again"} onClick={() => control(projectId, "retry-qa", "QA restarted on the finished attempt")}>Retry QA</button>}
           {activeProject && <button className="btn ghost sm" onClick={() => window.api.openPath(activeProject.path)}><Icon name="external" size="sm" />Open workspace</button>}
           {!s.elevateAvailable && kind === "attention" && s.elevateReason && <span className="sub">Elevate unavailable: {s.elevateReason}</span>}
           {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}

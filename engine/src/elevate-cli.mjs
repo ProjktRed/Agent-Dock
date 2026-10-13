@@ -12,7 +12,7 @@ import { parseLoopOptions } from "./loop-options.mjs";
 import { verifyReview, runNodeLoop } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
-import { createImplementationWorker, createRoles } from "./engine-setup.mjs";
+import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
 
 installTopLevelDiagnostics();
 const exec = promisify(execFile);
@@ -37,7 +37,7 @@ try {
   const mixed = isMixed(clis);
   if (mixed) useMixedDefaults(clis);
   useRoleOverrides(options.roleOverrides);
-  const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true });
+  const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true }).catch(gitStartupError);
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
   const additionalWritableDirs = outside ? [gitCommonDir] : [];
