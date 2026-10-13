@@ -1,0 +1,17 @@
+{
+  "disabledTools": [
+    "fetch_web_content",
+    "web_search",
+    "spawn_agent",
+    "spawn_subagent",
+    "browser_action",
+    "execute_command",
+    "write_to_file",
+    "replace_in_file"
+  ],
+  "tools": {
+    "web_search": {
+      "enabled": false
+    }
+  }
+}

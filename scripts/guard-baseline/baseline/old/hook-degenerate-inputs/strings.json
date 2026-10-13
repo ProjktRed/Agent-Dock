@@ -1,0 +1,133 @@
+{
+  "covers": [
+    "malformed JSON on stdin",
+    "a missing hookName",
+    "a missing tool identity",
+    "a missing tool input",
+    "stdin over 1 MB",
+    "a corrupt policy.json",
+    "a policy.json that fails validation",
+    "a stale policy.json.lock"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "failedEdits": 0,
+    "invalidToolCalls": 0,
+    "reason": null,
+    "runtimeReady": false,
+    "stopped": false,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [],
+    "lastRejection": null,
+    "nativeTools": []
+  },
+  "reasons": [
+    {
+      "raw": "Cline editing guard: malformed hook input",
+      "reason": "malformed hook input",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: malformed hook input",
+      "cancelMessage": "Cline editing guard: malformed hook input",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: missing tool identity",
+      "reason": "missing tool identity",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: missing tool identity",
+      "cancelMessage": "Cline editing guard: missing tool identity",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: missing tool input",
+      "reason": "missing tool input",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: missing tool input",
+      "cancelMessage": "Cline editing guard: missing tool input",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: oversized hook input",
+      "reason": "oversized hook input",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: oversized hook input",
+      "cancelMessage": "Cline editing guard: oversized hook input",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: guard state unavailable: Expected double-quoted property name in JSON at position 13",
+      "reason": "guard state unavailable: Expected double-quoted property name in JSON at position 13",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: guard state unavailable: Expected double-quoted property name in JSON at position 13",
+      "cancelMessage": "Cline editing guard: guard state unavailable: Expected double-quoted property name in JSON at position 13",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: guard state unavailable: invalid guard policy",
+      "reason": "guard state unavailable: invalid guard policy",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: guard state unavailable: invalid guard policy",
+      "cancelMessage": "Cline editing guard: guard state unavailable: invalid guard policy",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: guard counter lock is unresolved",
+      "reason": "guard counter lock is unresolved",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: guard counter lock is unresolved",
+      "cancelMessage": "Cline editing guard: guard counter lock is unresolved",
+      "canRecoverOperational": false
+    }
+  ]
+}

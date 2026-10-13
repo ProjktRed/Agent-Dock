@@ -1,0 +1,159 @@
+{
+  "covers": [
+    "two consecutive failing edits"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "editFailures": [
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "9b7baeac5239d3525610569f9d28f7034def3d5241ff566631c2ebbc8abae244",
+        "id": "call_two-failed-edits_0_0",
+        "input": {
+          "new_text": "return \"alpha2\";",
+          "old_text": "return \"alpha\";",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "2b19d0ea7b88ed2b91ebcfdbf983c416ca6c8cdbbfb98ff01ef17139f4d38fa3",
+        "id": "call_two-failed-edits_1_0",
+        "input": {
+          "new_text": "export function alpha2(): string {",
+          "old_text": "export function alpha(): string {",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "failedEdits": 2,
+    "invalidToolCalls": 0,
+    "lastRejection": {
+      "commands": null,
+      "path": "{WS}/src/alpha.ts",
+      "tool": "editor"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ],
+    "reason": "two consecutive native edit failures; preserve the diff and reassess",
+    "runtimeReady": true,
+    "stopped": true,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "9b7baeac5239d3525610569f9d28f7034def3d5241ff566631c2ebbc8abae244",
+        "id": "call_two-failed-edits_0_0",
+        "input": {
+          "new_text": "return \"alpha2\";",
+          "old_text": "return \"alpha\";",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "2b19d0ea7b88ed2b91ebcfdbf983c416ca6c8cdbbfb98ff01ef17139f4d38fa3",
+        "id": "call_two-failed-edits_1_0",
+        "input": {
+          "new_text": "export function alpha2(): string {",
+          "old_text": "export function alpha(): string {",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "lastRejection": {
+      "commands": null,
+      "path": "{WS}/src/alpha.ts",
+      "tool": "editor"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ]
+  },
+  "reasons": [
+    {
+      "raw": "two consecutive native edit failures; preserve the diff and reassess",
+      "reason": "two consecutive native edit failures; preserve the diff and reassess",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: two consecutive native edit failures; preserve the diff and reassess",
+      "cancelMessage": "Cline editing guard: two consecutive native edit failures; preserve the diff and reassess",
+      "canRecoverOperational": true
+    }
+  ]
+}

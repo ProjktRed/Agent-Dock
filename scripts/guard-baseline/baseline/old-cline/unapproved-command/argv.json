@@ -1,0 +1,30 @@
+{
+  "node": "{NODE}",
+  "argv": [
+    "{CLINE}/cline",
+    "--json",
+    "--auto-approve",
+    "true",
+    "--compaction",
+    "agentic",
+    "--retries",
+    "6",
+    "--thinking",
+    "none",
+    "--provider",
+    "openai-compatible",
+    "--model",
+    "stub-model",
+    "--cwd",
+    "{WS}",
+    "--timeout",
+    "150",
+    "--data-dir",
+    "{STATE}/cline-data",
+    "--config",
+    "{STATE}/cline-guard/config",
+    "--hooks-dir",
+    "{STATE}/cline-guard/config/hooks",
+    "Apply the guard baseline probe edits.\n\nEnforced editing guard: edit only src/alpha.ts, src/inscope/ using the editing tool actually present in your tool schema. A mentioned tool is not necessarily registered. Source-writing shell commands and helper files are prohibited. Read the intended range with read_files immediately before editing. Existing files require a unique exact old_text/new_text replacement (at most 2000 characters each), or a verified insert_line; whole-file rewrites are prohibited. Do not reconstruct backslashes from escaped output. Two consecutive failed native edits stop this attempt. Select run_commands.commands from its exact enum; do not invent commands. Three invalid tool requests stop this attempt. Approved command choices (prefer npm.cmd/npx.cmd on Windows):\nnpm run check\nnpm.cmd run check\nnpm run lint\nnpm.cmd run lint\nnpm run typecheck\nnpm.cmd run typecheck\ngit diff --check\nnpx prettier --check src/alpha.ts\nnpx.cmd prettier --check src/alpha.ts\nnpx prettier --write src/alpha.ts\nnpx.cmd prettier --write src/alpha.ts\ngit status --short\ngit diff --stat\ngit diff --numstat\ngit diff --name-only\ngit rev-parse HEAD\ngit diff -- src/alpha.ts\ngit ls-files -- src/alpha.ts\ngit show HEAD:src/alpha.ts\ngit diff -- src/inscope/\ngit ls-files -- src/inscope/\ngit show HEAD:src/inscope/\nDo not wrap commands in PowerShell/cmd or redirect output."
+  ]
+}

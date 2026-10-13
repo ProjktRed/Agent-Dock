@@ -1,0 +1,348 @@
+{
+  "total": 48,
+  "recorded": 44,
+  "sourceLiteral": 4,
+  "missing": [],
+  "rows": [
+    {
+      "id": "prepare-invalid-task",
+      "source": "cline-tool-guard.mjs:17",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "missing-command-choices",
+      "source": "cline-tool-guard.mjs:53",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "handshake-missing",
+      "source": "cline-tool-guard.mjs:75",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "command-safety-failed",
+      "source": "cline-tool-guard.mjs:80",
+      "how": "recorded",
+      "kind": "stop",
+      "found": true
+    },
+    {
+      "id": "unsafe-command",
+      "source": "cline-tool-guard.mjs:82",
+      "how": "recorded",
+      "kind": "stop",
+      "found": true
+    },
+    {
+      "id": "unapproved-tool-path",
+      "source": "cline-tool-guard.mjs:86",
+      "how": "recorded",
+      "kind": "stop",
+      "found": true
+    },
+    {
+      "id": "two-edit-failures-plugin",
+      "source": "cline-tool-guard.mjs:97",
+      "how": "recorded",
+      "kind": "stop",
+      "found": true,
+      "recoverable": true
+    },
+    {
+      "id": "soft-reject",
+      "source": "cline-tool-guard.mjs:110",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "three-invalid-requests",
+      "source": "cline-tool-guard.mjs:111",
+      "how": "recorded",
+      "kind": "stop",
+      "found": true
+    },
+    {
+      "id": "plugin-unavailable",
+      "source": "cline-tool-guard.mjs:115",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "malformed-hook-input",
+      "source": "cline-tool-guard.mjs:159",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "missing-tool-identity",
+      "source": "cline-tool-guard.mjs:161",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "two-edit-failures-hook",
+      "source": "cline-tool-guard.mjs:171",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true,
+      "recoverable": true
+    },
+    {
+      "id": "missing-tool-input",
+      "source": "cline-tool-guard.mjs:176",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "edit-path-outside",
+      "source": "cline-tool-guard.mjs:177",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "malformed-patch",
+      "source": "cline-tool-guard.mjs:179",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "patch-paths-not-explicit",
+      "source": "cline-tool-guard.mjs:181",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "patch-path-outside",
+      "source": "cline-tool-guard.mjs:182",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "command-not-approved",
+      "source": "cline-tool-guard.mjs:190",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true,
+      "recoverable": true
+    },
+    {
+      "id": "unknown-tool",
+      "source": "cline-tool-guard.mjs:194",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true,
+      "recoverable": true
+    },
+    {
+      "id": "lock-unresolved",
+      "source": "cline-tool-guard.mjs:204",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "invalid-guard-policy",
+      "source": "cline-tool-guard.mjs:206",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "guard-state-unavailable",
+      "source": "cline-tool-guard.mjs:210",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "invalid-outcome-policy",
+      "source": "cline-tool-guard.mjs:224",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "oversized-hook-input",
+      "source": "cline-tool-guard.mjs:232",
+      "how": "recorded",
+      "kind": "cancel",
+      "found": true
+    },
+    {
+      "id": "cancel-prefix",
+      "source": "cline-tool-guard.mjs:10",
+      "how": "recorded",
+      "kind": "prefix",
+      "found": true
+    },
+    {
+      "id": "source-too-large",
+      "source": "cline-edit-boundary.mjs:13",
+      "how": "recorded",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "identical-failed-edit",
+      "source": "cline-edit-boundary.mjs:36",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "patch-too-large",
+      "source": "cline-edit-boundary.mjs:38",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "patch-stale-read",
+      "source": "cline-edit-boundary.mjs:40",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "native-edit-size",
+      "source": "cline-edit-boundary.mjs:43",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "file-missing-replacement",
+      "source": "cline-edit-boundary.mjs:45",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "whole-file-rewrite",
+      "source": "cline-edit-boundary.mjs:46",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "fresh-read-required",
+      "source": "cline-edit-boundary.mjs:48",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "one-edit-mode",
+      "source": "cline-edit-boundary.mjs:51",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "old-text-not-unique",
+      "source": "cline-edit-boundary.mjs:53",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "replacement-outside-range",
+      "source": "cline-edit-boundary.mjs:55",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "insert-line-outside",
+      "source": "cline-edit-boundary.mjs:56",
+      "how": "recorded",
+      "kind": "reject",
+      "found": true
+    },
+    {
+      "id": "stop-message",
+      "source": "cline-cli-worker.mjs:564",
+      "how": "source-literal",
+      "kind": "compose",
+      "found": true
+    },
+    {
+      "id": "runtime-not-ready",
+      "source": "cline-cli-worker.mjs:435",
+      "how": "source-literal",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "attempt-not-completed",
+      "source": "cline-cli-worker.mjs:567",
+      "how": "source-literal",
+      "kind": "throw",
+      "found": true
+    },
+    {
+      "id": "codex-patch-no-files",
+      "source": "codex-scope-guard.mjs:72",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-outside-paths",
+      "source": "codex-scope-guard.mjs:74",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-must-be-patch",
+      "source": "codex-scope-guard.mjs:76",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-shell-denied",
+      "source": "codex-scope-guard.mjs:80",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-mcp-denied",
+      "source": "codex-scope-guard.mjs:82",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-hook-error",
+      "source": "codex-scope-hook.mjs:20",
+      "how": "recorded",
+      "kind": "codex-deny",
+      "found": true
+    },
+    {
+      "id": "codex-fail-closed",
+      "source": "cloud-impl-worker.mjs:167",
+      "how": "source-literal",
+      "kind": "throw",
+      "found": true
+    }
+  ]
+}

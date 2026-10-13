@@ -1,0 +1,294 @@
+{
+  "covers": [
+    "whole-file rewrite of an existing file",
+    "non-unique old_text",
+    "replacement outside the read range",
+    "insert_line outside the read range",
+    "both edit modes at once",
+    "oversized new_text",
+    "replacement on a missing file",
+    "no fresh read",
+    "a repeated identical failed edit",
+    "an edit source over 1 MB"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "editFailures": [
+      {
+        "error": "Replacement extends outside the successfully read range. Read that range first.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "90bb56ea2bf4f3d4ea8f889e8e32311a5165f291977da798e881111265e111b9",
+        "id": "tc-outside-range",
+        "input": {
+          "new_text": "export const ALPHA_VERSION = 2;",
+          "old_text": "export const ALPHA_VERSION = 1;",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Insertion line must be inside or immediately after the freshly read range.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "ceb95f0aae02d7427a35280afa34f74338563b4ab148e5181278cff09b7558f6",
+        "id": "tc-insert-outside",
+        "input": {
+          "insert_line": 1,
+          "new_text": "// header\n",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Editor operation failed: text not found",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "54efc14853892a22af04d31137baeadcf161b636ced1fc4a41f26c8424b2aa51",
+        "id": "tc-native-fail",
+        "input": {
+          "new_text": "x",
+          "old_text": "nonexistent",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "native-result",
+        "tool": "editor"
+      },
+      {
+        "error": "Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "54efc14853892a22af04d31137baeadcf161b636ced1fc4a41f26c8424b2aa51",
+        "id": "tc-identical-retry",
+        "input": {
+          "new_text": "x",
+          "old_text": "nonexistent",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "failedEdits": 0,
+    "freshReads": {
+      "{WS}/src/alpha.ts": {
+        "end": 4,
+        "sha256": "6bbf8078e020f6633b954f8e4b1ad05dbc5643691c3def4dccfbec0fb53dd38c",
+        "start": 3
+      }
+    },
+    "invalidToolCalls": 0,
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ],
+    "reason": null,
+    "runtimeReady": true,
+    "stopped": false,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [
+      {
+        "error": "Replacement extends outside the successfully read range. Read that range first.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "90bb56ea2bf4f3d4ea8f889e8e32311a5165f291977da798e881111265e111b9",
+        "id": "tc-outside-range",
+        "input": {
+          "new_text": "export const ALPHA_VERSION = 2;",
+          "old_text": "export const ALPHA_VERSION = 1;",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Insertion line must be inside or immediately after the freshly read range.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "ceb95f0aae02d7427a35280afa34f74338563b4ab148e5181278cff09b7558f6",
+        "id": "tc-insert-outside",
+        "input": {
+          "insert_line": 1,
+          "new_text": "// header\n",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      },
+      {
+        "error": "Editor operation failed: text not found",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "54efc14853892a22af04d31137baeadcf161b636ced1fc4a41f26c8424b2aa51",
+        "id": "tc-native-fail",
+        "input": {
+          "new_text": "x",
+          "old_text": "nonexistent",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "native-result",
+        "tool": "editor"
+      },
+      {
+        "error": "Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+        "excerpt": "3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "54efc14853892a22af04d31137baeadcf161b636ced1fc4a41f26c8424b2aa51",
+        "id": "tc-identical-retry",
+        "input": {
+          "new_text": "x",
+          "old_text": "nonexistent",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "lastRejection": null,
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ]
+  },
+  "reasons": [
+    {
+      "raw": "Whole-file rewrite of an existing file is prohibited. Use a small exact replacement or verified line insertion.",
+      "reason": "Whole-file rewrite of an existing file is prohibited. Use a small exact replacement or verified line insertion.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Whole-file rewrite of an existing file is prohibited. Use a small exact replacement or verified line insertion.",
+      "cancelMessage": "Cline editing guard: Whole-file rewrite of an existing file is prohibited. Use a small exact replacement or verified line insertion.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "old_text must match exactly once in the current file. Reread a small range and use unique context; do not reconstruct escaped literals.",
+      "reason": "old_text must match exactly once in the current file. Reread a small range and use unique context; do not reconstruct escaped literals.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: old_text must match exactly once in the current file. Reread a small range and use unique context; do not reconstruct escaped literals.",
+      "cancelMessage": "Cline editing guard: old_text must match exactly once in the current file. Reread a small range and use unique context; do not reconstruct escaped literals.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Use one edit mode with nonempty old_text for replacement.",
+      "reason": "Use one edit mode with nonempty old_text for replacement.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Use one edit mode with nonempty old_text for replacement.",
+      "cancelMessage": "Cline editing guard: Use one edit mode with nonempty old_text for replacement.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Native edit requires new_text and at most 2000 characters per old_text/new_text. Split the edit.",
+      "reason": "Native edit requires new_text and at most 2000 characters per old_text/new_text. Split the edit.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Native edit requires new_text and at most 2000 characters per old_text/new_text. Split the edit.",
+      "cancelMessage": "Cline editing guard: Native edit requires new_text and at most 2000 characters per old_text/new_text. Split the edit.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "File does not exist; replacement/insertion is unavailable.",
+      "reason": "File does not exist; replacement/insertion is unavailable.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: File does not exist; replacement/insertion is unavailable.",
+      "cancelMessage": "Cline editing guard: File does not exist; replacement/insertion is unavailable.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "reason": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "cancelMessage": "Cline editing guard: Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Replacement extends outside the successfully read range. Read that range first.",
+      "reason": "Replacement extends outside the successfully read range. Read that range first.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Replacement extends outside the successfully read range. Read that range first.",
+      "cancelMessage": "Cline editing guard: Replacement extends outside the successfully read range. Read that range first.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Insertion line must be inside or immediately after the freshly read range.",
+      "reason": "Insertion line must be inside or immediately after the freshly read range.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Insertion line must be inside or immediately after the freshly read range.",
+      "cancelMessage": "Cline editing guard: Insertion line must be inside or immediately after the freshly read range.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+      "reason": "Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+      "cancelMessage": "Cline editing guard: Identical failed edit already attempted. Use its saved error and reread before proposing a different small edit.",
+      "canRecoverOperational": false
+    },
+    {
+      "raw": "Cline editing guard: guard state unavailable: Read/edit source must be a text file below 1 MB",
+      "reason": "guard state unavailable: Read/edit source must be a text file below 1 MB",
+      "hadCancelPrefix": true,
+      "stopMessage": "Cline editing guard stopped attempt: guard state unavailable: Read/edit source must be a text file below 1 MB",
+      "cancelMessage": "Cline editing guard: guard state unavailable: Read/edit source must be a text file below 1 MB",
+      "canRecoverOperational": false
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{"type":"cline-message","message":"Writing the file directly.","action":"Writing the file directly."}
+{"type":"cline-tool","tool":"write_to_file","action":"Using write_to_file"}
+{"type":"cline-tool-failed","tool":"write_to_file","message":"{\"error\":\"Tool call write_to_file was rejected before execution: AI_NoSuchToolError: Model tried to call unavailable tool 'write_to_file'. Available tools: read_files, search_codebase, run_commands, editor, ask_question.\"}","action":"write_to_file failed: {\"error\":\"Tool call write_to_file was rejected before execution: AI_NoSuchToolError: Model tried to call unavailable tool 'write_to_file'. Available tools: read_files, search_codebase, run_commands, editor, ask_question.\"}"}
+{"type":"cline-message","message":"Searching the web.","action":"Searching the web."}
+{"type":"cline-tool","tool":"web_search","action":"Using web_search"}
+{"type":"cline-tool-failed","tool":"web_search","message":"{\"error\":\"Tool call web_search was rejected before execution: AI_NoSuchToolError: Model tried to call unavailable tool 'web_search'. Available tools: read_files, search_codebase, run_commands, editor, ask_question.\"}","action":"web_search failed: {\"error\":\"Tool call web_search was rejected before execution: AI_NoSuchToolError: Model tried to call unavailable tool 'web_search'. Available tools: read_files, search_codebase, run_commands, editor, ask_question.\"}"}
+{"type":"cline-message","message":"Spawning an agent.","action":"Spawning an agent."}
+{"type":"cline-message","message":"Searching the web.","action":"Searching the web."}

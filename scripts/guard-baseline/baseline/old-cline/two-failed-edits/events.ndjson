@@ -1,0 +1,5 @@
+{"type":"cline-message","message":"Editing without reading first.","action":"Editing without reading first."}
+{"type":"cline-file-modified","path":"{WS}/src/alpha.ts","action":"Editing {WS}/src/alpha.ts"}
+{"type":"cline-tool-failed","tool":"editor","message":"{\"error\":\"Fresh read required: use read_files on the intended edit range; file is unread or changed since read.\"}","action":"editor failed: {\"error\":\"Fresh read required: use read_files on the intended edit range; file is unread or changed since read.\"}"}
+{"type":"cline-message","message":"Trying a different replacement.","action":"Trying a different replacement."}
+{"type":"cline-message","message":"Trying a different replacement.","action":"Trying a different replacement."}

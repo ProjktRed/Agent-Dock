@@ -1,0 +1,134 @@
+{
+  "covers": [
+    "edit inside allowedPaths",
+    "approved qaCommand",
+    "read_files then in-range replacement",
+    "final completion"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "editFailures": [
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "7eaaf993b4f61579819c8cf5bdfadcdb9bc87722b58ec0dda4b64283c42f0ae9",
+        "id": "call_in-scope-edit-approved-command-complete_3_0",
+        "input": {
+          "new_text": "export const ALPHA_VERSION = 2;",
+          "old_text": "export const ALPHA_VERSION = 1;",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "failedEdits": 1,
+    "invalidToolCalls": 1,
+    "lastRejection": {
+      "commands": null,
+      "path": null,
+      "tool": "submit_and_exit"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ],
+    "reason": null,
+    "runtimeReady": true,
+    "stopped": false,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [
+      {
+        "error": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+        "excerpt": "1 | export const ALPHA_VERSION = 1;\n2 | export function alpha(): string {\n3 |   return \"alpha\";\n4 | }\n5 | ",
+        "fingerprint": "7eaaf993b4f61579819c8cf5bdfadcdb9bc87722b58ec0dda4b64283c42f0ae9",
+        "id": "call_in-scope-edit-approved-command-complete_3_0",
+        "input": {
+          "new_text": "export const ALPHA_VERSION = 2;",
+          "old_text": "export const ALPHA_VERSION = 1;",
+          "path": "{WS}/src/alpha.ts"
+        },
+        "inputTruncated": false,
+        "stage": "before-execution",
+        "tool": "editor"
+      }
+    ],
+    "lastRejection": {
+      "commands": null,
+      "path": null,
+      "tool": "submit_and_exit"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ]
+  },
+  "reasons": [
+    {
+      "raw": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "reason": "Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "cancelMessage": "Cline editing guard: Fresh read required: use read_files on the intended edit range; file is unread or changed since read.",
+      "canRecoverOperational": false
+    }
+  ]
+}

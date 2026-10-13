@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "taskId": "guard-baseline",
+  "workspace": "{WS}",
+  "allowedPaths": [
+    "src/alpha.ts",
+    "src/inscope/"
+  ],
+  "approvedCommands": [
+    "npm run check",
+    "npm run lint",
+    "npm run typecheck",
+    "git diff --check",
+    "npx prettier --check src/alpha.ts",
+    "npx prettier --write src/alpha.ts"
+  ],
+  "commandChoices": [
+    "npm run check",
+    "npm.cmd run check",
+    "npm run lint",
+    "npm.cmd run lint",
+    "npm run typecheck",
+    "npm.cmd run typecheck",
+    "git diff --check",
+    "npx prettier --check src/alpha.ts",
+    "npx.cmd prettier --check src/alpha.ts",
+    "npx prettier --write src/alpha.ts",
+    "npx.cmd prettier --write src/alpha.ts",
+    "git status --short",
+    "git diff --stat",
+    "git diff --numstat",
+    "git diff --name-only",
+    "git rev-parse HEAD",
+    "git diff -- src/alpha.ts",
+    "git ls-files -- src/alpha.ts",
+    "git show HEAD:src/alpha.ts",
+    "git diff -- src/inscope/",
+    "git ls-files -- src/inscope/",
+    "git show HEAD:src/inscope/"
+  ],
+  "runtimeReady": true,
+  "invalidToolCalls": 0,
+  "failedEdits": 0,
+  "stopped": true,
+  "reason": "command is not approved validation/read-only inspection; use native editing tools, not shell writes",
+  "nativeTools": [
+    "read_files",
+    "search_codebase",
+    "run_commands",
+    "editor",
+    "ask_question"
+  ],
+  "lastRejection": {
+    "tool": "run_commands",
+    "path": null,
+    "commands": "{\"commands\":[\"npx prettier --write src/beta.ts\"]}"
+  }
+}

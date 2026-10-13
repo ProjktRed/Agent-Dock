@@ -1,0 +1,100 @@
+{
+  "covers": [
+    "an unregistered tool with an out-of-scope path reaching beforeTool (cline-tool-guard.mjs:86)"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "failedEdits": 0,
+    "invalidToolCalls": 0,
+    "lastRejection": {
+      "commands": null,
+      "path": "{WS}/src/beta.ts",
+      "tool": "write_to_file"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ],
+    "reason": "unapproved tool path is outside approved scope",
+    "runtimeReady": true,
+    "stopped": true,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [],
+    "lastRejection": {
+      "commands": null,
+      "path": "{WS}/src/beta.ts",
+      "tool": "write_to_file"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ]
+  },
+  "reasons": [
+    {
+      "raw": "unapproved tool path is outside approved scope",
+      "reason": "unapproved tool path is outside approved scope",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: unapproved tool path is outside approved scope",
+      "cancelMessage": "Cline editing guard: unapproved tool path is outside approved scope",
+      "canRecoverOperational": false
+    }
+  ]
+}

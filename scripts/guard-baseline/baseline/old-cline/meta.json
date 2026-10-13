@@ -1,0 +1,48 @@
+{
+  "tier": "B",
+  "impl": "old",
+  "guardModule": "engine/src/cline-tool-guard.mjs",
+  "cases": [
+    {
+      "name": "in-scope-edit-approved-command-complete",
+      "kind": "cline",
+      "events": 13
+    },
+    {
+      "name": "out-of-scope-edit",
+      "kind": "cline",
+      "events": 2
+    },
+    {
+      "name": "unsafe-command",
+      "kind": "cline",
+      "events": 2
+    },
+    {
+      "name": "unapproved-command",
+      "kind": "cline",
+      "events": 8
+    },
+    {
+      "name": "unknown-tool",
+      "kind": "cline",
+      "events": 8
+    },
+    {
+      "name": "two-failed-edits",
+      "kind": "cline",
+      "events": 5
+    },
+    {
+      "name": "prettier-write-in-scope",
+      "kind": "cline",
+      "events": 4
+    },
+    {
+      "name": "prettier-write-out-of-scope",
+      "kind": "cline",
+      "events": 2
+    }
+  ],
+  "clineVersion": "3.0.70"
+}

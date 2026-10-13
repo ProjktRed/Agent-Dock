@@ -1,0 +1,100 @@
+{
+  "covers": [
+    "unapproved command (soft reject, three strikes)"
+  ],
+  "guardOutcome": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "commandChoices": [
+      "npm run check",
+      "npm.cmd run check",
+      "npm run lint",
+      "npm.cmd run lint",
+      "npm run typecheck",
+      "npm.cmd run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx.cmd prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts",
+      "npx.cmd prettier --write src/alpha.ts",
+      "git status --short",
+      "git diff --stat",
+      "git diff --numstat",
+      "git diff --name-only",
+      "git rev-parse HEAD",
+      "git diff -- src/alpha.ts",
+      "git ls-files -- src/alpha.ts",
+      "git show HEAD:src/alpha.ts",
+      "git diff -- src/inscope/",
+      "git ls-files -- src/inscope/",
+      "git show HEAD:src/inscope/"
+    ],
+    "failedEdits": 0,
+    "invalidToolCalls": 3,
+    "lastRejection": {
+      "commands": "{\"commands\":[\"npm run ship\"]}",
+      "path": null,
+      "tool": "run_commands"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ],
+    "reason": "three invalid tool requests; preserve the diff and reassess",
+    "runtimeReady": true,
+    "stopped": true,
+    "taskId": "guard-baseline",
+    "version": 1,
+    "workspace": "{WS}"
+  },
+  "workerCapabilities": {
+    "allowedPaths": [
+      "src/alpha.ts",
+      "src/inscope/"
+    ],
+    "approvedCommands": [
+      "npm run check",
+      "npm run lint",
+      "npm run typecheck",
+      "git diff --check",
+      "npx prettier --check src/alpha.ts",
+      "npx prettier --write src/alpha.ts"
+    ],
+    "editFailures": [],
+    "lastRejection": {
+      "commands": "{\"commands\":[\"npm run ship\"]}",
+      "path": null,
+      "tool": "run_commands"
+    },
+    "nativeTools": [
+      "read_files",
+      "search_codebase",
+      "run_commands",
+      "editor",
+      "ask_question"
+    ]
+  },
+  "reasons": [
+    {
+      "raw": "three invalid tool requests; preserve the diff and reassess",
+      "reason": "three invalid tool requests; preserve the diff and reassess",
+      "hadCancelPrefix": false,
+      "stopMessage": "Cline editing guard stopped attempt: three invalid tool requests; preserve the diff and reassess",
+      "cancelMessage": "Cline editing guard: three invalid tool requests; preserve the diff and reassess",
+      "canRecoverOperational": false
+    }
+  ]
+}
