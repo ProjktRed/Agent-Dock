@@ -107,13 +107,13 @@ export const REASONS = [
   // consistent with itself. Asserting the literal in the worker is what makes an edit to
   // cline-cli-worker.mjs:564 fail the inventory.
   { id: "stop-message", source: "cline-cli-worker.mjs:564", how: "source-literal", kind: "compose",
-    file: "engine/src/cline-cli-worker.mjs",
+    file: "engine/src/guard/reasons.mjs",
     text: STOP_MESSAGE_PREFIX },
   { id: "runtime-not-ready", source: "cline-cli-worker.mjs:435", how: "source-literal", kind: "throw",
-    file: "engine/src/cline-cli-worker.mjs",
+    file: "engine/src/guard/reasons.mjs",
     text: "Cline tool restriction plugin did not initialize; guarded completion refused" },
   { id: "attempt-not-completed", source: "cline-cli-worker.mjs:567", how: "source-literal", kind: "throw",
-    file: "engine/src/cline-cli-worker.mjs",
+    file: "engine/src/guard/reasons.mjs",
     text: "Guarded Cline attempt did not complete: " },
 
   // ── engine/src/codex-scope-guard.mjs — the Codex rail. Deliberately NOT recoverable. ───────
@@ -130,7 +130,7 @@ export const REASONS = [
   { id: "codex-hook-error", source: "codex-scope-hook.mjs:20", how: "recorded", kind: "codex-deny",
     text: "Scope hook could not check this call (" },
   { id: "codex-fail-closed", source: "cloud-impl-worker.mjs:167", how: "source-literal", kind: "throw",
-    file: "engine/src/cloud-impl-worker.mjs",
+    file: "engine/src/guard/reasons.mjs",
     text: "Codex ran tools without the scope hook (hooks disabled or not loaded); the attempt is refused. Check that Codex hooks are enabled (codex features list)." },
 ];
 

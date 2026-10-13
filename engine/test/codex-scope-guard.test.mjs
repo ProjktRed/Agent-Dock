@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { checkToolUse, patchPaths, shellAllowed, shellScript } from '../src/codex-scope-guard.mjs';
+import { checkToolUse, patchPaths, shellAllowed, shellScript } from '../src/guard/adapters/codex.mjs';
 
 const workspace = path.resolve('/repo');
 const policy = { workspace, allowedPaths: ['src/x.js', 'test/x.test.js'], qaCommand: 'npx vitest run test/x.test.js', toolGuard: true };

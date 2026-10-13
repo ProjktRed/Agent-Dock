@@ -4,7 +4,8 @@ import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
-import { prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./cline-tool-guard.mjs";
+import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
+import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -368,6 +369,7 @@ export function buildClineArgs({
   dataDir,
   configDir,
   hooksDir,
+  guardLaunchArgs,
   prompt,
   thinking = "none",
 }) {
@@ -391,9 +393,12 @@ export function buildClineArgs({
     "--timeout",
     String(timeoutSeconds),
   ];
-  if (dataDir) args.push("--data-dir", dataDir);
-  if (configDir) args.push("--config", configDir);
-  if (hooksDir) args.push("--hooks-dir", hooksDir);
+  if (guardLaunchArgs) args.push(...guardLaunchArgs);
+  else {
+    if (dataDir) args.push("--data-dir", dataDir);
+    if (configDir) args.push("--config", configDir);
+    if (hooksDir) args.push("--hooks-dir", hooksDir);
+  }
   args.push(prompt);
   return args;
 }
@@ -413,10 +418,16 @@ export async function launchCline({
   onEvent,
   guardPolicyPath,
   guardPluginPath,
+  guardLaunchArgs,
+  guardEnv,
+  guardVerify,
   thinking,
 }) {
   await access(clineJs, constants.R_OK);
-  if (guardPolicyPath) await verifyRestrictedTools({ pluginPath: guardPluginPath });
+  const guardLaunch = guardPolicyPath
+    ? clineGuard.launchConfiguration({ configDir, hooksDir, dataDir, pluginPath: guardPluginPath })
+    : null;
+  if (guardPolicyPath) await (guardVerify ?? guardLaunch?.verify ?? (() => verifyRestrictedTools({ pluginPath: guardPluginPath })))();
   const args = buildClineArgs({
     clineJs,
     workspace,
@@ -426,13 +437,14 @@ export async function launchCline({
     dataDir,
     configDir,
     hooksDir,
+    guardLaunchArgs: guardLaunchArgs ?? guardLaunch?.launchArgs,
     prompt,
     thinking,
   });
-  const env = guardPolicyPath ? { ...process.env, CLINE_GLOBAL_SETTINGS_PATH: path.join(configDir, "data", "settings", "global-settings.json") } : undefined;
+  const env = guardPolicyPath ? { ...process.env, ...(guardEnv ?? guardLaunch.env) } : undefined;
   const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent });
   if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {
-    throw new Error("Cline tool restriction plugin did not initialize; guarded completion refused");
+    throw new Error(RUNTIME_NOT_READY);
   }
   return result;
 }
@@ -556,15 +568,16 @@ export class ClineCliWorker {
     try {
       const guard = this.toolGuard ? await prepareToolGuard({ stateDir: this.stateDir, workspace: this.options.workspace }) : null;
       if (guard) await verifyRestrictedTools(guard);
-      result = await this.launch({ ...this.options, ...hooks, prompt: prompt + (guard?.instructions ?? ""), ...(guard ? { configDir: guard.configDir, hooksDir: guard.hooksDir, guardPolicyPath: guard.policyPath, guardPluginPath: guard.pluginPath } : {}) });
+      const guardLaunch = guard ? clineGuard.launchConfiguration({ configDir: guard.configDir, hooksDir: guard.hooksDir, dataDir: this.options.dataDir, pluginPath: guard.pluginPath }) : null;
+      result = await this.launch({ ...this.options, ...hooks, prompt: prompt + (guard?.instructions ?? ""), ...(guard ? { configDir: guard.configDir, hooksDir: guard.hooksDir, guardLaunchArgs: guardLaunch.launchArgs, guardEnv: guardLaunch.env, guardVerify: guardLaunch.verify, guardPolicyPath: guard.policyPath, guardPluginPath: guard.pluginPath } : {}) });
       if (guard) {
         const outcome = await readGuardOutcome(guard.policyPath);
         if (outcome.stopped) {
           await onEvent({ type: "cline-guard-stopped", message: outcome.reason });
-          throw new Error(`Cline editing guard stopped attempt: ${outcome.reason}`);
+          throw new Error(stopMessage(clineGuard.label, outcome.reason));
         }
         if (result.runResult?.finishReason !== "completed") {
-          throw new Error(`Guarded Cline attempt did not complete: ${result.runResult?.finishReason ?? "missing final result"}`);
+          throw new Error(ATTEMPT_NOT_COMPLETED + (result.runResult?.finishReason ?? "missing final result"));
         }
       }
       return result;

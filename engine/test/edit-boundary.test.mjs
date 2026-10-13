@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import * as guard from '../src/cline-tool-guard.mjs';
+import * as guard from '../src/guard/adapters/cline.mjs';
 import {buildCorrectionPrompt} from '../src/workflow.mjs';
 import {correctionText} from '../src/recovery-policy.mjs';
 

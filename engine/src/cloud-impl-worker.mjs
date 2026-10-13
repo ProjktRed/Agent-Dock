@@ -2,9 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
 import { detectCodexUsageLimit } from "./codex-worker.mjs";
+import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
+import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
+import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // Cline worker: one exclusive lock, never replayed after an interruption, and every change still
@@ -17,27 +19,7 @@ const IMPLEMENTATION_RULES = [
   "Run the task's check command before finishing, then reply with a short summary of what you changed and the check result.",
 ].join("\n");
 
-const shell = (prefixes) => prefixes.flatMap((p) => [`Bash(${p}:*)`, `PowerShell(${p}:*)`]);
-const GIT_READ = ["git status", "git diff", "git log", "git show", "git rev-parse", "git ls-files"];
-const GIT_WRITE = ["git commit", "git add", "git reset", "git checkout", "git switch", "git restore", "git stash", "git rebase", "git merge", "git push", "git tag", "git branch -d", "git branch -D", "git config"];
-const CHECKS = ["npm test", "npm run test", "npm run typecheck", "npm run lint", "npx tsc", "npx eslint", "npx prettier"];
-
-/**
- * Claude Code tool rules. File tools are always limited to the task's paths (dontAsk denies the
- * rest while Claude runs). Tool guard on: shell limited to the task's checks and read-only git.
- */
-export function claudeImplementationTools({ task, toolGuard }) {
-  const qa = task?.qaCommand?.trim();
-  const paths = (task?.allowedPaths ?? []).map((p) => "./" + p.replaceAll("\\", "/").replace(/^\.\//, ""));
-  const fileTools = ["Read", "Grep", "Glob", ...paths.flatMap((p) => [`Edit(${p})`, `Write(${p})`])];
-  const allowed = toolGuard
-    ? [...fileTools, ...shell([...GIT_READ, ...CHECKS, ...(qa ? [qa] : [])])]
-    : [...fileTools, "Bash", "PowerShell"];
-  const disallowed = ["Agent", "WebFetch", "WebSearch", "NotebookEdit", ...shell(GIT_WRITE)];
-  return { allowed, disallowed };
-}
-
-const HOOK_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "codex-scope-hook.mjs");
+export { claudeImplementationTools };
 
 /**
  * The Codex PreToolUse hook (codex-scope-hook.mjs) that keeps Codex inside the task's paths while
@@ -46,11 +28,7 @@ const HOOK_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "cod
  * --dangerously-bypass-hook-trust ("automation that already vets hook sources"). Approved by the
  * user for this use.
  */
-export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile }) {
-  const command = [nodePath, hookScript, policyFile, logFile].map((p) => `"${p}"`).join(" ");
-  // JSON string syntax is a valid TOML basic string.
-  return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`];
-}
+export { codexScopeHookArgs };
 
 /** Codex used a tool (patch, shell, MCP) according to its --json events. */
 export function codexUsedTools(stdout) {
@@ -67,12 +45,8 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       // Same sandbox as Codex QA (workspace writes, approvals reviewed automatically); the scope hook limits changes to the task.
       "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
-  const tools = claudeImplementationTools({ task, toolGuard });
-  return [...prefixArgs, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-    "--permission-mode", "dontAsk",
-    ...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : []),
-    ...(fast ? ["--settings", JSON.stringify({ fastMode: true })] : []),
-    "--allowedTools", ...tools.allowed, "--disallowedTools", ...tools.disallowed];
+  const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast });
+  return [...prefixArgs, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", ...launchArgs];
 }
 
 function killTree(child) {
@@ -142,7 +116,7 @@ export class CloudImplementationWorker {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
       const policyFile = path.join(invocation, "scope-policy.json");
       await writeFile(policyFile, JSON.stringify({ workspace: this.workspace, allowedPaths: hooks.task.allowedPaths, qaCommand: hooks.task.qaCommand ?? "", toolGuard: this.toolGuard }));
-      hookArgs = codexScopeHookArgs({ policyFile, logFile: hookLog });
+      hookArgs = codexAdapter.install({ policyFile, logFile: hookLog }).launchArgs;
     }
     const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
@@ -164,7 +138,7 @@ export class CloudImplementationWorker {
       const decisions = (await readFile(hookLog, "utf8").catch(() => "")).split(/\r?\n/).filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
       for (const blocked of decisions.filter((d) => !d.allowed)) await onEvent({ type: "implementation-scope-blocked", tool: blocked.tool, reason: blocked.reason });
       // Fail closed: tool use without a single hook decision means the scope hook did not run.
-      if (codexUsedTools(stdout) && !decisions.length) throw new Error("Codex ran tools without the scope hook (hooks disabled or not loaded); the attempt is refused. Check that Codex hooks are enabled (codex features list).");
+      if (codexUsedTools(stdout) && !decisions.length) throw new Error(CODEX_FAIL_CLOSED);
       const limit = detectCodexUsageLimit(stdout + "\n" + stderr);
       if (limit) throw new Error(`Implementation stopped by the Codex usage limit: ${limit.message}`);
       summary = await readFile(outputFile, "utf8").catch(() => "");

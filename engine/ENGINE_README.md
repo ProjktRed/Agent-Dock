@@ -80,6 +80,9 @@ node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" 
 Default is `--implementation-cli cline` (Cline + local model, unchanged). With `codex` or
 `claude` the implementation worker is `src/cloud-impl-worker.mjs`:
 
+Codex and Claude enforcement are adapters of the shared `src/guard/` layer;
+Codex keeps its per-call hook and Claude keeps its argv-only permission lists.
+
 - `--implementation-model`, `--implementation-effort`, `--implementation-fast` and
   `--timeout-seconds` apply; the Cline runtime (llama.cpp start, provider checks) is skipped.
 - Claude Code: `claude -p --permission-mode dontAsk`; `Edit`/`Write` are allowed only for the
@@ -88,7 +91,7 @@ Default is `--implementation-cli cline` (Cline + local model, unchanged). With `
   always denied.
 - Codex: `codex exec --approve-for-me` (the workspace-write sandbox QA uses) plus a `PreToolUse`
   hook passed with `-c hooks.PreToolUse=…` and `--dangerously-bypass-hook-trust` (the engine writes
-  the hook itself for every run). `src/codex-scope-hook.mjs` applies `src/codex-scope-guard.mjs`:
+  the hook itself for every run). `src/codex-scope-hook.mjs` runs the `src/guard/adapters/codex.mjs` adapter:
   patches may only add, update, delete or move the task's `allowedPaths` (also with the tool guard
   off); with `--tool-guard true` shell commands are limited to the task's check, lint/typecheck and
   read-only commands, and MCP tools are denied. Decisions go to `<state>/codex/<id>/scope-hook.ndjson`
@@ -258,12 +261,14 @@ Phase expansion is client-side and survives polling.
 
 ## Verification commands
 
-### Cline editing guard
+### Worker tool guard
 
 Normal and Elevate-driven Cline attempts install automation-owned `PreToolUse`
 and `PostToolUse` hooks under `<state-dir>/cline-guard/config/hooks`. The CLI
 receives that isolated `--config` directory and retains its existing provider
-`--data-dir`; no global Cline installation/settings are changed.
+`--data-dir`; no global Cline installation/settings are changed. Guard policy,
+state, decisions and edit discipline live in the backend-agnostic `src/guard/`
+layer, with a Cline adapter translating its tools and hook controls.
 
 Each guarded attempt also generates a small SDK plugin in that isolated config.
 `disabledTools` hides unrelated tools; before every model request the plugin

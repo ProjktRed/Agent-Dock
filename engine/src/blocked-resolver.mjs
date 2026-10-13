@@ -10,13 +10,15 @@ import {collectGitEvidence} from './qa-packet.mjs';
 import {recoveryFingerprint,unsafeCauses} from './recovery-policy.mjs';
 import {readPendingCodex,runRecoverableCodex} from './node-loop.mjs';
 import {parseRecoveryResult} from './codex-worker.mjs';
-import {readWorkerCapabilities} from './cline-tool-guard.mjs';
+import {readWorkerCapabilities} from './guard/state.mjs';
+import {OPERATIONALLY_RECOVERABLE_PREFIXES} from './guard/reasons.mjs';
 
 const exec=promisify(execFile);
 const git=async(workspace,...args)=>(await exec('git',args,{cwd:workspace,windowsHide:true})).stdout.trim();
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const scratchName=p=>typeof p==='string'&&/^(?:fix[\w-]*\.ps1|temp[\w-]*\.(?:txt|ps1)|[\w-]+\.tmp)$/i.test(p);
 const hash=data=>createHash('sha256').update(data).digest('hex');
+const escapeRegExp=value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const isUntracked=async(workspace,p)=>(await git(workspace,'ls-files','--others','--exclude-standard','--',p)).split(/\r?\n/).includes(p);
 async function fileHash(workspace,p){
  if(!scratchName(p))return null;
@@ -73,8 +75,10 @@ export async function loadResolverCase(stateDir){
  return input;
 }
 export function canRecoverOperational(input){
+ const labelAlternation=['Cline'];
+ const labelPattern=labelAlternation.length===1?escapeRegExp(labelAlternation[0]):`(?:${labelAlternation.map(escapeRegExp).join('|')})`;
  return input.headMatches===true&&input.unexpectedPaths?.length===0&&input.currentDiff?.truncated!==true&&!unsafeCauses.has(input.failure?.cause)&&
-  /^Cline editing guard stopped attempt: (?:command is not approved|unknown or unapproved tool:|two consecutive native edit failures)/.test(input.failure?.reason??'');
+  new RegExp(`^${labelPattern} editing guard stopped attempt: (?:${OPERATIONALLY_RECOVERABLE_PREFIXES.map(escapeRegExp).join('|')})`).test(input.failure?.reason??'');
 }
 export function resolverAvailability({live,input}){
  if(live?.stage!=='BLOCKED'||!input?.task||!input?.qaPacket)return{available:false,reason:'No complete blocked case'};

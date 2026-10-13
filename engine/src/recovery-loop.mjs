@@ -1,6 +1,6 @@
 import path from 'node:path';
 import {appendFile,readFile,rm} from 'node:fs/promises';
-import {readWorkerCapabilities} from './cline-tool-guard.mjs';
+import {readWorkerCapabilities} from './guard/state.mjs';
 import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {captureGitBaseline} from './qa-runner.mjs';

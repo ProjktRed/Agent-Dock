@@ -4,7 +4,7 @@ import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import * as guard from '../src/cline-tool-guard.mjs';
+import * as guard from '../src/guard/adapters/cline.mjs';
 import {ClineCliWorker,launchCline} from '../src/cline-cli-worker.mjs';
 
 async function setup(t){
