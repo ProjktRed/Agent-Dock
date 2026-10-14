@@ -508,7 +508,10 @@ function registerIpc() {
   handle("shell:open", async (target: string) => {
     const roots = [
       ...store.data.projects.flatMap((p) => [p.path, p.stateDir]),
-      path.join(engineDir, "skills"),
+      // The Settings › Advanced folders: engine, configuration and app-managed project state.
+      engineDir,
+      store.dir,
+      stateRoot,
       ...store.data.settings.skills.importedDirs,
       rolesDir,
     ];

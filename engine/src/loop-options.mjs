@@ -1,4 +1,5 @@
 import { parseTuning } from "./engine-tuning.mjs";
+import { registerSecretEnv } from "./secret-env.mjs";
 
 export const DEFAULT_CLINE_CONTEXT_TOKENS = 98_304;
 // Measured on a consumer GPU with RAM offload (--fit): fits; ~48 tok/s gen at 24K prompt, ~17 tok/s at 68K.
@@ -77,6 +78,7 @@ export function parseLoopOptions(argv) {
   if (provider === "openai" && !options["provider-base-url"]) throw new Error("--provider-base-url is required for --provider openai");
   const providerApiKeyEnv = options["provider-api-key-env"] ?? "AGENT_DOCK_PROVIDER_KEY";
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(providerApiKeyEnv)) throw new Error("--provider-api-key-env must be a valid environment variable name");
+  registerSecretEnv(providerApiKeyEnv);
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;
   const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : provider === "openrouter" ? "z-ai/glm-5.3-flash" : DEFAULT_OLLAMA_MODEL;
   return {

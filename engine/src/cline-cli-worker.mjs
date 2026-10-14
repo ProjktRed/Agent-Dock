@@ -6,6 +6,7 @@ import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -445,9 +446,9 @@ export async function launchCline({
     prompt,
     thinking,
   });
-  const env = guardPolicyPath || launchEnv
-    ? { ...process.env, ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) }
-    : undefined;
+  // Cline may need a cloud provider key (launchEnv adds the renamed one; a custom OPENROUTER_API_KEY /
+  // OPENAI_API_KEY is inherited), never the orchestrator CLIs' keys or the app's own variable.
+  const env = { ...withoutSecrets(process.env, { keep: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"] }), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
   const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent, redactValues });
   if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {

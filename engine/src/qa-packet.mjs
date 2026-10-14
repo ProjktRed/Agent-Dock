@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { atomicWriteJson } from "./dashboard-state.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
@@ -74,7 +75,7 @@ function runShellCommand(command, cwd) {
     const executable = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
     const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-c", command];
     const child = spawn(executable, args, {
-      cwd, env: { ...process.env, CODEX_QA: "1" }, windowsHide: true,
+      cwd, env: { ...withoutSecrets(), CODEX_QA: "1" }, windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

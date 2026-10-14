@@ -5,6 +5,7 @@ import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, taskSizingText } from "./engine-tuning.mjs";
+import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -253,7 +254,7 @@ export class CodexWorker {
     let output = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: withoutSecrets(process.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
         let registered = false;
         let closed = false;
         let closeCode = 1;

@@ -8,7 +8,7 @@ import { parseImplementationPlan } from "../src/main/lib/plan";
 import { buildStatus, cycleStage, deriveRunState } from "../src/main/lib/status";
 import { agentForRole, buildEngineArgs } from "../src/main/lib/engine-args";
 import { classifyPrompt, countCompactions, implementationUsage, parseInvocationUsage } from "../src/main/lib/usage";
-import { parsePorcelain } from "../src/main/lib/git";
+import { gitCommonDir, parsePorcelain } from "../src/main/lib/git";
 import { firstVersion, pickRunnable } from "../src/main/lib/clis";
 import { parseSkillFile } from "../src/main/skills";
 import { canOpenPath, isExternalWebUrl } from "../src/main/lib/safe-open";
@@ -458,5 +458,27 @@ describe("safe open", () => {
     expect(isExternalWebUrl("file:///C:/Windows/System32/calc.exe")).toBe(false);
     expect(isExternalWebUrl("ms-settings:")).toBe(false);
     expect(isExternalWebUrl("not a url")).toBe(false);
+  });
+});
+
+describe("shared .git folder", () => {
+  it("finds it without git: plain repository, subfolder and linked worktree", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const os = await import("node:os");
+    const root = mkdtempSync(path.join(os.tmpdir(), "gitdir-"));
+    try {
+      const repo = path.join(root, "repo");
+      mkdirSync(path.join(repo, ".git", "worktrees", "wt"), { recursive: true });
+      mkdirSync(path.join(repo, "src"));
+      writeFileSync(path.join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
+      const wt = path.join(root, "wt");
+      mkdirSync(wt);
+      writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(repo, ".git", "worktrees", "wt")}\n`);
+      expect(gitCommonDir(repo)).toBe(path.join(repo, ".git"));
+      expect(gitCommonDir(path.join(repo, "src"))).toBe(path.join(repo, ".git"));
+      expect(gitCommonDir(wt)).toBe(path.join(repo, ".git"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

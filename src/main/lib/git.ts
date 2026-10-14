@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { GitInfo } from "@shared/types";
 
@@ -73,13 +73,33 @@ export interface GitOwnerProblem {
  * Codex's sandbox must change that folder's permissions to allow it, which only its owner can.
  * Owners are compared by SID.
  */
+/**
+ * The repository's shared .git folder for a project folder, found the way git does: the nearest
+ * .git folder, or a .git file ("gitdir: ...") whose folder names the shared one in "commondir".
+ */
+export function gitCommonDir(projectPath: string): string | null {
+  for (let dir = path.resolve(projectPath); ; dir = path.dirname(dir)) {
+    const dotGit = path.join(dir, ".git");
+    try {
+      if (statSync(dotGit).isDirectory()) return dotGit;
+      const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+      if (!gitdir) return null;
+      const worktreeDir = path.resolve(dir, gitdir);
+      const common = path.join(worktreeDir, "commondir");
+      return existsSync(common) ? path.resolve(worktreeDir, readFileSync(common, "utf8").trim()) : worktreeDir;
+    } catch {
+      // no .git here: look in the parent folder
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+}
+
 export async function sharedGitOwnerProblem(projectPath: string): Promise<GitOwnerProblem | null> {
   if (process.platform !== "win32") return null;
-  // safe.directory=*: a foreign owner makes git refuse the repository ("dubious ownership"),
-  // which is exactly the case this has to report. The query only reads the path.
-  const common = await run("git", ["-c", "safe.directory=*", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: projectPath, timeoutMs: 5000 });
-  if (common.code !== 0 || !common.stdout.trim()) return null;
-  const dir = path.resolve(projectPath, common.stdout.trim());
+  // Read from disk, not through git: a foreign owner makes git refuse the repository ("dubious
+  // ownership"), which is exactly the case this has to report, and git's own check stays on.
+  const dir = gitCommonDir(projectPath);
+  if (!dir) return null;
   const script = [
     `$acl = Get-Acl -LiteralPath '${dir.replace(/'/g, "''")}'`,
     "$me = [System.Security.Principal.WindowsIdentity]::GetCurrent()",

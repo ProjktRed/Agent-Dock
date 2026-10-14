@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
+import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -27,7 +28,7 @@ const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]
 
 /** Child sessions must not inherit the launching Claude session's host/session wiring. */
 export function claudeChildEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
+  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
 }
 
 export function relabelPrompt(prompt) {

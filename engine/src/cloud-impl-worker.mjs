@@ -7,6 +7,7 @@ import { detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
 import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
+import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // Cline worker: one exclusive lock, never replayed after an interruption, and every change still
@@ -68,7 +69,7 @@ export class CloudImplementationWorker {
     this.fast = fast;
     this.timeoutMs = timeoutSeconds * 1000;
     this.toolGuard = toolGuard;
-    this.env = cli === "claude" ? claudeChildEnv(env) : env;
+    this.env = cli === "claude" ? claudeChildEnv(env) : withoutSecrets(env, { keep: CODEX_AUTH_ENV });
     this.spawnProcess = spawnProcess;
     // Same lock file as the Cline worker: one implementation at a time per state folder.
     this.lockPath = path.join(this.stateDir, "cline.busy.lock");
