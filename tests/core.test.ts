@@ -5,7 +5,7 @@ import { parseLlamaSlots } from "../src/main/local-models";
 import { isHiddenEvent } from "../src/renderer/src/lib/events";
 import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
-import { buildStatus, cycleStage, deriveRunState } from "../src/main/lib/status";
+import { buildStatus, cycleStage, deriveRunState, interruptedWork } from "../src/main/lib/status";
 import { agentForRole, buildEngineArgs } from "../src/main/lib/engine-args";
 import { classifyPrompt, countCompactions, implementationUsage, parseInvocationUsage } from "../src/main/lib/usage";
 import { gitCommonDir, parsePorcelain } from "../src/main/lib/git";
@@ -480,5 +480,23 @@ describe("shared .git folder", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("restart notice", () => {
+  const status = (types: string[], extra: Partial<{ processAlive: boolean; runState: string }> = {}) =>
+    ({ processAlive: false, runState: "idle", events: types.map((type) => ({ type, timestamp: "" })), ...extra }) as never;
+  it("names the step the engine died in", () => {
+    expect(interruptedWork(status(["qa-pass", "codex-assessing"]))).toBe("Assessment");
+    expect(interruptedWork(status(["codex-assessing", "codex-finished", "task-loaded", "cline-started"]))).toBe("Implementation");
+    expect(interruptedWork(status(["cline-started", "cline-finished", "qa-evidence-started", "qa-evidence-finished", "codex-qa-started"]))).toBe("QA");
+  });
+  it("stays quiet when the engine rests, stopped on purpose or is still running", () => {
+    expect(interruptedWork(status(["codex-qa-started", "codex-qa-finished", "qa-pass", "codex-assessing", "codex-finished", "loop-complete"]))).toBeNull();
+    expect(interruptedWork(status(["codex-qa-started", "codex-qa-finished", "qa-pass"]))).toBeNull();
+    expect(interruptedWork(status(["codex-assessing", "stopped"]))).toBeNull();
+    expect(interruptedWork(status(["cline-started"], { processAlive: true }))).toBeNull();
+    expect(interruptedWork(status(["cline-started"], { runState: "paused" }))).toBeNull();
+    expect(interruptedWork(status([]))).toBeNull();
   });
 });

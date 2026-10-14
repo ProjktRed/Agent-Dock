@@ -149,6 +149,8 @@ export class EngineManager {
         try { process.kill(-running.pid, "SIGKILL"); } catch { /* already gone */ }
       }
       this.alive.delete(project.id);
+      // The killed engine writes nothing; record the stop so it is not taken for an interruption.
+      await (await this.state(project)).record({ type: "stopped", reason: "stop-now" }).catch(() => undefined);
       return;
     }
     if (action === "stop-after-task") {

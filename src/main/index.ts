@@ -17,6 +17,7 @@ import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
+import { interruptedWork } from "./lib/status";
 import { Updater } from "./updater";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
@@ -537,14 +538,13 @@ async function resumeAfterRestart() {
   const mode = store.data.settings.workflow.resumeAfterRestart;
   for (const p of store.data.projects.filter((x) => !x.archived)) {
     const status = await engine.status(p).catch(() => null);
-    if (!status || status.processAlive) continue;
-    const midRun = ["running", "pausing", "stopping"].includes(status.runState) || ["current-task", "cline-working", "cline-complete", "codex-qa", "retry"].includes(status.stage);
-    if (!midRun) continue;
+    const interrupted = status ? interruptedWork(status) : null;
+    if (!interrupted) continue;
     if (mode === "auto") {
       await engine.control(p, "resume", await launchArgs(p), providerEnv(p)).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
     } else if (mode === "ask") {
       // A notice, not a dialog: nothing blocks the launch; Resume on the project continues.
-      notice({ kind: "warning", message: `${p.name} was mid-task when the engine stopped (stage: ${status.stage}). Press Resume to continue from the saved state.` });
+      notice({ kind: "warning", message: `${p.name}: the engine stopped during ${interrupted}. Press Resume to continue from the saved state.` });
     }
   }
 }

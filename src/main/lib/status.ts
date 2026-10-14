@@ -128,3 +128,35 @@ export function buildStatus(args: {
     updatedAt: live?.updatedAt ?? null,
   };
 }
+
+/** Engine steps by their start and finish events, named for the restart notice. */
+const STEPS: [start: string, finish: string[], name: string][] = [
+  ["codex-assessing", ["codex-finished"], "Assessment"],
+  ["cline-started", ["cline-finished"], "Implementation"],
+  ["qa-evidence-started", ["qa-evidence-finished"], "collecting check results"],
+  ["codex-qa-started", ["codex-qa-finished"], "QA"],
+  ["resolver-started", ["resolver-finished"], "the Resolver"],
+  ["sol-reassessment-started", ["sol-reassessment-finished"], "Elevation"],
+  ["role-started", ["role-result", "role-error"], "a workflow role"],
+];
+/** Events after which the engine has stopped on purpose or waits for the user. */
+const RESTING = new Set(["stopped", "paused", "loop-complete", "blocked", "user-attention", "correction-limit", "waiting-for-codex", "codex-usage-limit"]);
+
+/**
+ * Whether a project's engine stopped in the middle of its work (crash, reboot, killed process),
+ * as opposed to stopping on purpose or resting between tasks. Returns what was interrupted, or
+ * null. Decided from the activity log, not the stage: the stage stays "current-task" while the
+ * engine rests after an approved task.
+ */
+export function interruptedWork(status: Pick<ProjectStatus, "processAlive" | "runState" | "events">): string | null {
+  if (status.processAlive || ["paused", "stopped", "blocked", "attention", "waiting-limit", "complete"].includes(status.runState)) return null;
+  const open = new Map<string, string>();
+  for (const e of status.events) {
+    if (RESTING.has(e.type)) open.clear();
+    for (const [start, finish, name] of STEPS) {
+      if (e.type === start) open.set(start, name);
+      else if (finish.includes(e.type)) open.delete(start);
+    }
+  }
+  return [...open.values()].pop() ?? null;
+}
