@@ -7,7 +7,7 @@ import {constants} from 'node:fs';
 import path from 'node:path';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {collectGitEvidence} from './qa-packet.mjs';
-import {recoveryFingerprint,unsafeCauses} from './recovery-policy.mjs';
+import {compactCorrections,packetForPrompt,recoveryFingerprint,unsafeCauses} from './recovery-policy.mjs';
 import {readPendingCodex,runRecoverableCodex} from './node-loop.mjs';
 import {parseRecoveryResult} from './codex-worker.mjs';
 import {readWorkerCapabilities} from './guard/state.mjs';
@@ -72,6 +72,9 @@ export async function loadResolverCase(stateDir){
   workerCapabilities,
   previousResolverStrategies:r.resolverRecoveries??[]};
  input.fingerprint=recoveryFingerprint(input);
+ // Compacted for the prompt after fingerprinting, so "already resolved" still matches earlier cases.
+ input.qaPacket=packetForPrompt(input.qaPacket);
+ input.correctionHistory=compactCorrections(input.correctionHistory);
  return input;
 }
 export function canRecoverOperational(input){

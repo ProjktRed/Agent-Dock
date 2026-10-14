@@ -8,7 +8,7 @@ import {prepareQaPacket,collectGitEvidence,classifyQaCommand} from './qa-packet.
 import {buildInitialPrompt,buildCorrectionPrompt,describeAllowedPaths} from './workflow.mjs';
 import {readPendingCodex,runRecoverableCodex,validateTask,verifyReview} from './node-loop.mjs';
 import {ELEVATE_MODEL} from './codex-worker.mjs';
-import {correctionText,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
+import {compactCorrections,correctionInstructions,correctionText,packetForPrompt,qaEnvironmentFailure,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
 import {TUNING} from './engine-tuning.mjs';
@@ -240,6 +240,14 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             r.lastAppliedOperationId=op.operationId;
             if(!['pass','fail','recoverable','manual-review','blocked'].includes(r.failure.status))return block('Malformed QA decision');
             if(r.workerResult?.exitCode!==0 && r.failure.status==='pass')return block('QA accepted a failed local worker');
+            // QA could not run its tools while the engine's own checks passed: an environment problem, not
+            // the code. Retry once with fresh evidence; a second time stops for the user (Retry QA after a fix).
+            if(qaEnvironmentFailure(r.failure,r.qaPacket)) {
+              await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
+              const retried=r.qaEnvironmentRetry?.attempt===r.attempt;
+              if(!retried){r.qaEnvironmentRetry={attempt:r.attempt};r.phase='evidence';await save(true);await emit('qa-environment-retry',{attempt:r.attempt,qa:r.failure.output});continue;}
+              return block('QA could not run its commands (an environment problem, not the code): '+String(r.failure.output).split(/\r?\n/)[0].slice(0,300)+' Fix the tool or permission problem, then press Retry QA.');
+            }
             await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
             r.history.push({attempt:r.attempt,prompt:r.prompt,workerResult:r.workerResult,qa:r.failure});
             r.phase='decision';await save(true);
@@ -269,9 +277,9 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           }
           if(['correction-assessment','elevation'].includes(r.phase)) {
             const elevation=r.phase==='elevation';
-            const input={task,acceptanceCriteria:r.qaPacket.acceptanceCriteria,baselineSha:r.baselineSha,currentDiff:r.qaPacket.diff,changedFiles:r.qaPacket.changedFiles,qaPacket:r.qaPacket,
-              latestQaVerdict:r.failure,failure:{reason:r.failure.output,cause:r.failure.manualReviewCause},correctionCount:r.correctionCount,correctionHistory:r.correctionHistory,
-              previousCorrections:r.correctionHistory.map(x=>x.prompt),workerSummaries:r.history.map(x=>({attempt:x.attempt,result:compactWorkerResult(x.workerResult??{})})),assessmentResults:r.assessmentResults??[],
+            const input={task,acceptanceCriteria:r.qaPacket.acceptanceCriteria,baselineSha:r.baselineSha,currentDiff:r.qaPacket.diff,changedFiles:r.qaPacket.changedFiles,qaPacket:packetForPrompt(r.qaPacket),
+              latestQaVerdict:r.failure,failure:{reason:r.failure.output,cause:r.failure.manualReviewCause},correctionCount:r.correctionCount,correctionHistory:compactCorrections(r.correctionHistory),
+              previousCorrections:r.correctionHistory.map(x=>correctionInstructions(x.prompt)),workerSummaries:r.history.map(x=>({attempt:x.attempt,result:compactWorkerResult(x.workerResult??{})})),assessmentResults:r.assessmentResults??[],
               resolverResult:r.resolverResult??null,workerCapabilities:await readWorkerCapabilities(stateDir,/^OpenCode editing guard stopped attempt: /.test(r.failure.output??'')?'opencode-guard':'cline-guard')??r.resolverCapabilities??null,
               verifiedKnowledge:await selectKnowledge(knowledgeFile,task.prompt+' '+r.failure.output)};
             const op=await operation(elevation?'elevate':'correction-assessment',input,elevation?elevate:assessCorrection,{automatic:r.elevationAutomatic,triggeredBy:elevation?`${r.correctionCount} Assessment corrections attempted`:'QA recoverable failure'});

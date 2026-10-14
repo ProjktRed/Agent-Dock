@@ -54,6 +54,8 @@ export function describeEvent(e: EngineEvent): string {
     case "qa-evidence-finished": return `Checks collected · ${e.changedFileCount ?? 0} changed file${e.changedFileCount === 1 ? "" : "s"}`;
     case "qa-pass": return `QA passed: ${first(e.qa)}`;
     case "qa-retry": return `Retry QA: reviewing attempt ${e.attempt ?? "?"} again with fresh check results`;
+    case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;
+    case "cline-stalled": return `Worker ended early: ${first(e.message)}`;
     case "qa-fail": return `QA found problems: ${first(e.qa)}`;
     case "retry": return `Correction sent to the worker (attempt ${e.attempt ?? "?"})`;
     case "elevate-result": return "Elevation proposed a revised strategy";

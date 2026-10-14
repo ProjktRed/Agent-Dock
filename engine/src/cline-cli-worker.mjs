@@ -63,6 +63,15 @@ function parsedToolText(event) {
 
 const COMPACTION_PHASES = { "auto-compacting": "started", "auto-compacted": "completed", "auto-compaction-skipped": "skipped" };
 
+/**
+ * A worker that keeps repeating the same step, or goes silent once it has started working, is
+ * ended early and reported like a timeout. Silence before the first output is the local model
+ * reading a long prompt, so it does not count.
+ */
+export const STALL_SILENCE_MS = 10 * 60_000;
+export const REPEAT_LIMIT = 4;
+const repeatKey = (text) => String(text).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80);
+
 const listText = (items) => (items.length > 2 ? `${items.slice(0, 2).join(", ")} (+${items.length - 2})` : items.join(", "));
 
 /**
@@ -156,6 +165,8 @@ export function collectClineProcess(command, args, {
   diagnostic = defaultDiagnostic,
   onStart = () => {},
   onEvent = () => {},
+  stallMs = 0,
+  repeatLimit = 0,
 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
@@ -183,6 +194,24 @@ export function collectClineProcess(command, args, {
       if (traceActivity && activityTraceCount++ < 120) diagnostic("CLINE_ACTIVITY_TRACE", detail);
     };
     let eventQueue = Promise.resolve();
+    let stallReason = null;
+    let silenceTimer = null;
+    let sawOutput = false;
+    let lastKey = null;
+    let repeats = 0;
+    const stall = (reason) => {
+      if (stallReason || exited) return;
+      stallReason = reason;
+      queueEvent({ type: "cline-stalled", message: reason });
+      if (process.platform === "win32" && spawnProcess === spawn && child.pid) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
+      else child.kill?.("SIGKILL");
+    };
+    const armSilence = () => {
+      if (!stallMs || !sawOutput || stallReason) return;
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => stall(`No worker output for ${Math.round(stallMs / 60_000)} minutes; the attempt was ended early.`), stallMs);
+      silenceTimer.unref?.();
+    };
 
     diagnostic("CLINE_START", { command, pid: child.pid ?? null });
     Promise.resolve(onStart({ pid: child.pid ?? null })).catch(reject);
@@ -191,6 +220,16 @@ export function collectClineProcess(command, args, {
       // Cline reports context compaction as plain messages; they are bookkeeping, not worker output.
       const phase = incoming.type === "cline-message" ? COMPACTION_PHASES[String(incoming.message ?? "").trim()] : null;
       const event = phase ? { type: "cline-compaction", phase } : incoming;
+      if (event.type !== "cline-stalled") {
+        sawOutput = true;
+        armSilence();
+      }
+      if (repeatLimit && event.type === "cline-message") {
+        const key = repeatKey(event.message);
+        repeats = key === lastKey ? repeats + 1 : 1;
+        lastKey = key;
+        if (repeats >= repeatLimit) stall(`The worker repeated the same step ${repeats} times ("${String(event.message).slice(0, 80)}"); the attempt was ended early.`);
+      }
       const activityId = ++activitySequence;
       trace({ phase: "activity-created", activityId, activityType: event.type, length: event.message?.length ?? event.fragment?.length ?? null, preview: (event.message ?? event.fragment ?? "").slice(0, 40) });
       eventQueue = eventQueue.then(async () => {
@@ -271,6 +310,7 @@ export function collectClineProcess(command, args, {
     };
     const consumeStdout = (chunk) => {
       stdout += chunk;
+      armSilence();
       stdoutLine += chunk;
       const lines = stdoutLine.split(/\r?\n/);
       stdoutLine = lines.pop() ?? "";
@@ -280,6 +320,7 @@ export function collectClineProcess(command, args, {
       if (settled || !exited) return;
       settled = true;
       clearTimeout(drainTimer);
+      clearTimeout(silenceTimer);
       if (stdoutLine) {
         parseLine(stdoutLine);
         stdoutLine = "";
@@ -288,6 +329,11 @@ export function collectClineProcess(command, args, {
       try { await eventQueue; }
       catch (error) { reject(error); return; }
       const output = redactText(`${stdout}${stderr}`, redactValues);
+      if (stallReason) {
+        // Ended early: the same outcome as Cline's own --timeout, only sooner.
+        runResult ??= { finishReason: "timeout", text: stallReason, stalled: true };
+        exitCode = 124;
+      }
       if (requireRunResult && !runResult) {
         const detail = malformedFinal ? `; final NDJSON was malformed: ${malformedFinal.message}` : "";
         const error = new Error(`Cline output did not contain a valid final run_result${detail}`);
@@ -330,6 +376,7 @@ export function collectClineProcess(command, args, {
       if (settled) return;
       settled = true;
       clearTimeout(drainTimer);
+      clearTimeout(silenceTimer);
       reject(error);
     });
     child.on("exit", (code, signal) => {
@@ -450,7 +497,7 @@ export async function launchCline({
   // OPENAI_API_KEY is inherited), never the orchestrator CLIs' keys or the app's own variable.
   const env = { ...withoutSecrets(process.env, { keep: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"] }), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
-  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent, redactValues });
+  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent, redactValues, stallMs: STALL_SILENCE_MS, repeatLimit: REPEAT_LIMIT });
   if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {
     throw new Error(RUNTIME_NOT_READY);
   }
