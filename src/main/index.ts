@@ -1,9 +1,9 @@
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
-import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, Project, ProjectStatus, Settings, UsageSummary } from "@shared/types";
+import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, Project, ProjectStatus, Settings, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
@@ -217,6 +217,8 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
   }
 }
 
+const lastSent = new Map<string, string>();
+
 async function pollOnce() {
   const active = store.data.settings.activeProjectId;
   for (const p of store.data.projects) {
@@ -228,7 +230,12 @@ async function pollOnce() {
       await engine.afterPoll(p, status);
       await handleTransitions(p, lastStatus.get(p.id), status);
       lastStatus.set(p.id, status);
-      send("status", status);
+      // Unchanged status is not sent again: the window would only redraw the same thing.
+      const serialized = JSON.stringify(status);
+      if (lastSent.get(p.id) !== serialized) {
+        lastSent.set(p.id, serialized);
+        send("status", status);
+      }
     } catch (error) {
       console.error("status poll failed", p.name, error);
     }
@@ -326,15 +333,29 @@ function snapshot() {
   return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot }, version: app.getVersion() };
 }
 
+/** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
+const activityUsage = new Map<string, { key: string; records: TokenRecord[]; compactions: number }>();
+
+async function projectActivityUsage(p: Project) {
+  const info = await stat(path.join(p.stateDir, "activity.ndjson")).catch(() => null);
+  const key = info ? `${info.size}:${info.mtimeMs}` : "none";
+  const cached = activityUsage.get(p.id);
+  if (cached?.key === key) return cached;
+  const events = await readActivity(p.stateDir, 20_000);
+  const value = { key, records: implementationUsage(events, p.id), compactions: countCompactions(events) };
+  activityUsage.set(p.id, value);
+  return value;
+}
+
 async function usage(projectId: string | null): Promise<UsageSummary> {
   const targets = projectId ? [project(projectId)] : store.data.projects;
   const records = [];
   let compactions = 0;
   let limit = { message: null as string | null, retryAt: null as string | null };
   for (const p of targets) {
-    const events = await readActivity(p.stateDir, 20_000);
-    records.push(...(await readOrchestratorUsage(p.stateDir, p.id)), ...implementationUsage(events, p.id));
-    compactions += countCompactions(events);
+    const fromActivity = await projectActivityUsage(p);
+    records.push(...(await readOrchestratorUsage(p.stateDir, p.id)), ...fromActivity.records);
+    compactions += fromActivity.compactions;
     const s = lastStatus.get(p.id);
     if (s?.limitMessage) limit = { message: s.limitMessage, retryAt: s.limitRetryAt };
   }

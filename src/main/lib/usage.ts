@@ -50,6 +50,9 @@ export function parseInvocationUsage(events: string): { provider: string; input:
   return found;
 }
 
+/** Parsed invocations, keyed by folder: a finished invocation's events file no longer changes. */
+const invocationCache = new Map<string, { mtimeMs: number; size: number; record: TokenRecord | null }>();
+
 export async function readOrchestratorUsage(stateDir: string, projectId: string, sinceMs = 0): Promise<TokenRecord[]> {
   const codexDir = path.join(stateDir, "codex");
   let names: string[];
@@ -65,13 +68,21 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
       try {
         const info = await stat(path.join(dir, "events.ndjson"));
         if (info.mtimeMs < sinceMs) return;
+        const cached = invocationCache.get(dir);
+        if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) {
+          if (cached.record) records.push(cached.record);
+          return;
+        }
         const [events, prompt] = await Promise.all([
           readFile(path.join(dir, "events.ndjson"), "utf8"),
           readFile(path.join(dir, "prompt.txt"), "utf8").catch(() => ""),
         ]);
         const usage = parseInvocationUsage(events);
-        if (!usage) return;
-        records.push({
+        if (!usage) {
+          invocationCache.set(dir, { mtimeMs: info.mtimeMs, size: info.size, record: null });
+          return;
+        }
+        const record: TokenRecord = {
           timestamp: new Date(info.mtimeMs).toISOString(),
           role: classifyPrompt(prompt),
           provider: usage.provider,
@@ -81,7 +92,9 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
           output: usage.output,
           projectId,
           taskId: null,
-        });
+        };
+        invocationCache.set(dir, { mtimeMs: info.mtimeMs, size: info.size, record });
+        records.push(record);
       } catch {
         // Invocation still running or incomplete.
       }

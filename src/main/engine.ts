@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, Project, ProjectStatus } from "@shared/types";
+import type { EngineInfo, GitInfo, Project, ProjectStatus } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
@@ -25,12 +25,17 @@ interface ProcessRecord {
 }
 
 const RECORD_FILE = "app-engine.json";
+const GIT_MIN_AGE_MS = 2_000;
+const GIT_MAX_AGE_MS = 10_000;
 
 /** Launches the vendored engine (engine/src/cli.mjs) per project and reads its .state files. */
 export class EngineManager {
   private modules = new Map<string, Promise<Record<string, any>>>();
   private alive = new Map<string, ProcessRecord>();
   private stopAfterTask = new Set<string>();
+  private verifiedPids = new Set<number>();
+  /** git state per project, refreshed at most every GIT_MAX_AGE_MS (sooner when the engine logs activity). */
+  private gitCache = new Map<string, { at: number; activitySize: number; value: GitInfo }>();
 
   constructor(
     readonly engineDir: string,
@@ -66,15 +71,24 @@ export class EngineManager {
     return path.join(project.stateDir, RECORD_FILE);
   }
 
-  /** A PID is only trusted if it is still a node/electron process (guards against PID reuse after a reboot). */
+  /**
+   * A PID is only trusted if it is still a node/electron process (guards against PID reuse after a
+   * reboot). The process list is checked once per PID: while that process keeps running its PID
+   * cannot be reused, so later polls only ask whether it still exists (no process started).
+   */
   private async pidAlive(pid: number): Promise<boolean> {
     try {
       process.kill(pid, 0);
     } catch {
+      this.verifiedPids.delete(pid);
       return false;
     }
-    const list = await run("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeoutMs: 5000 });
-    return /node|electron|codex cline/i.test(list.stdout);
+    if (this.verifiedPids.has(pid)) return true;
+    const ok = process.platform === "win32"
+      ? /node|electron|codex cline/i.test((await run("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeoutMs: 5000 })).stdout)
+      : await readFile(`/proc/${pid}/cmdline`, "utf8").then((cmd) => /node|electron/i.test(cmd), () => true);
+    if (ok) this.verifiedPids.add(pid);
+    return ok;
   }
 
   async refreshAlive(project: Project): Promise<ProcessRecord | null> {
@@ -140,6 +154,7 @@ export class EngineManager {
 
   /** Same semantics as the engine dashboard (engine/src/dashboard-cli.mjs onControl). */
   async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
+    this.gitCache.delete(project.id);
     const running = await this.refreshAlive(project);
     if (action === "start") return this.start(project, args, false, envDelta);
     if (action === "stop-now") {
@@ -183,7 +198,7 @@ export class EngineManager {
       readJson<EngineLive | null>(path.join(project.stateDir, "live.json"), null).catch(() => null),
       readJson<EngineControl>(path.join(project.stateDir, "control.json"), {}).catch(() => ({})),
       readActivity(project.stateDir, 200).catch(() => []),
-      gitInfo(project.path),
+      this.git(project),
     ]);
     const plan = await readPlan(project.path, live?.task ?? {});
     let elevate = { available: false, reason: "No manual-review case" as string | null };
@@ -226,6 +241,20 @@ export class EngineManager {
       }
     }
     return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry });
+  }
+
+  /**
+   * git state without running five git commands on every poll: reused for up to GIT_MAX_AGE_MS,
+   * refreshed sooner (after GIT_MIN_AGE_MS) when the engine has logged new activity.
+   */
+  private async git(project: Project): Promise<GitInfo> {
+    const cached = this.gitCache.get(project.id);
+    const activitySize = await stat(path.join(project.stateDir, "activity.ndjson")).then((s) => s.size, () => 0);
+    const age = cached ? Date.now() - cached.at : Infinity;
+    if (cached && (age < GIT_MIN_AGE_MS || (age < GIT_MAX_AGE_MS && activitySize === cached.activitySize))) return cached.value;
+    const value = await gitInfo(project.path);
+    this.gitCache.set(project.id, { at: Date.now(), activitySize, value });
+    return value;
   }
 
   async engineLog(project: Project, maxBytes = 20_000): Promise<string> {

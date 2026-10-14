@@ -500,3 +500,27 @@ describe("restart notice", () => {
     expect(interruptedWork(status([]))).toBeNull();
   });
 });
+
+describe("log tail", () => {
+  it("returns the last records of a large log, intact across chunk and character boundaries", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const os = await import("node:os");
+    const { readNdjsonTail, readTail } = await import("../src/main/lib/json-file");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "tail-"));
+    try {
+      const file = path.join(dir, "activity.ndjson");
+      const lines = Array.from({ length: 5000 }, (_, i) => JSON.stringify({ i, text: "Привет ✓ ".repeat(5) }));
+      writeFileSync(file, lines.join("\n") + "\n");
+      const last = await readNdjsonTail<{ i: number; text: string }>(file, 200);
+      expect(last).toHaveLength(200);
+      expect(last[0].i).toBe(4800);
+      expect(last.at(-1)!.i).toBe(4999);
+      expect(last.every((r) => r.text.startsWith("Привет ✓"))).toBe(true);
+      expect((await readNdjsonTail(file, 99_999)).length).toBe(5000);
+      expect((await readTail(file, 3)).split("\n").filter(Boolean).length).toBeGreaterThanOrEqual(3);
+      expect(await readNdjsonTail(path.join(dir, "missing.ndjson"), 10)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
