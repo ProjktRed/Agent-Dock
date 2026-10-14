@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stopAndClean } from "./proc";
+import { shellLine, stopAndClean } from "./proc";
 import type { LimitsState, ProviderLimits, Settings } from "@shared/types";
 import { lastRateLimitEvent, parseClaudeRateLimit, parseClaudeUsage, parseCodexLimits, type ClaudeUsageResponse, type CodexRateLimitsResult } from "./lib/limits-parse";
 import { readJson, writeJson } from "./lib/json-file";
@@ -28,7 +28,7 @@ const failed = (provider: ProviderLimits["provider"], source: string, error: str
 export function readCodexLimits(codexPath: string, timeoutMs = 30_000): Promise<ProviderLimits> {
   const source = "Codex app-server · account/rateLimits/read";
   return new Promise((resolve) => {
-    const child = spawn(quote(codexPath), ["app-server"], { shell: true, windowsHide: true });
+    const child = spawn(shellLine(quote(codexPath), ["app-server"]), { shell: true, windowsHide: true });
     let buffer = "";
     let stderr = "";
     let done = false;
@@ -84,7 +84,7 @@ export function readClaudeUsage(claudePath: string, timeoutMs = 45_000): Promise
   const settings = `"${JSON.stringify({ disableAllHooks: true }).replace(/"/g, '\\"')}"`;
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--settings", settings];
   return new Promise((resolve) => {
-    const child = spawn(quote(claudePath), args, { shell: true, windowsHide: true, cwd, env });
+    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let buffer = "";
     let stderr = "";
     let done = false;
@@ -140,7 +140,7 @@ export function probeClaudeLimits(claudePath: string, timeoutMs = 90_000): Promi
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
   const args = ["-p", '"Reply with the single word ok."', "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", '""', "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
   return new Promise((resolve) => {
-    const child = spawn(quote(claudePath), args, { shell: true, windowsHide: true, cwd, env });
+    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let out = "";
     let err = "";
     let done = false;

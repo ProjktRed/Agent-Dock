@@ -26,3 +26,9 @@ export function stopAndClean(child: ChildProcess, dir: string): void {
   });
   killer.on("exit", () => setTimeout(clean, 500));
 }
+
+/**
+ * The command line for a `shell: true` spawn, joined the way Node joins command and arguments.
+ * Passing it whole (no argument array) keeps the same behaviour without Node's DEP0190 warning.
+ */
+export const shellLine = (command: string, args: string[]) => [command, ...args].join(" ");

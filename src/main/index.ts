@@ -543,15 +543,8 @@ async function resumeAfterRestart() {
     if (mode === "auto") {
       await engine.control(p, "resume", await launchArgs(p), providerEnv(p)).catch((e) => notice({ kind: "error", message: `${p.name}: ${e.message}` }));
     } else if (mode === "ask") {
-      const choice = await dialog.showMessageBox({
-        type: "question",
-        buttons: ["Resume", "Stay paused"],
-        defaultId: 0,
-        title: "Resume automation?",
-        message: `${p.name} was mid-task when the engine stopped.`,
-        detail: `Stage: ${status.stage}. Resuming continues from the engine's saved state.`,
-      });
-      if (choice.response === 0) await engine.control(p, "resume", await launchArgs(p), providerEnv(p)).catch((e) => notice({ kind: "error", message: e.message }));
+      // A notice, not a dialog: nothing blocks the launch; Resume on the project continues.
+      notice({ kind: "warning", message: `${p.name} was mid-task when the engine stopped (stage: ${status.stage}). Press Resume to continue from the saved state.` });
     }
   }
 }

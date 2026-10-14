@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stopAndClean } from "./proc";
+import { shellLine, stopAndClean } from "./proc";
 import type { ModelCatalog, ProviderModels } from "@shared/types";
 import { claudeFastPending, parseClaudeModels, parseCodexModels, type CodexModelListResult } from "./lib/models-parse";
 import { readJson, writeJson } from "./lib/json-file";
@@ -43,7 +43,7 @@ function onJsonLines(stream: NodeJS.ReadableStream, handle: (message: any) => vo
 export function readCodexModels(codexPath: string, timeoutMs = 30_000): Promise<ProviderModels> {
   const source = "Codex app-server · model/list";
   return new Promise((resolve) => {
-    const child = spawn(quote(codexPath), ["app-server"], { shell: true, windowsHide: true });
+    const child = spawn(shellLine(quote(codexPath), ["app-server"]), { shell: true, windowsHide: true });
     const data: CodexModelListResult["data"] = [];
     let stderr = "";
     let done = false;
@@ -100,7 +100,7 @@ function readClaudeModelsOnce(claudePath: string, timeoutMs = 45_000): Promise<{
   const settings = winArg(JSON.stringify({ fastMode: true, disableAllHooks: true }));
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--settings", settings];
   return new Promise((resolve) => {
-    const child = spawn(quote(claudePath), args, { shell: true, windowsHide: true, cwd, env });
+    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let stderr = "";
     let done = false;
     const finish = (value: ProviderModels, pending = false) => {

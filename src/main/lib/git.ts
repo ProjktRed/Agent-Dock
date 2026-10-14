@@ -6,8 +6,9 @@ import type { GitInfo } from "@shared/types";
 export function run(command: string, args: string[], options: { cwd?: string; timeoutMs?: number; shell?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     execFile(
-      command,
-      args,
+      // A shell runs one command line (Node joins it the same way; passing it whole avoids DEP0190).
+      options.shell ? [command, ...args].join(" ") : command,
+      options.shell ? [] : args,
       // GIT_OPTIONAL_LOCKS=0: monitoring must never take index locks or rewrite the index while an agent works.
       { cwd: options.cwd, windowsHide: true, timeout: options.timeoutMs ?? 15_000, shell: options.shell ?? false, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } },
       (error, stdout, stderr) => {

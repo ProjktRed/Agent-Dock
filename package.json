@@ -1,7 +1,7 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.15.9",
+  "version": "0.16.0",
   "description": "Agent Dock: Windows command center for the Codex ↔ Cline automation loop",
   "private": true,
   "main": "out/main/index.js",
@@ -21,7 +21,7 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",
-    "electron": "33.4.11",
+    "electron": "44.5.0",
     "electron-builder": "25.1.8",
     "electron-vite": "2.3.0",
     "react": "18.3.1",

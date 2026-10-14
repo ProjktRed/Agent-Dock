@@ -226,7 +226,7 @@ function Workflow() {
         <SetRow title="Resolver strategies" desc="Blocked cases: the read-only Resolver runs once all workers are idle. Distinct recovery strategies per task before human review." support="engine"><Tunable k="resolverMaxStrategies" min={1} max={20} unit="per task" label="Resolver strategies per task" /></SetRow>
         <SetRow title="After the app restarts" desc="When a project was mid-task and its engine is no longer running" support="app">
           <select className="sel" value={w.resumeAfterRestart} onChange={(e) => patch("workflow", { resumeAfterRestart: e.target.value as typeof w.resumeAfterRestart })} aria-label="Resume behaviour">
-            <option value="ask">Ask me</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
+            <option value="ask">Show a notice</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
           </select>
         </SetRow>
         <SetRow title="Stop after current task" desc={activeProject ? `One-off request for ${activeProject.name}` : "Select a project first"} support="engine">
