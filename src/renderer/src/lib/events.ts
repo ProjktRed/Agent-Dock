@@ -32,6 +32,11 @@ export function describeEvent(e: EngineEvent): string {
     case "resolver-started": return `Resolver: analysing the block${model(e)}`;
     case "resolver-finished": return "Resolver finished";
     case "codex-usage-limit": return `Usage limit reached: ${first(e.message)}`;
+    case "orchestrator-fallback": {
+      const role = ({ qa: "QA", assessment: "Assessment", resolver: "Resolver", elevate: "Elevation" } as Record<string, string>)[String(e.role)] ?? "Orchestrator";
+      const cli = (value: unknown) => value === "claude" ? "Claude Code" : "Codex";
+      return `${role}: usage limit on ${cli(e.fromCli)}; retrying on ${cli(e.toCli)}${model(e)}`;
+    }
     case "waiting-for-codex": return "Waiting for the usage limit to reset (Resume to retry)";
     case "task-loaded": return `Task loaded: ${e.taskId ?? ""}`;
     case "known-issues-selected": return Array.isArray(e.knownIssues) && e.knownIssues.length ? `Known worker issues included: ${e.knownIssues.join(", ")}` : "No known worker issues apply";

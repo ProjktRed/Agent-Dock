@@ -2,6 +2,7 @@ import type { Agent, CliConnection, EngineTuning, Project, Role, Settings, Workf
 import path from "node:path";
 import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
+import { SECOND_OPINION_ROLE_ID } from "@shared/workflow-templates";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -71,9 +72,8 @@ export interface EngineLaunchPlan {
 
 /**
  * Translate app configuration into the engine CLI (engine/src/cli.mjs) flags.
- * With engine guardrails on (default) QA, Assessment, Resolver and Elevation share one orchestrator
- * CLI and models must belong to it. With guardrails off each role may use its own CLI
- * (--<role>-cli; the engine routes each role to its worker) and those checks become warnings.
+ * Each orchestrator role may use its own CLI (--<role>-cli). With engine guardrails on,
+ * models must belong to that role's CLI; with guardrails off model checks become warnings.
  * Implementation runs through Cline, OpenCode, Codex or Claude Code. Enabled workflow roles
  * with an agent are passed as a roles file; loop limits only with guardrails off.
  */
@@ -115,6 +115,21 @@ export function buildEngineArgs(input: {
   const elevation = agentForRole("elevation", project, agents);
   const automaticElevation = workflow.automaticElevation && Boolean(elevation?.enabled);
   const orchestrator = orchestratorKind(qa) ?? "codex";
+  const usedConnections = new Map<"codex" | "claude", CliConnection>();
+  const useConnection = (agent: Agent, label: string) => {
+    const conn = cliOf(agent);
+    const kind = orchestratorKind(agent);
+    if (!conn || !kind) return;
+    const previous = usedConnections.get(kind);
+    const command = (connection: CliConnection) => {
+      const value = connection.location.trim() || kind;
+      return process.platform === "win32" ? path.normalize(value).toLowerCase() : value;
+    };
+    if (previous && command(previous) !== command(conn)) {
+      problems.push(`${label} and another role select different executables for ${kind}. Use the same CLI connection for roles on that CLI.`);
+    } else usedConnections.set(kind, conn);
+  };
+  if (qa) useConnection(qa, "QA");
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
   if (impl && (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl.provider) {
@@ -150,6 +165,7 @@ export function buildEngineArgs(input: {
   }
   const implKind = implCli?.kind === "codex" || implCli?.kind === "claude" ? implCli.kind : null;
   if (impl && implKind) {
+    useConnection(impl, "Implementation");
     args.push("--implementation-cli", implKind, "--timeout-seconds", String(impl.timeoutSeconds));
     const model = impl.model.trim();
     // The implementation worker passes the model as given (no mapping of Codex default labels on Claude).
@@ -172,9 +188,8 @@ export function buildEngineArgs(input: {
   for (const [label, flags, agent] of roles) {
     const kind = orchestratorKind(agent);
     if (!agent || !kind) continue;
+    useConnection(agent, label);
     if (kind !== orchestrator) {
-      guard(`${label} agent “${agent.name}” uses ${cliOf(agent)!.name} but QA uses ${qaCli?.name}: the engine is built to run one orchestrator CLI.`);
-      if (guarded) continue;
       usedKinds.add(kind);
       for (const flag of flags) args.push(`--${flag}-cli`, kind);
     }
@@ -188,21 +203,50 @@ export function buildEngineArgs(input: {
       if (agent.reasoning) args.push(`--${flag}-effort`, agent.reasoning);
       args.push(`--${flag}-fast`, String(Boolean(agent.fast)));
     }
+    if (agent.backupAgentId) {
+      const backup = agents.find(a => a.id === agent.backupAgentId);
+      const backupKind = orchestratorKind(backup ?? null);
+      if (!backup || !backup.enabled || backup.id === agent.id || !backupKind || backupKind === kind) {
+        problems.push(`${label} backup must be an enabled, different agent on the other orchestrator CLI.`);
+        continue;
+      }
+      const backupModel = backup.model.trim();
+      if (backupModel && wrongProviderModel(backupKind, backupModel)) {
+        guard(`${label} backup “${backup.name}”: “${backupModel}” is not a ${backupKind === "claude" ? "Claude Code" : "Codex"} model.`);
+        if (guarded) continue;
+      }
+      usedKinds.add(backupKind);
+      useConnection(backup, `${label} backup`);
+      for (const flag of flags) {
+        args.push(`--${flag}-backup-cli`, backupKind);
+        if (backupModel) args.push(`--${flag}-backup-model`, backupModel);
+        if (backup.reasoning) args.push(`--${flag}-backup-effort`, backup.reasoning);
+        args.push(`--${flag}-backup-fast`, String(Boolean(backup.fast)));
+      }
+    }
   }
   // Workflow roles: read-only reviews run by the agent assigned to each role (Codex or Claude Code).
   const roleEntries: EngineRoleEntry[] = [];
   for (const role of workflowRoles.filter((r) => r.enabled)) {
+    const secondOpinion = role.id === SECOND_OPINION_ROLE_ID;
+    if (secondOpinion && (role.stage !== "before-qa" || !role.gate || !role.instructions.trim())) {
+      problems.push("Second-opinion QA must be a before-QA gate with review instructions.");
+      continue;
+    }
+    const roleProblem = (message: string) => (secondOpinion ? problems : warnings).push(message);
     if (!role.instructions.trim()) { warnings.push(`Workflow role “${role.name}” has no instructions and is skipped.`); continue; }
     const agent = agentForWorkflowRole(role, agents);
     const kind = orchestratorKind(agent);
-    if (!agent) { warnings.push(`Workflow role “${role.name}” has no enabled agent (Workflow › ${role.name} › Runs on) and is skipped.`); continue; }
-    if (!kind) { warnings.push(`Workflow role “${role.name}”: agent “${agent.name}” must use Codex CLI or Claude Code; the role is skipped.`); continue; }
+    if (!agent) { roleProblem(`Workflow role “${role.name}” has no enabled agent (Workflow › ${role.name} › Runs on).`); continue; }
+    if (!kind) { roleProblem(`Workflow role “${role.name}”: agent “${agent.name}” must use Codex CLI or Claude Code.`); continue; }
+    if (secondOpinion && kind === orchestrator) { problems.push("Second-opinion QA must use a different CLI from the QA agent."); continue; }
     const model = agent.model.trim();
     if (model && wrongProviderModel(kind, model)) {
       guard(`${agent.name}: “${model}” is not a ${kind === "claude" ? "Claude Code" : "Codex"} model.`);
       if (guarded) continue;
     }
     usedKinds.add(kind);
+    useConnection(agent, role.name);
     roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
@@ -214,8 +258,7 @@ export function buildEngineArgs(input: {
     }
   }
   // Custom executable locations for every orchestrator CLI in use.
-  for (const kind of usedKinds) {
-    const conn = clis.find((c) => c.kind === kind);
+  for (const [kind, conn] of usedConnections) {
     if (conn?.location && conn.location !== kind) args.push(kind === "claude" ? "--claude-command" : "--codex-exe", conn.location);
   }
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);

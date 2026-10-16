@@ -367,7 +367,7 @@ export function EngineGuardrails() {
     <>
       <SetRow
         title="Engine guardrails"
-        desc={on ? "On: QA, Assessment and Elevation share one orchestrator CLI, models must come from that CLI, Fast only where the CLI reports it, and the engine's loop limits are fixed." : "Off: each role may use its own CLI and any model, effort or speed, and the loop limits in Workflow rules and Context limits are editable. Mismatches are shown as warnings and the run starts anyway."}
+        desc={on ? "On: each role may use its own CLI; models must come from that role's CLI, Fast only where the CLI reports it, and the engine's loop limits are fixed." : "Off: each role may use its own CLI and any model, effort or speed, and the loop limits in Workflow rules and Context limits are editable. Mismatches are shown as warnings and the run starts anyway."}
         support="app"
       >
         <Toggle on={on} onChange={(v) => (v ? patch("advanced", { engineGuardrails: true }) : setConfirm(true))} label="Engine guardrails" />

@@ -96,6 +96,24 @@ test('an advisory role that fails is recorded and skipped; a gate that fails blo
   assert.match(blocked.output, /Gatekeeper|Reviewer could not run/);
 });
 
+test('Retry QA after changed evidence reruns its second-opinion gate for the same attempt', async t => {
+  const { root, state } = await setup(t);
+  let gateCalls = 0, qaCalls = 0;
+  const options = baseLoop(root, state, {
+    roles: parseRoles([role({ id:'second-opinion-qa', name:'Second-opinion QA', gate:true })]),
+    runRole: async () => { gateCalls++; return { verdict:'pass', summary:'checked', findings:[], guidance:'' }; },
+    worker: { withExclusive:fn=>fn(), run:async()=>({exitCode:0}) },
+    prepareQa: async input => ({ ...packet(input), diff:{text:qaCalls===0?'first-content':'fixed-content',bytes:12}, qaEvidence:{ ...packet(input).qaEvidence, scope:{status:'PASS'} } }),
+    review: async () => { qaCalls++; return qaCalls <= 2 ? { status:'manual-review', manualReviewCause:'missing-permissions', output:'helper_unknown_error: tool failed before execution' } : {status:'pass',output:'accepted',commit:'abc'}; },
+  });
+  const first = await runNodeLoop(options);
+  assert.equal(first.status,'blocked');
+  await state.setControl('retry-qa');
+  const resumed = await runNodeLoop({...options,initialTask:null});
+  assert.equal(resumed.status,'passed');
+  assert.ok(gateCalls >= 2, 'a cached pass for old content must not skip the second opinion');
+});
+
 test('tuning: defaults reproduce the fixed engine; flags validate', () => {
   assert.deepEqual(parseTuning({}), DEFAULT_TUNING);
   assert.equal(parseTuning({ 'elevation-after':'5' }).elevationAfter, 5);

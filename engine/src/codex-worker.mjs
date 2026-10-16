@@ -174,6 +174,7 @@ export function buildQaPrompt(qaPacket) {
     "Inspect task, acceptance criteria, baseline SHA, scoped diff, changed files, deterministic evidence and worker summary.",
     "Do not fix implementation, author correction tasks, launch workers, choose the next task, or perform strategy reassessment. Assessment owns corrections.",
     "Run additional narrowly relevant commands only if evidence is missing, conflicting, or inconclusive.",
+    "The engine's qaEvidence is shared with the second-opinion reviewer and bound to this workspace content. Reuse its passing checks rather than running them again. Reused evidence has the same command output; it is never a new test run. Review roleReviews independently; another reviewer's pass is not acceptance by itself.",
     "Do not begin with broad repository discovery, old logs, Git history, unrelated files, or operating-system process inspection.",
     "Never convert BLOCKED, INCONCLUSIVE, TIMEOUT or NON-TERMINATING evidence to PASS without trustworthy new evidence.",
     "Return fail for recoverable implementation problems with exact findings and remaining acceptance criteria in output. Leave correction empty.",
@@ -189,7 +190,7 @@ export function buildQaPrompt(qaPacket) {
 
 export class CodexWorker {
   constructor({
-    workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox,
+    workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox, roleOverrides = {},
     spawnProcess = spawn,
     writeProcessState = atomicWriteJson,
     clearProcessState = (file) => rm(file, { force: true }),
@@ -199,6 +200,7 @@ export class CodexWorker {
     },
   }) {
     this.workspace = workspace;
+    this.roleOverrides = roleOverrides;
     this.stateDir = stateDir;
     this.command = launcher?.command ?? command;
     this.prefixArgs = launcher?.prefixArgs ?? prefixArgs;
@@ -313,6 +315,12 @@ export class CodexWorker {
     return parse(await readFile(outputFile, "utf8"));
   }
 
+  optionsForRole(role) {
+    const override = this.roleOverrides?.[role];
+    if (!override) return roleOptions(role);
+    return { model: override.model, reasoningEffort: override.effort ?? "medium", ...(override.fast ? { fast: true } : {}) };
+  }
+
   async assess({ objective, previous }) {
     const result = await this.invoke([
       "You are Codex performing one assessment operation. Inspect this repository and its instructions.",
@@ -329,13 +337,13 @@ export class CodexWorker {
       "Do not launch Cline, another Codex, background processes, or wait for development. Return JSON and exit.",
       "User objective: " + objective,
       "Previous completed task: " + JSON.stringify(previous ?? null),
-    ].join("\n"), "read-only", roleOptions("assessment"));
+    ].join("\n"), "read-only", this.optionsForRole("assessment"));
     if (result.status === "task") taskSkillMode(result.task, "", { required: true });
     return result;
   }
 
   review(qaPacket, context = {}) {
-    return this.invoke(buildQaPrompt(qaPacket, context), "workspace-write", { ...roleOptions("qa"), schema:qaOutputSchema, parse:parseQaResult });
+    return this.invoke(buildQaPrompt(qaPacket, context), "workspace-write", { ...this.optionsForRole("qa"), schema:qaOutputSchema, parse:parseQaResult });
   }
 
   assessCorrection(input) { return this.recoveryOperation(input, false); }
@@ -355,7 +363,7 @@ export class CodexWorker {
       'Give concise nextWorkerInstructions, including direct edits and no repository scratch/helper files. Preserve correct existing work. Return JSON and exit completely.',
       'workerCapabilities.nativeTools is the observed runtime tool list, not a wish list. An empty list is unverified. Do not prescribe absent tools. Inspect editFailures for actual failed inputs/results and current source excerpts. When the tool guard is active (workerCapabilities present), require fresh reads, unique small matches and at most 2000 characters per editor field. A broken file this task created may be overwritten completely instead of patched. Verify helper/property paths in the supplied source evidence; do not invent them.',
       'INPUT: '+JSON.stringify(input),
-    ].join('\n'),'read-only',{...roleOptions("resolver"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
+    ].join('\n'),'read-only',{...this.optionsForRole("resolver"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
   }
 
   recoveryOperation(input, elevation) {
@@ -373,6 +381,6 @@ export class CodexWorker {
       "Only relevant independently verified issue knowledge is supplied. Do not treat speculative prior reports as established causes.",
       "Return JSON and exit completely.",
       "INPUT: " + JSON.stringify(input),
-    ].join("\n"), "read-only", {...roleOptions(elevation?"elevate":"assessment"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
+    ].join("\n"), "read-only", {...this.optionsForRole(elevation?"elevate":"assessment"),schema:recoveryOutputSchema,parse:parseRecoveryResult});
   }
 }

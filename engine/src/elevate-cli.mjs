@@ -41,8 +41,8 @@ try {
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
   const additionalWritableDirs = outside ? [gitCommonDir] : [];
-  const codex = mixed
-    ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs })
+  const codex = mixed || Object.keys(options.roleBackups).length
+    ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs, onEvent: event => state.record(event) })
     : useClaude
     ? new ClaudeWorker({ stateDir, workspace, claudeCommand: options["claude-command"] ?? "claude", additionalWritableDirs })
     : new CodexWorker({ stateDir, workspace, launcher, windowsSandbox: options["codex-windows-sandbox"], additionalWritableDirs });

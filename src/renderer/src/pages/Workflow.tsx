@@ -7,6 +7,7 @@ import { agentForRoleClient } from "../lib/agents";
 import { effortLabel } from "../lib/models";
 import { Icon } from "../components/Icon";
 import { Empty, Modal, Support, Toggle } from "../components/ui";
+import { SECOND_OPINION_ROLE_ID, SECOND_OPINION_TEMPLATE } from "@shared/workflow-templates";
 
 export const STAGES: { value: RoleStage; label: string; desc: string }[] = [
   { value: "before-implementation", label: "Before implementation", desc: "Runs once per task before the worker starts. Its guidance is added to every implementation prompt for that task." },
@@ -16,6 +17,7 @@ export const STAGES: { value: RoleStage; label: string; desc: string }[] = [
 export const stageLabel = (stage: RoleStage) => STAGES.find((s) => s.value === stage)?.label ?? stage;
 
 const TEMPLATES: (RoleDraft & { blurb: string })[] = [
+  SECOND_OPINION_TEMPLATE,
   {
     blurb: "Plans the change before the worker starts",
     name: "Planner", description: "Turns the task into a short step list for the implementer", stage: "before-implementation", gate: false, enabled: true,
@@ -68,7 +70,7 @@ function Pipeline({ onPick, selected }: { onPick: (id: string) => void; selected
             <button key={r.id} className={`flow-step custom ${selected === r.id ? "on" : ""} ${r.enabled && runner ? "" : "off"}`} onClick={() => onPick(r.id)} title={stageLabel(r.stage)}>
               <span className="eyebrow">{r.gate ? "Gate" : "Role"}</span>
               <b>{r.name}</b>
-              <span className="hint">{!r.enabled ? "Disabled" : runner ? runner.name : "No agent: skipped"}</span>
+              <span className="hint">{!r.enabled ? "Disabled" : runner ? runner.name : r.id === SECOND_OPINION_ROLE_ID ? "Assign an agent to start" : "No agent: skipped"}</span>
             </button>
           );
         })}
@@ -97,7 +99,7 @@ function Pipeline({ onPick, selected }: { onPick: (id: string) => void; selected
 }
 
 function RoleEditor({ role, draft, setDraft, onSaved, onDelete }: { role: WorkflowRole | null; draft: RoleDraft; setDraft: (d: RoleDraft) => void; onSaved: (roles: WorkflowRole[], id: string) => void; onDelete: () => void }) {
-  const { snap, setAgents, toast, go } = useApp();
+  const { snap, setAgents, toast, go, activeProject } = useApp();
   const [saving, setSaving] = useState(false);
   const dirty = !role || JSON.stringify(draft) !== JSON.stringify(toDraft(role));
   const set = <K extends keyof RoleDraft>(k: K, v: RoleDraft[K]) => setDraft({ ...draft, [k]: v });
@@ -131,7 +133,10 @@ function RoleEditor({ role, draft, setDraft, onSaved, onDelete }: { role: Workfl
   };
   const createAgent = async () => {
     if (!role) return;
-    const cli = snap.clis.find((c) => c.kind === "codex") ?? snap.clis.find((c) => c.kind === "claude");
+    const qa = agentForRoleClient("qa", activeProject, snap.agents);
+    const qaKind = snap.clis.find(c => c.id === qa?.cliId)?.kind;
+    const preferred = role.id === SECOND_OPINION_ROLE_ID && qaKind === "codex" ? "claude" : "codex";
+    const cli = snap.clis.find((c) => c.kind === preferred) ?? snap.clis.find((c) => c.kind === "claude");
     if (!cli) return toast("error", "Add a Codex CLI or Claude Code connection first (CLIs).");
     const agent: Agent = {
       id: uid("agent"), name: `${role.name} agent`, role: "custom", customRole: role.id, cliId: cli.id, model: "", reasoning: "medium", fast: false,
@@ -227,6 +232,7 @@ export function WorkflowPage() {
     setDraft(toDraft(role));
   };
   const startNew = (template?: RoleDraft) => {
+    if (template?.id && snap.roles.some(role => role.id === template.id)) return pick(template.id);
     setSelId(null);
     setDraft(template ? { ...template } : emptyDraft());
   };

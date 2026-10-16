@@ -74,6 +74,7 @@ export function buildRolePrompt(role, input) {
     managerHandoffSkill(),
     STAGE_PURPOSE[role.stage],
     "You are read-only: do not edit, create, move or delete files, stage, commit, change HEAD or git configuration, launch workers, or choose tasks. Read only what INPUT and the task need.",
+    "Use INPUT.qaEvidence first: the engine already ran the required command. Reuse trustworthy passing results; do not rerun those checks. Missing, conflicting, failed or inconclusive evidence is not PASS. Read the scoped code for the smallest missing fact, or request changes with exact findings. QA alone owns writing checks and the acceptance commit.",
     READ_ONLY_SANDBOX,
     role.gate
       ? "Return changes-needed only for concrete, verifiable problems the implementer can fix inside the task's allowedPaths; the change then goes back for correction instead of to QA. Otherwise return pass."

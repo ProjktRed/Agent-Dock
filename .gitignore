@@ -6,3 +6,6 @@ engine/node_modules/
 .devtest/
 build-info.json
 build/
+
+# Agent working notes (not part of the app)
+docs/superpowers/

@@ -82,8 +82,8 @@ const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute"
 }).catch(gitStartupError);
 const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
 const gitCommonIsOutsideWorkspace = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
-const codex = mixed
-  ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs: gitCommonIsOutsideWorkspace ? [gitCommonDir] : [] })
+const codex = mixed || Object.keys(options.roleBackups).length
+  ? await buildMixedOrchestrator({ options, clis, stateDir, workspace, additionalWritableDirs: gitCommonIsOutsideWorkspace ? [gitCommonDir] : [], onEvent: event => state.record(event) })
   : useClaude
   ? new ClaudeWorker({
       stateDir,

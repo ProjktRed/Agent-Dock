@@ -27,6 +27,30 @@ function booleanOption(value, name, fallback) {
 export const ORCHESTRATOR_ROLES = ["qa", "assessment", "resolver", "elevate"];
 export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
+/** Independent backup settings; Resolver inherits Assessment unless explicitly configured. */
+export function parseRoleBackups(options) {
+  const backups = {};
+  for (const role of ORCHESTRATOR_ROLES) {
+    const prefix = `${role}-backup`;
+    const cli = options[`${prefix}-cli`];
+    let overrides;
+    try {
+      overrides = parseRoleOverrides(Object.fromEntries(["model", "effort", "fast"].filter(key => options[`${prefix}-${key}`] !== undefined).map(key => [`${role}-${key}`, options[`${prefix}-${key}`]])))[role];
+    } catch (error) { throw new Error(error.message.replaceAll(`--${role}-`, `--${prefix}-`)); }
+    if (cli === undefined && !overrides) continue;
+    if (!["codex", "claude"].includes(cli)) throw new Error(`--${prefix}-cli must be codex or claude`);
+    const primary = options[`${role}-cli`] ?? (role === "resolver" ? options["assessment-cli"] : undefined) ?? options.orchestrator ?? "codex";
+    if (cli === primary) throw new Error(`--${prefix}-cli must differ from the role's primary CLI`);
+    backups[role] = { cli, ...overrides };
+  }
+  if (!backups.resolver && backups.assessment) {
+    const primary = options["resolver-cli"] ?? options["assessment-cli"] ?? options.orchestrator ?? "codex";
+    if (backups.assessment.cli === primary) throw new Error("Resolver backup must differ from its primary CLI");
+    backups.resolver = { ...backups.assessment };
+  }
+  return backups;
+}
+
 /** --<role>-model, --<role>-effort, --<role>-fast per orchestrator role; only roles with a flag appear. */
 export function parseRoleOverrides(options) {
   const overrides = {};
@@ -94,6 +118,7 @@ export function parseLoopOptions(argv) {
     // false: Cline runs with its normal tools; Node scope/HEAD checks and QA still gate every change.
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
     roleOverrides: parseRoleOverrides(options),
+    roleBackups: parseRoleBackups(options),
     clineThinking: clineThinking(options["cline-thinking"]),
     llamacppModelsDir: options["llamacpp-models-dir"] || null,
     llamacppLauncher: options["llamacpp-launcher"] || null,

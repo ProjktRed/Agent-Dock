@@ -97,6 +97,15 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             {(["implementation", "qa", "assessment", "elevation", "custom"] as Role[]).map((r) => <option key={r} value={r}>{roleLabel[r]}</option>)}
           </select>
         </label>
+        {orchestrator && <label className="field">
+          <span>Usage-limit backup</span>
+          <select className="sel" value={draft.backupAgentId ?? ""} onChange={e => set("backupAgentId", e.target.value || undefined)}>
+            <option value="">None · wait for Resume</option>
+            {draft.backupAgentId && !snap.agents.some(a => a.id === draft.backupAgentId && a.enabled && a.id !== draft.id && ["codex", "claude"].includes(snap.clis.find(c => c.id === a.cliId)?.kind ?? "") && snap.clis.find(c => c.id === a.cliId)?.kind !== kind) && <option value={draft.backupAgentId}>Unavailable backup · choose another agent</option>}
+            {snap.agents.filter(a => a.enabled && a.id !== draft.id && ["codex", "claude"].includes(snap.clis.find(c => c.id === a.cliId)?.kind ?? "") && snap.clis.find(c => c.id === a.cliId)?.kind !== kind).map(a => <option key={a.id} value={a.id}>{a.name} · {snap.clis.find(c => c.id === a.cliId)?.name} · {a.model || "CLI default"}</option>)}
+          </select>
+          <span className="hint">Retry this operation once on the backup agent's CLI, model, effort and speed when a usage limit is reported. Resolver uses Assessment's backup.</span>
+        </label>}
         {draft.role === "custom" && (
           <label className="field">
             <span className="row" style={{ gap: 8 }}>Workflow role<Support kind="engine" /><a style={{ marginLeft: "auto" }} onClick={() => go("workflow")}>Edit roles</a></span>
@@ -113,7 +122,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             {cliOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{healths[c.id] && healths[c.id].state !== "connected" ? ` (${connectionMeta[healths[c.id].state].label})` : ""}</option>)}
           </select>
           {implementation && kind && <span className="hint">{cli?.name} implements in the project folder. While it runs, file changes are limited to each task's paths{kind === "codex" ? " (by a scope hook the engine adds)" : ""}{snap.settings.workflow.toolGuard ? " and the shell to the task's checks (tool guard)" : ""}. It never commits; scope checks and QA still apply.</span>}
-          {orchestrator && <span className="hint">{guarded ? "The engine runs one orchestrator: QA, Assessment and Elevation use the same CLI. Turn off engine guardrails (Settings › Advanced) to mix." : "Engine guardrails are off: this role may use its own CLI."}</span>}
+          {orchestrator && <span className="hint">Each role may use its own CLI. Resolver follows Assessment.{guarded ? " Model checks and engine loop limits remain enforced." : " Engine guardrails are off: model mismatches are warnings."}</span>}
         </label>
         {(local || openCode) && (
           <label className="field">
@@ -322,7 +331,8 @@ function AgentActivity({ agent }: { agent: Agent }) {
   // A workflow role agent: its own role's events (role-started / role-result / role-error carry roleName).
   const workflowRole = agent.role === "custom" ? snap.roles.find((r) => r.id === agent.customRole) ?? null : null;
   const pattern = ROLE_EVENTS[agent.role] ?? /^role-/;
-  const events = (s?.events ?? []).filter((e) => !isHiddenEvent(e) && pattern.test(e.type) && (!workflowRole || e.roleName === workflowRole.name));
+  const fallbackRole = agent.role === "elevation" ? "elevate" : agent.role;
+  const events = (s?.events ?? []).filter((e) => !isHiddenEvent(e) && (pattern.test(e.type) || (e.type === "orchestrator-fallback" && (e.role === fallbackRole || (agent.role === "assessment" && e.role === "resolver")))) && (!workflowRole || e.roleName === workflowRole.name));
   const roleName = workflowRole ? workflowRole.name : roleLabel[agent.role];
   const active = s?.processAlive && s.activeRole === roleName;
   const records = usage.filter((r) => r.role === agent.role);

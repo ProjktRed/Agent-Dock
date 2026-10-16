@@ -4,7 +4,7 @@ import {readWorkerCapabilities} from './guard/state.mjs';
 import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {captureGitBaseline} from './qa-runner.mjs';
-import {prepareQaPacket,collectGitEvidence,classifyQaCommand} from './qa-packet.mjs';
+import {prepareQaPacket,collectGitEvidence,classifyQaCommand,assertQaPacketFresh} from './qa-packet.mjs';
 import {buildInitialPrompt,buildCorrectionPrompt,describeAllowedPaths} from './workflow.mjs';
 import {readPendingCodex,runRecoverableCodex,validateTask,verifyReview} from './node-loop.mjs';
 import {ELEVATE_MODEL} from './codex-worker.mjs';
@@ -20,7 +20,7 @@ const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReas
 // All recovery progress belongs to the existing current-task.json record. A model
 // result is checkpointed here before its completed-operation receipt is consumed.
 export async function runNodeLoop({workspace,stateDir,objective,initialTask,codex,worker,
-  assess=input=>codex.assess(input),review=(input,context)=>codex.review(input,context),
+  assess=input=>codex.assess(input),review=async(input,context)=>{await assertQaPacketFresh(workspace,input);return codex.review(input,context);},
   assessCorrection=input=>codex.assessCorrection(input),
   reassessManualReview=input=>codex.reassessManualReview(input),elevate=reassessManualReview,
   solReassessmentEnabled=true,baseline=()=>captureGitBaseline(workspace),verify=verifyReview,
@@ -80,16 +80,18 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
     for(const role of stageRoles(stage)){
       const key=`${stage}:${role.id}${suffix}`;
       r.roleResults??={};
+      const evidenceFingerprint=stage==='before-qa'?recoveryFingerprint({task:input.task,attempt:input.attempt,baselineSha:input.baselineSha,diff:input.diff,qaEvidence:input.qaEvidence?.fingerprint??input.qaEvidence}):null;
+      if(stage==='before-qa'&&r.roleResults[key]?.evidenceFingerprint!==evidenceFingerprint)delete r.roleResults[key];
       if(!r.roleResults[key]){
         let op;
-        try{op=await operation('role:'+role.id,input,value=>runRole(role,value),{roleName:role.name,roleStage:stage,roleModel:role.model});}
+        try{op=await operation('role:'+role.id,input,async value=>{if(stage==='before-qa')await assertQaPacketFresh(workspace,value);return runRole(role,value);},{roleName:role.name,roleStage:stage,roleModel:role.model});}
         catch(error){
           if(role.gate)throw new Error(`Workflow role ${role.name} could not run: ${error.message}`);
           await emit('role-error',{roleId:role.id,roleName:role.name,stage,message:error.message});
-          r.roleResults[key]={error:error.message};await save();continue;
+          r.roleResults[key]={error:error.message,evidenceFingerprint};await save();continue;
         }
         if(op.stopped)return{stopped:true};
-        r.roleResults[key]={result:op.result};r.lastAppliedOperationId=op.operationId;await save(true);
+        r.roleResults[key]={result:op.result,evidenceFingerprint};r.lastAppliedOperationId=op.operationId;await save(true);
         await emit('role-result',{roleId:role.id,roleName:role.name,stage,verdict:op.result.verdict,summary:op.result.summary,findings:op.result.findings});
       }
       if(r.roleResults[key].result)results.push({id:role.id,name:role.name,gate:role.gate,result:r.roleResults[key].result});
@@ -115,7 +117,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       // attempt and review it again. HEAD and scope are reconciled below before QA runs.
       const retryControl=await readControl();
       if(r.phase==='blocked'&&Number(retryControl.qaRetryGeneration??0)>Number(r.qaRetryGeneration??0)&&qaRetryAvailability(r).available){
-        r.qaRetryGeneration=Number(retryControl.qaRetryGeneration);r.phase='evidence';r.blockedReason=null;
+        r.qaRetryGeneration=Number(retryControl.qaRetryGeneration);r.phase='evidence';r.blockedReason=null;r.forceFreshQa=true;
         await save();await emit('qa-retry',{attempt:r.attempt});
       }
       if(r.phase==='blocked'){
@@ -214,9 +216,11 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             r.phase='evidence';await save();await emit('cline-finished',{attempt:r.attempt,exitCode:r.workerResult.exitCode,durationMs:Date.now()-started});
           }
           if(r.phase==='evidence') {
+            if(r.forceFreshQa)for(const key of Object.keys(r.roleResults??{}))if(key.startsWith('before-qa:'))delete r.roleResults[key];
             const checks={tests:'NOT RUN',typecheck:'NOT RUN',lint:'NOT RUN',build:'NOT RUN',scopeCheck:'RUNNING'},category=classifyQaCommand(task.qaCommand);if(category)checks[category]='RUNNING';
             await emit('qa-evidence-started',{attempt:r.attempt,qaChecks:checks});
-            r.qaPacket=await prepareQa({task,attempt:r.attempt,baselineSha:r.baselineSha,workerResult:r.workerResult});
+            r.qaPacket=await prepareQa({task,attempt:r.attempt,baselineSha:r.baselineSha,workerResult:r.workerResult,previousPacket:r.forceFreshQa?null:r.qaPacket});
+            r.forceFreshQa=false;
             r.phase=stageRoles('before-qa').length?'review':'qa';await save();await emit('qa-evidence-finished',{attempt:r.attempt,qaChecks:r.qaPacket.qaEvidence.categories,changedFileCount:r.qaPacket.changedFiles.length,diffByteCount:r.qaPacket.diff.bytes,commands:[task.qaCommand],durationMs:r.qaPacket.qaEvidence.durationMs});
           }
           if(r.phase==='review') {
@@ -241,7 +245,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             if(!['pass','fail','recoverable','manual-review','blocked'].includes(r.failure.status))return block('Malformed QA decision');
             if(r.workerResult?.exitCode!==0 && r.failure.status==='pass')return block('QA accepted a failed local worker');
             // QA could not run its tools while the engine's own checks passed: an environment problem, not
-            // the code. Retry once with fresh evidence; a second time stops for the user (Retry QA after a fix).
+            // the code. Retry once, reusing stable passing engine evidence; a second time stops for the user.
             if(qaEnvironmentFailure(r.failure,r.qaPacket)) {
               await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
               const retried=r.qaEnvironmentRetry?.attempt===r.attempt;

@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, lstat, readlink } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -177,17 +179,66 @@ function conciseClineSummary(workerResult) {
   };
 }
 
+/** Hash tracked and non-ignored input files, including unchanged dependencies in the repository. */
+export async function workspaceFingerprint(workspace) {
+  const [head, index, untracked] = await Promise.all([
+    git(workspace, ["rev-parse", "HEAD"]),
+    git(workspace, ["ls-files", "--stage", "-z"]),
+    git(workspace, ["ls-files", "--others", "--exclude-standard", "-z"]),
+  ]);
+  if ([head, index, untracked].some(result => result.exitCode !== 0)) return null;
+  const tracked = index.stdout.split("\0").filter(Boolean).map(record => record.slice(record.indexOf("\t") + 1));
+  const files = [...new Set([...tracked, ...untracked.stdout.split("\0").filter(Boolean)])].sort();
+  const hash = createHash("sha256").update(head.stdout).update(index.stdout);
+  for (const file of files) {
+    const fullPath = path.resolve(workspace, file);
+    const relative = path.relative(workspace, fullPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    hash.update(JSON.stringify(file));
+    const details = await lstat(fullPath).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (!details) { hash.update("missing"); continue; }
+    if (details.isSymbolicLink()) hash.update("link:" + await readlink(fullPath));
+    else if (details.isFile()) {
+      const content = createHash("sha256");
+      for await (const chunk of createReadStream(fullPath)) content.update(chunk);
+      hash.update("file:" + content.digest("hex"));
+    } else hash.update("directory");
+  }
+  return hash.digest("hex");
+}
+
+/** Legacy packets lack a fingerprint and retain the existing scope/HEAD reconciliation path. */
+export async function assertQaPacketFresh(workspace, packet) {
+  const expected = packet.qaEvidence?.fingerprint?.workspace;
+  if (expected && expected !== await workspaceFingerprint(workspace)) {
+    throw new Error("QA evidence is stale: workspace content or HEAD changed; collect fresh check results before review");
+  }
+}
+
+const requestFingerprint = input => createHash("sha256").update(JSON.stringify(input)).digest("hex");
+
 export async function prepareQaPacket({
   workspace, stateDir, task, attempt, baselineSha, workerResult,
   runCommand = runDeterministicCommand,
+  previousPacket = null,
 }) {
   const started = Date.now();
+  const request = requestFingerprint({ task, attempt, baselineSha });
   const before = await collectGitEvidence({ workspace, task, baselineSha });
-  const commandResult = await runCommand(task.qaCommand, workspace);
+  const beforeFingerprint = await workspaceFingerprint(workspace);
+  const previous = previousPacket?.qaEvidence;
+  const reusable = beforeFingerprint && before.scope.status === "PASS" && previous?.fingerprint?.request === request && previous.fingerprint.workspace === beforeFingerprint && previous.workspaceStable === true && previous.command.exitCode === 0 && previous.scope.status === "PASS" && !Object.values(previous.categories).some(status => ["FAIL", "INCONCLUSIVE", "TIMEOUT", "RUNNING", "NON-TERMINATING"].includes(status));
+  const commandResult = reusable ? null : await runCommand(task.qaCommand, workspace);
   const after = await collectGitEvidence({ workspace, task, baselineSha });
-  const combined = [commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n").trim();
+  const afterFingerprint = await workspaceFingerprint(workspace);
+  const combined = commandResult ? [commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n").trim() : "";
   const summary = bounded(combined || "No command output.", OUTPUT_LIMIT);
-  const categories = { ...qaCategories(task.qaCommand, commandResult), scopeCheck: after.scope.status };
+  const categories = { ...(reusable ? previous.categories : qaCategories(task.qaCommand, commandResult)), scopeCheck: after.scope.status };
+  const workspaceStable = Boolean(beforeFingerprint && beforeFingerprint === afterFingerprint);
+  if (beforeFingerprint && !workspaceStable) {
+    const category = classifyQaCommand(task.qaCommand);
+    if (category && categories[category] === "PASS") categories[category] = "INCONCLUSIVE";
+  }
   const prompt = splitTaskPrompt(task);
   const packet = {
     task: { id: task.id, name: task.name ?? task.id, objective: prompt.objective, allowedPaths: [...task.allowedPaths] },
@@ -198,7 +249,7 @@ export async function prepareQaPacket({
     clineSummary: conciseClineSummary(workerResult),
     attempt,
     qaEvidence: {
-      command: {
+      command: reusable ? previous.command : {
         command: task.qaCommand,
         exitCode: commandResult.exitCode,
         durationMs: commandResult.durationMs,
@@ -206,10 +257,13 @@ export async function prepareQaPacket({
         truncated: summary.truncated,
       },
       categories,
-      ...(commandResult.steps ? { steps: commandResult.steps } : {}),
+      ...(reusable ? (previous.steps ? { steps: previous.steps } : {}) : (commandResult.steps ? { steps: commandResult.steps } : {})),
       scope: after.scope,
       durationMs: Date.now() - started,
       scopeBeforeCommand: before.scope.status,
+      fingerprint: { request, workspace: afterFingerprint },
+      workspaceStable,
+      reused: Boolean(reusable),
     },
   };
   await atomicWriteJson(path.join(stateDir, "qa-packet.json"), packet);

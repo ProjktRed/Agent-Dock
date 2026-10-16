@@ -199,6 +199,7 @@ export class DashboardState {
       paused: ["paused", "idle", next.qaStatus, next.manualReview],
       stopped: ["stopped", "idle", next.qaStatus, next.manualReview],
     };
+    if (event.type === "orchestrator-fallback") next.activeReasoningModel = event.model ?? null;
     const transition = transitions[event.type];
     if (transition) {
       [next.stage, next.clineStatus, next.qaStatus, next.manualReview] = transition;

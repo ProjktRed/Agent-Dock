@@ -108,7 +108,8 @@ tests/           vitest unit tests for the main-process logic
 | llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` → launcher `-ModelsDir` |
 | QA agent's CLI (Codex or Claude Code) | `--orchestrator codex\|claude` (+ `--codex-exe` / `--claude-command` for a custom path) |
 | QA, Assessment, Elevation agents: model, reasoning effort, speed (Resolver follows Assessment) | `--qa-model` / `--qa-effort` / `--qa-fast`, `--assessment-*`, `--resolver-*`, `--elevate-*` |
-| Engine guardrails off: Assessment or Elevation on another CLI than QA | `--assessment-cli` / `--resolver-cli` / `--elevate-cli codex\|claude` |
+| Assessment or Elevation on another CLI than QA (guardrails may stay on) | `--assessment-cli` / `--resolver-cli` / `--elevate-cli codex\|claude` |
+| Orchestrator agent: optional usage-limit backup agent | `--<role>-backup-cli`, `--<role>-backup-model`, `--<role>-backup-effort`, `--<role>-backup-fast` (Resolver follows Assessment) |
 | Automatic elevation (and Elevation agent enabled) | `--sol-reassessment` |
 | Worker tool guard | `--tool-guard` |
 | Attached task file | `--task` (validated with the engine's own `validateTask`, used once) |
@@ -164,13 +165,20 @@ or quitting the app can leave it running safely; the app reattaches on the next 
 - **Capabilities**: detected from each CLI's own `--help` output, never assumed.
 - Every setting carries a label: **Enforced by engine**, **Applied by app**, or **Saved only**
   (stored for future engine support).
-- **Engine guardrails** (Settings › Advanced, and the last setup step; on by default): keep QA,
-  Assessment and Elevation on one orchestrator CLI with models that CLI lists, and keep the
-  engine's loop limits fixed. Off (asks for confirmation): each role may use its own CLI and any
-  model, effort or speed (the engine routes each role to its own worker, one shared lock so calls
-  stay sequential), the loop limits become editable, and launch checks become warnings. The
+- **Engine guardrails** (Settings › Advanced, and the last setup step; on by default): each role
+  may use its own CLI, with that CLI's models and supported speed tiers; the engine's loop limits
+  stay fixed. Off (asks for confirmation): any model, effort or speed may be selected, loop limits
+  become editable, and model mismatches become warnings. Calls share one orchestrator lock and
+  stay sequential. The
   engine's safety checks (QA-only commits, scope and HEAD verification, stops on unsafe state)
   are unaffected.
+- **Usage-limit backups** (Agents › Configuration): select an enabled agent on the other CLI
+  for QA, Assessment or Elevation. Resolver uses Assessment's backup. A structured usage-limit
+  error retries only that operation once with identical inputs and the backup's own model,
+  effort and speed; Activity names the switch. Other errors do not cause failover. If both CLIs
+  are limited, the existing wait/Resume flow preserves the operation without rerunning
+  implementation. Selected custom executable paths are honored; roles sharing a CLI kind must
+  use the same executable. Both CLIs must pass startup checks.
 - **Loop limits** (editable with guardrails off; the defaults are the engine's built-in values):
   automatic Elevation after 3 attempted corrections; no correction limit (with one, the loop stops
   for you after that many corrections on a task, and Resume allows another round); 3 Resolver
@@ -205,12 +213,23 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   checkpointed like other engine operations (a resumed run never repeats a finished role), wait on
   usage limits like QA, and never edit files, commit or change HEAD. A role without an enabled
   agent is skipped, with a warning at start.
+- **Second-opinion QA** (Workflow › Templates): create this optional gate, then choose **New
+  agent** to use the other CLI from the project's primary QA, or assign an existing workflow
+  agent on that CLI. An enabled second opinion requires an agent and blocks launch if incomplete.
+  It reviews the scoped diff and engine evidence before QA; only QA accepts and commits.
+  Before-QA receipts are bound to the evidence they reviewed, so changing the code invalidates
+  their cached verdicts. A QA usage-limit backup may share the second-opinion reviewer's CLI.
+- **QA evidence reuse**: engine check results are shared with workflow reviewers and QA.
+  Automatic QA environment retries reuse passing checks only for the same task, criteria,
+  command, attempt, baseline and repository content. Failed or inconclusive evidence reruns.
+  Changed content or HEAD blocks use of a stale packet. **Retry QA** explicitly collects fresh
+  checks and reruns before-QA gates. Fingerprints cover tracked and non-ignored repository files;
+  use Retry QA after changing ignored/external dependencies or submodule contents.
 
 ## Known limitations
 
 - The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
   whichever model runs the role.
-- With engine guardrails on, QA, Assessment and Elevation share one orchestrator CLI.
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
 - Agent custom instructions, extra skills and protected paths are saved only; the engine does not
   read them yet.

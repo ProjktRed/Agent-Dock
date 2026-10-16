@@ -38,6 +38,8 @@ export interface Agent {
   role: Role;
   customRole?: string;
   cliId: string;
+  /** Optional agent on the other orchestrator CLI, tried once when this role reaches a usage limit. */
+  backupAgentId?: string;
   /** Provider selected for a Cline or OpenCode implementation worker; custom Cline roles use local providers. */
   provider?: "llamacpp" | "ollama" | "openai";
   /** Specific OpenAI-compatible connection used by an implementation worker. */
@@ -161,8 +163,8 @@ export interface Settings {
     debug: boolean;
     llamaCppLauncher: string;
     /**
-     * On: the app keeps agents inside what the engine is built for (one orchestrator CLI for QA,
-     * Assessment and Elevation; models the CLI lists). Off: any CLI and model per role, checks
+     * On: the app validates each role's model against its own CLI and fixes loop limits.
+     * Off: any model per role, checks
      * become warnings. For users who know the consequences.
      */
     engineGuardrails: boolean;
