@@ -1,10 +1,13 @@
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_OPENCODE_URL = "https://opencode.ai/inference/openai/v1";
+const OPENCODE_MODELS_URL = "https://opencode.ai/inference/v1/models";
 const API_KEY_ENV_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-export const REMOTE_PROVIDERS = ["openrouter", "openai"];
+export const REMOTE_PROVIDERS = ["openrouter", "opencode", "openai"];
 
 function normalizedBaseUrl(provider, baseUrl) {
-  const value = provider === "openrouter" ? (baseUrl || DEFAULT_OPENROUTER_URL) : baseUrl;
+  const value = provider === "openrouter" ? (baseUrl || DEFAULT_OPENROUTER_URL)
+    : provider === "opencode" ? (baseUrl || DEFAULT_OPENCODE_URL) : baseUrl;
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("--provider-base-url is required for --provider openai");
   }
@@ -36,12 +39,13 @@ export function createProviderDescriptor({
 }) {
   if (!REMOTE_PROVIDERS.includes(provider)) throw new Error(`Unsupported remote provider: ${provider}`);
   const baseUrl = normalizedBaseUrl(provider, providerBaseUrl);
+  const normalizedModel = provider === "opencode" ? model.replace(/^opencode\//, "") : model;
   const apiKeyEnv = validateApiKeyEnvName(providerApiKeyEnv);
   const apiKey = env[apiKeyEnv];
   const descriptor = {
     id: provider,
     baseUrl,
-    model,
+    model: normalizedModel,
     apiKeyEnv,
     contextTokens,
     maxOutputTokens,
@@ -54,7 +58,8 @@ export function createProviderDescriptor({
       let response;
       let body;
       try {
-        response = await fetchImpl(`${baseUrl}/models`, {
+        const modelsUrl = provider === "opencode" ? OPENCODE_MODELS_URL : `${baseUrl}/models`;
+        response = await fetchImpl(modelsUrl, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: controller.signal,
         });
@@ -67,10 +72,10 @@ export function createProviderDescriptor({
         clearTimeout(timer);
       }
       const advertisedModels = Array.isArray(body?.data) ? body.data.map((entry) => entry?.id).filter(Boolean) : [];
-      if (advertisedModels.length && !advertisedModels.includes(model)) {
-        throw new Error(`${provider} at ${baseUrl} does not advertise required model ${model}; advertised: ${advertisedModels.join(", ")}`);
+      if (advertisedModels.length && !advertisedModels.includes(normalizedModel)) {
+        throw new Error(`${provider} at ${baseUrl} does not advertise required model ${normalizedModel}; advertised: ${advertisedModels.join(", ")}`);
       }
-      return { requestedProvider: provider, provider, baseUrl, model, advertisedModels };
+      return { requestedProvider: provider, provider, baseUrl, model: normalizedModel, advertisedModels };
     },
     readMetrics: null,
     writeBackendConfig: null,

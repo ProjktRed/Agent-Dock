@@ -92,6 +92,23 @@ describe("engine launch args", () => {
     expect(flag("--tool-guard")).toBe("true");
     expect(plan.args).not.toContain("--codex-exe");
   });
+  it("detects OpenCode Console and normalizes its model-list endpoint for chat", () => {
+    const list = agents().map((agent) => agent.role === "implementation"
+      ? { ...agent, provider: "openai" as const, providerCliId: "zen", model: "deepseek-v4.1-flash-free" }
+      : agent);
+    const connection: CliConnection = {
+      id: "zen", kind: "openai", name: "OpenCode Console", location: "https://opencode.ai/inference/v1/",
+      builtIn: false, startupTimeoutSeconds: 15, requestTimeoutSeconds: 8, contextCap: null, defaultModel: null,
+      manualModels: [], env: [], hasSecret: true,
+    };
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: [...clis(), connection], settings: settings() });
+    const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
+
+    expect(plan.problems).toEqual([]);
+    expect(flag("--provider")).toBe("opencode");
+    expect(flag("--provider-base-url")).toBe("https://opencode.ai/inference/openai/v1");
+    expect(flag("--provider-api-key-env")).toBe("AGENT_DOCK_PROVIDER_KEY");
+  });
   it("switches to the Claude orchestrator and disables elevation when its agent is off", () => {
     const list = agents().map((a) => (a.role === "qa" || a.role === "assessment" ? { ...a, cliId: "claude" } : a.role === "elevation" ? { ...a, enabled: false } : a));
     const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
