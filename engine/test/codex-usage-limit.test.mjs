@@ -1,3 +1,4 @@
+import {dashboardFetch} from './dashboard-client.mjs';
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -21,7 +22,7 @@ const task = {
   id: "limit-task",
   name: "Limit task",
   prompt: "Implement without changing scope",
-  qaCommand: "fake qa",
+  qaCommand: "node --version",
   allowedPaths: ["result.txt"],
 };
 
@@ -106,7 +107,7 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     assert.equal(pending.operation, "qa");
     assert.deepEqual(pending.inputs, firstReviewInput);
     assert.equal(pending.attempt, 1);
-    const status = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+    const status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
     assert.equal(status.primaryStatus, "waiting for codex");
     assert.equal(status.task.id, task.id);
 

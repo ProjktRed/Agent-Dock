@@ -1,6 +1,9 @@
 import { dashboardFields, dashboardView, dashboardEvents } from "./view-model.js";
 import { createTaskDisclosure } from "./task-disclosure.js";
 import {createPhaseProgress} from './phase-progress.js';
+import {createAuthenticatedFetch} from './dashboard-auth.js';
+
+const fetch=createAuthenticatedFetch(window);
 
 const $ = (selector) => document.querySelector(selector);
 const set = (selector, value) => { const element = $(selector); if (element) element.textContent = value; };

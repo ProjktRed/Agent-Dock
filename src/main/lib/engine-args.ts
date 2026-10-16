@@ -83,6 +83,7 @@ export function buildEngineArgs(input: {
   clis: CliConnection[];
   settings: Settings;
   roles?: WorkflowRole[];
+  protectedRoots?: string[];
 }): EngineLaunchPlan {
   const { project, agents, clis, settings, roles: workflowRoles = [] } = input;
   const problems: string[] = [];
@@ -132,6 +133,9 @@ export function buildEngineArgs(input: {
   if (qa) useConnection(qa, "QA");
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
+  const protectedPaths = settings.safety?.protectedPaths;
+  if (!Array.isArray(protectedPaths) || protectedPaths.some(p => typeof p !== "string" || !p.trim() || /[\0\r\n]/.test(p))) problems.push("Protected paths must be nonempty paths.");
+  else args.push("--protected-paths", JSON.stringify([...new Set([...protectedPaths, project.stateDir, ...(input.protectedRoots ?? [])])]));
   if (impl && (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl.provider) {
     const selectedProviderConn = impl.provider === "openai" && impl.providerCliId ? clis.find((c) => c.id === impl.providerCliId) : undefined;
     const providerConn = impl.provider === "openai"

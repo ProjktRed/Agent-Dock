@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import {installProtection} from './guard/install-protection.mjs';
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -246,7 +247,8 @@ export class CodexWorker {
       // Codex's Fast speed tier (model/list serviceTiers id "priority"); omitted keeps the user's config.
       ...(fast ? ["-c", `service_tier="priority"`] : []),
     ];
-    const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs,
+    const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
+    const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
       ...(sandbox === "workspace-write" ? ["--approve-for-me"] : ["--sandbox", sandbox]),
       "--cd", this.workspace, "--output-schema", schemaFile,
       "--output-last-message", outputFile, "-"];
@@ -328,6 +330,7 @@ export class CodexWorker {
       "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
       "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
+      "qaCommand must use an existing project npm test/run script, or a supported local check (npx tsc, eslint, prettier, vitest or playwright), optionally chained with &&. No arbitrary executables, package installation, interpreters, shell expressions or output redirection. Protected paths cannot be inspected or edited; narrow file searches to public source directories and use git ls-files for discovery.",
       "Before returning a task, verify that allowedPaths are sufficient for every implementation change reasonably required to make qaCommand pass. Do not create a task whose required contract change predictably breaks typed fixtures or callers that the task forbids Cline to update.",
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",
       "Do not weaken tests or use type assertions such as any to evade a contract mismatch; include the genuinely affected fixtures in allowedPaths or choose a smaller coherent task.",

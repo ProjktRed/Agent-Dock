@@ -58,13 +58,17 @@ export function shellAllowed(script, qaCommand) {
 export function toAction(event) {
   const tool = String(event?.tool_name ?? "");
   const input = event?.tool_input;
-  const touched = patchPaths(input);
+  // Classify by the native tool, never by patch-looking text inside a shell script.
+  const touched = /(?:^|[._])(?:apply_patch|patch)$/i.test(tool) ? patchPaths(input) : null;
   if (touched !== null) return { kind: "edit", tool, input, paths: touched, patch: true, cwd: event?.cwd };
   if (/patch|edit|write/i.test(tool)) return { kind: "edit", tool, input, paths: [], patch: false, cwd: event?.cwd };
   const script = shellScript(input);
-  if (script !== null) return { kind: "command", tool, commands: [script], cwd: event?.cwd };
+  if (script !== null) return { kind: "command", tool, input, commands: [script], cwd: input?.workdir ?? input?.cwd ?? event?.cwd };
   if (tool.startsWith("mcp__")) return { kind: "unknown", tool, input };
-  return { kind: "inspect", tool };
+  const native=tool.split('.').at(-1).toLowerCase();
+  const kind=['read','read_file','read_files','view_image'].includes(native)?'read'
+    : ['grep','glob','grep_files','list_dir','list_directory','search_codebase','update_plan','request_user_input'].includes(native)?'inspect':'unknown';
+  return { kind, tool, input, cwd: event?.cwd };
 }
 
 export function checkToolUse(policy, event) {

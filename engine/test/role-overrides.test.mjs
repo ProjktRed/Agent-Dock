@@ -81,9 +81,9 @@ test("Claude uses an overridden model and effort as given, and opts in to fast m
   const args = calls[0].args;
   assert.equal(args[args.indexOf("--model") + 1], "claude-opus-4-8");
   assert.equal(args[args.indexOf("--effort") + 1], "max");
-  assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), { fastMode: true });
+  assert.equal(JSON.parse(args[args.indexOf("--settings") + 1]).fastMode, true);
   calls.length = 0;
   await claude.invoke("p", "read-only", { model: "gpt-6-astra", reasoningEffort: "medium" });
   assert.equal(calls[0].args[calls[0].args.indexOf("--model") + 1], CLAUDE_MODELS.elevate, "Codex default labels still map to the Claude defaults");
-  assert.ok(!calls[0].args.includes("--settings"));
+  assert.equal(JSON.parse(calls[0].args[calls[0].args.indexOf('--settings')+1]).fastMode,false);
 });

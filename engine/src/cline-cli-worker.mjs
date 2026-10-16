@@ -648,7 +648,7 @@ export class ClineCliWorker {
     let result;
     let failure;
     try {
-      const guard = this.toolGuard ? await prepareToolGuard({ stateDir: this.stateDir, workspace: this.options.workspace }) : null;
+      const guard = this.toolGuard || process.env.AGENT_DOCK_PROTECTED_PATHS ? await prepareToolGuard({ stateDir: this.stateDir, workspace: this.options.workspace }) : null;
       if (guard) await verifyRestrictedTools(guard);
       const guardLaunch = guard ? clineGuard.launchConfiguration({ configDir: guard.configDir, hooksDir: guard.hooksDir, dataDir: this.options.dataDir, pluginPath: guard.pluginPath }) : null;
       const launchOnEvent = this.providerSecrets.length ? (event) => onEvent(this.redactProviderEvent(event)) : onEvent;

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
 import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, Project, ProjectStatus, Settings, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
@@ -22,6 +22,16 @@ import { Updater } from "./updater";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
+import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
+
+try {
+  assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
+} catch(error) {
+  console.error((error as Error).message);
+  app.exit(64);
+}
+app.on('web-contents-created',(_event,contents)=>hardenWebContents(contents));
+app.on('session-created',created=>hardenSession(created));
 
 // Portable copy: a portable.json beside AgentDock.exe keeps every setting, project and log in a
 // data folder next to it (a flash drive carries the whole setup). Must run before anything reads userData.
@@ -167,7 +177,7 @@ function osNotify(title: string, body: string) {
 }
 
 function launchCheck(p: Project): LaunchCheck {
-  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis, settings: store.data.settings, roles: roles.roles });
+  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis, settings: store.data.settings, roles: roles.roles, protectedRoots: [store.dir, engineDir, ...(app.isPackaged ? [path.dirname(process.execPath)] : [])] });
 }
 
 /** Engine arguments for a start; writes the workflow roles the engine reads (--roles-file) into the project's state folder. */
@@ -274,7 +284,7 @@ function createWindow() {
     show: false,
     icon: appIcon(256),
     title: "Agent Dock",
-    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
   });
   win.on("focus", checkOnFocus);
   win.once("ready-to-show", () => {
@@ -295,7 +305,7 @@ function createWindow() {
     event.preventDefault();
     if (isExternalWebUrl(url)) void shell.openExternal(url);
   });
-  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void win.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
@@ -603,6 +613,7 @@ app.on("window-all-closed", () => {
 });
 
 app.whenReady().then(async () => {
+  hardenSession(session.defaultSession);
   await store.load();
   await roles.load();
   engineInfo = await engine.info();

@@ -194,7 +194,8 @@ or quitting the app can leave it running safely; the app reattaches on the next 
     prompt, and an attempt in which Codex used tools without the hook running is refused.
 
   With the tool guard on, the shell is also limited to the task's check command, lint/typecheck and
-  read-only commands (with it off, the shell is open, so shell commands could still write files).
+  read-only commands. Protected-path and shell-syntax checks stay on even when that optional
+  guard is off. Cline and OpenCode retain their restricted tool runtime for this boundary.
   The worker is told never to commit, git write commands are denied, and Node's scope and HEAD
   checks plus independent QA still gate every change. An interrupted implementation is never
   replayed (the same rule as for Cline).
@@ -226,12 +227,53 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   checks and reruns before-QA gates. Fingerprints cover tracked and non-ignored repository files;
   use Retry QA after changing ignored/external dependencies or submodule contents.
 
+## Security boundaries (0.16.5)
+
+- **Protected paths** in Settings › Safety now reach every engine launch through
+  `--protected-paths` (a JSON string array). Paths may be workspace-relative or absolute;
+  `*`, `?` and `**` patterns are supported. Basename patterns such as `.env*` include nested
+  matches. The running engine, application installation, settings and project-state folders
+  are protected automatically. Changes take effect on the next engine start.
+- Codex, Claude Code, Cline and OpenCode tool calls are checked before access. Canonical path
+  checks include symlink/junction targets and missing-file parents. Recursive searches that
+  include protected content are refused; narrow the search to source directories. Git metadata
+  inspection remains available. Protected changes fail QA scope checks and suppress the whole
+  diff, including content moved to a previously unprotected filename.
+- Assessment cannot choose an arbitrary QA shell program. QA commands are limited to project
+  npm scripts, supported local check tools, and bounded Git inspection. Shell expressions,
+  interpreters, redirection, package installation and ambiguous path syntax are refused.
+  Project scripts and their dependencies still execute as trusted code: these guards are
+  **not an OS sandbox**, and do not defend against a malicious project script, a compromised
+  CLI, concurrent filesystem races, or a process already running as your user. CLI startup
+  configuration/automatic context loading is also outside tool-hook mediation.
+- The standalone engine dashboard requires a fresh random bearer token for every API route.
+  Its browser launch link carries the token in a fragment, which the page removes from history
+  and saves per tab. A server restart invalidates older tokens. Tokens are not written to engine
+  logs. Host, origin and JSON request checks remain enforced.
+- Packaged Electron refuses debugging/inspection switches, ignores development renderer URL
+  overrides, denies web permissions and webviews, and packages with ASAR integrity/load-path
+  and Node environment/inspection fuses. Electron's RunAsNode fuse remains enabled because
+  the engine and CLI hooks use its bundled Node runtime. The pinned electron-builder 25 uses
+  `scripts/harden-electron.cjs` as an `afterPack` hook (before signing), since it predates the
+  `electronFuses` configuration option. See [Electron's fuse documentation](https://www.electronjs.org/docs/latest/tutorial/fuses).
+
+To verify a Windows security test package without installing or opening its UI:
+
+```powershell
+npm run build
+npx electron-builder --win --dir --config.directories.output=dist/security
+node scripts/verify-packaged-security.mjs dist/security/win-unpacked/AgentDock.exe
+```
+
+The smoke test checks the actual packaged fuses, bundled Node startup and rejection of
+debugging switches. It does not replace live-provider integration testing or an OS sandbox.
+
 ## Known limitations
 
 - The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
   whichever model runs the role.
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
-- Agent custom instructions, extra skills and protected paths are saved only; the engine does not
+- Agent custom instructions and extra skills are saved only; the engine does not
   read them yet.
 - A usage limit hit during a Codex or Claude Code implementation stops that attempt. Because an
   interrupted implementation is never replayed, the task then needs Resolve or your decision.

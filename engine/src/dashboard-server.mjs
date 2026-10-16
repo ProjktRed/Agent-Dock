@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { diagnostic } from "./diagnostics.mjs";
 import { fileURLToPath } from "node:url";
+import {randomBytes,timingSafeEqual} from 'node:crypto';
 
 import { DashboardState } from "./dashboard-state.mjs";
 import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
@@ -72,6 +73,7 @@ async function serveAsset(response, pathname) {
   const assets = {
     "/": ["index.html", "text/html; charset=utf-8"],
     "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+    "/dashboard-auth.js": ["dashboard-auth.js", "text/javascript; charset=utf-8"],
     "/view-model.js": ["view-model.js", "text/javascript; charset=utf-8"],
     "/task-disclosure.js": ["task-disclosure.js", "text/javascript; charset=utf-8"],
     "/phase-progress.js": ["phase-progress.js", "text/javascript; charset=utf-8"],
@@ -102,12 +104,21 @@ export function requestRefusal(request, port) {
 }
 
 export async function startDashboardServer({ stateDir, workspace, port = 4173, onControl = async () => {} }) {
+  const token=randomBytes(32).toString('hex');
   const state = new DashboardState({ stateDir });
   const server = createServer(async (request, response) => {
     try {
+      response.setHeader('referrer-policy','no-referrer');
+      response.setHeader('x-content-type-options','nosniff');
+      response.setHeader('content-security-policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
       const refusal = requestRefusal(request, server.address()?.port);
       if (refusal) return sendJson(response, 403, { error: refusal });
       const url = new URL(request.url, "http://127.0.0.1");
+      if(url.pathname.startsWith('/api/')) {
+        const actual=Buffer.from(String(request.headers.authorization??''));
+        const expected=Buffer.from('Bearer '+token);
+        if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return sendJson(response,401,{error:'Dashboard authentication required. Open the launch link for this running engine.'});
+      }
       if (request.method === "GET" && url.pathname === "/api/status") {
         const [live, control, events, git] = await Promise.all([
           state.readLive(),
@@ -183,6 +194,8 @@ export async function startDashboardServer({ stateDir, workspace, port = 4173, o
   diagnostic("DASHBOARD_SERVER_ALIVE", { host: "127.0.0.1", port: address.port });
   return {
     url: `http://127.0.0.1:${address.port}`,
+    launchUrl: `http://127.0.0.1:${address.port}/#token=${token}`,
+    token,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
   };
 }

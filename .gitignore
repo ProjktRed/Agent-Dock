@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# Alternate output used by security packaging smoke tests
+dist-security/
 *.log
 engine/node_modules/
 .devtest/

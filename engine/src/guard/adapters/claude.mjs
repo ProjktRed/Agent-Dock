@@ -1,3 +1,6 @@
+import {fileURLToPath} from 'node:url';
+import {toAction as codexAction} from './codex.mjs';
+
 const shell = (prefixes) => prefixes.flatMap((p) => [`Bash(${p}:*)`, `PowerShell(${p}:*)`]);
 const GIT_READ = ["git status", "git diff", "git log", "git show", "git rev-parse", "git ls-files"];
 const GIT_WRITE = ["git commit", "git add", "git reset", "git checkout", "git switch", "git restore", "git stash", "git rebase", "git merge", "git push", "git tag", "git branch -d", "git branch -D", "git config"];
@@ -21,8 +24,17 @@ export const adapter = {
   stateSubdir: null,
   capabilities: {
     narrowsToolSchema: false, enumeratesCommands: false, postToolEvents: false,
-    outOfProcessHooks: false, counters: false, editDiscipline: false,
+    outOfProcessHooks: true, counters: false, editDiscipline: false,
   },
+  toAction(event) {
+    const tool=String(event?.tool_name??'');
+    if(['Edit','Write','NotebookEdit'].includes(tool))return {kind:'edit',tool,input:event.tool_input,paths:[event.tool_input?.file_path??event.tool_input?.notebook_path],patch:false,cwd:event.cwd};
+    return codexAction(event);
+  },
+  toControl(decision) {
+    return {exitCode:0,stdout:JSON.stringify(decision.effect==='allow'?{}:{hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:decision.reason}})+'\n'};
+  },
+  reasons:{hookError:error=>'Protected-path hook failed: '+error.message},
   install({ task, toolGuard, model, effort, fast }) {
     const tools = claudeImplementationTools({ task, toolGuard });
     return { launchArgs: ["--permission-mode", "dontAsk",
@@ -31,5 +43,13 @@ export const adapter = {
       "--allowedTools", ...tools.allowed, "--disallowedTools", ...tools.disallowed] };
   },
 };
+
+const hookScript=fileURLToPath(new URL('../../claude-protection-hook.mjs',import.meta.url));
+export function claudeProtectionSettings({policyFile,logFile,fast=false,nodePath=process.execPath}) {
+  // Native hooks run in a shell: reject characters that could alter the generated command.
+  const parts=[nodePath,hookScript,policyFile,logFile];
+  if(parts.some(p=>typeof p!=='string'||/["`$%\r\n]/.test(p)))throw Error('Unsafe path for Claude protection hook');
+  return {fastMode:fast,hooks:{PreToolUse:[{matcher:'.*',hooks:[{type:'command',command:parts.map(p=>'"'+p+'"').join(' '),timeout:30}]}]}};
+}
 
 export default adapter;

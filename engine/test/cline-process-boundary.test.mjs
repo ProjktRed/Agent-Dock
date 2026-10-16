@@ -1,3 +1,4 @@
+import {dashboardFetch} from './dashboard-client.mjs';
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -106,7 +107,7 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
     launch: () => clineAdapter.collectClineProcess("fake", [], { spawnProcess, drainTimeoutMs: 50 }),
   });
   try {
-    const before = await fetch(`${run.dashboard.url}/api/status`);
+    const before = await dashboardFetch(run.dashboard, "/api/status");
     assert.equal(before.status, 200);
     const quick = await Promise.race([run.loop, timeout(400)]);
     assert.notEqual(quick.timedOut, true, "worker waited for descendant-held pipe close");
@@ -114,7 +115,7 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
     assert.ok(run.events.some((event) => event.type === "codex-qa-started"));
     assert.equal(heldStdout.destroyed, true);
     assert.equal(heldStderr.destroyed, true);
-    assert.equal((await fetch(`${run.dashboard.url}/api/status`)).status, 200);
+    assert.equal((await dashboardFetch(run.dashboard, "/api/status")).status, 200);
     assert.equal(await run.state.readLive().then((live) => live.stage), "complete");
     await assert.rejects(import("node:fs/promises").then(({ access }) => access(path.join(run.stateDir, "cline.busy.lock"))));
   } finally {
@@ -128,7 +129,7 @@ test("non-zero Cline exit can enter explicit controlled manual review while dash
     const result = await run.loop;
     assert.equal(result.status, "blocked");
     assert.ok(run.events.some((event) => event.type === "cline-finished" && event.exitCode === 7));
-    const status = await fetch(`${run.dashboard.url}/api/status`).then((response) => response.json());
+    const status = await dashboardFetch(run.dashboard, "/api/status").then((response) => response.json());
     assert.equal(status.stage, "BLOCKED");
     assert.match(status.latestQa, /fake QA failure/);
   } finally {
@@ -142,7 +143,7 @@ test("bounded Cline timeout remains a controlled manual-review state", async () 
     const result = await run.loop;
     assert.equal(result.status, "blocked");
     assert.ok(run.events.some((event) => event.type === "cline-finished" && event.exitCode === 124));
-    assert.equal((await fetch(`${run.dashboard.url}/api/status`)).status, 200);
+    assert.equal((await dashboardFetch(run.dashboard, "/api/status")).status, 200);
   } finally { await dispose(run); }
 });
 
@@ -150,7 +151,9 @@ test("stdout and stderr ending before process exit cannot deadlock completion", 
   for (const prompt of ["stdout-first", "stderr-first"]) {
     const run = await harness({ prompt });
     try {
-      const result = await Promise.race([run.loop, timeout(400)]);
+      // This covers the entire persisted loop, not just process draining. Windows state
+      // writes can exceed 400 ms; a true deadlock still exceeds this bounded deadline.
+      const result = await Promise.race([run.loop, timeout(2000)]);
       assert.notEqual(result.timedOut, true, `${prompt} deadlocked`);
       assert.equal(run.getQaLaunches(), 1);
     } finally {
@@ -189,7 +192,7 @@ test("missing or malformed final run_result becomes manual review without stoppi
       const result = await run.loop;
       assert.equal(result.status, "blocked");
       assert.match(result.output, /run_result/i);
-      const response = await fetch(`${run.dashboard.url}/api/status`);
+      const response = await dashboardFetch(run.dashboard, "/api/status");
       assert.equal(response.status, 200);
       assert.equal((await response.json()).stage, "BLOCKED");
     } finally {
@@ -203,8 +206,8 @@ test("worker completion cannot terminate or close the dashboard process", async 
   try {
     await run.loop;
     assert.equal(process.exitCode, undefined);
-    const first = await fetch(`${run.dashboard.url}/api/status`);
-    const second = await fetch(`${run.dashboard.url}/api/status`);
+    const first = await dashboardFetch(run.dashboard, "/api/status");
+    const second = await dashboardFetch(run.dashboard, "/api/status");
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
   } finally {

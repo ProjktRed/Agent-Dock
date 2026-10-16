@@ -1,5 +1,6 @@
 import {approvedPath,approvedCommand,unsafeCommand} from './policy.mjs';
 import {failedResult} from './action.mjs';
+import {protectedActionReason} from './protected-paths.mjs';
 import {rememberRead,checkSmallEdit,rememberEditFailure,nativeError} from './edit-discipline.mjs';
 import {cancelPrefix,COMMAND_NOT_APPROVED,UNKNOWN_TOOL,TWO_EDIT_FAILURES,HANDSHAKE_MISSING,COMMAND_SAFETY_FAILED,UNSAFE_COMMAND,UNAPPROVED_TOOL_PATH,SOFT_REJECT,THREE_INVALID_REQUESTS,MISSING_TOOL_INPUT,EDIT_PATH_OUTSIDE,PATCH_PATHS_NOT_EXPLICIT,PATCH_PATH_OUTSIDE} from './reasons.mjs';
 
@@ -42,6 +43,15 @@ function decideStateless(policy,action,adapter){
 
 /** Stateless adapters stay synchronous; stateful decisions may resolve paths. */
 export function decide(policy,action,{adapter,mode='hook'}={}){
+ // Cline's narrowed SDK never executes unknown tools or non-enumerated commands.
+ // Keep its retry/counter protocol; its plugin is the final gate after the file hook.
+ const sdkRejected=adapter?.id==='cline'&&policy.runtimeReady&&(
+   mode==='unregistered'||action.kind==='unknown'||
+   action.kind==='command'&&!adapter.validCommandInput(policy,action.input)&&!unsafeCommand(JSON.stringify(action.input)??''));
+ if(sdkRejected)return decideStateful(policy,action,adapter,mode);
+ const protection=protectedActionReason(policy,action);
+ if(protection)return adapter?.capabilities.counters===false?stop(protection):hardStop(policy,protection,action);
+ if(policy.protectionOnly)return allow();
  if(adapter?.capabilities.counters===false)return decideStateless(policy,action,adapter);
  return decideStateful(policy,action,adapter,mode);
 }

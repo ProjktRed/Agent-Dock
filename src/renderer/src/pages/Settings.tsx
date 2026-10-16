@@ -315,7 +315,7 @@ function Safety() {
   return (
     <div className="stack" style={{ gap: 20 }}>
       {!w.toolGuard && (
-        <div className="banner warnb fade-in" role="alert"><Icon name="warn" className="warn" /><div className="grow"><div style={{ fontWeight: 600 }}>This configuration can cause unsafe repository changes</div><div className="sub">With the tool guard off, Cline runs with its normal tools: it can run interpreters, redirect output and write helper files. Node scope/HEAD checks and QA still gate every accepted change.</div></div></div>
+        <div className="banner fade-in" role="status"><Icon name="lock" className="info" /><div className="grow"><div style={{ fontWeight: 600 }}>Protected-path checks stay on</div><div className="sub">Turning off the optional tool guard does not allow protected paths, interpreters or arbitrary shell scripts. Cline and OpenCode still use restricted tools to enforce this boundary. Loop-limit settings are independent.</div></div></div>
       )}
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Worker tool guard</h2>
@@ -337,8 +337,8 @@ function Safety() {
         </ul>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
-        <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="saved" /></div>
-        <span className="sub">Extra paths to keep out of every task. Saved for engine support; today, scope is enforced through each task's allowed paths.</span>
+        <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="engine" /></div>
+        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. Project check scripts still run as trusted code.</span>
         <div className="row wrap" style={{ gap: 8 }}>
           {paths.map((p) => <span className="chip raised mono" key={p}>{p}<button className="x" aria-label={`Remove ${p}`} onClick={() => patch("safety", { protectedPaths: paths.filter((x) => x !== p) })}><Icon name="close" size="sm" /></button></span>)}
         </div>

@@ -50,7 +50,7 @@ test("failed or inconclusive checks are rerun, never promoted by reuse", async t
   const failed = await prepareQaPacket({ ...input, runCommand: async () => ({ exitCode: 1, stdout: "failed", stderr: "", durationMs: 1 }) });
   await prepareQaPacket({ ...input, previousPacket: failed });
   assert.equal(input.count(), 1);
-  const inconclusive = await prepareQaPacket({ ...input, task: { ...input.task, qaCommand: 'npm test && echo "x && y"' } });
+  const inconclusive = await prepareQaPacket({ ...input, task: { ...input.task, qaCommand: 'npm test && npm run typecheck' } });
   await prepareQaPacket({ ...input, task: { ...input.task, qaCommand: inconclusive.qaEvidence.command.command }, previousPacket: inconclusive });
   assert.equal(input.count(), 3);
 });

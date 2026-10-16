@@ -139,7 +139,7 @@ export async function install({policy,policyPath,guardDir,providerDescriptor,mod
 }
 
 export async function prepareOpenCodeGuard({stateDir,workspace,providerDescriptor,model,steps,task}){
- const policy=await createPolicy(task??await readJson(path.join(stateDir,'current-task.json')),workspace);
+ const policy=await createPolicy(task??await readJson(path.join(stateDir,'current-task.json')),workspace,{stateDir});
  const root=path.join(path.resolve(stateDir),adapter.stateSubdir),policyPath=path.join(root,'policy.json'),guardDir=path.join(root,'runs',randomUUID());
  await atomicWriteJson(policyPath,policy);
  return install({policy,policyPath,guardDir,providerDescriptor,model,steps});

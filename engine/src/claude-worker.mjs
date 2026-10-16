@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import {installProtection} from './guard/install-protection.mjs';
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -71,11 +72,12 @@ export class ClaudeWorker extends CodexWorker {
     // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
     if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
+    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
     const args = [...this.prefixArgs, "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
-      ...(fast ? ["--settings", JSON.stringify({ fastMode: true })] : []),
+      ...protectionArgs,
       "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
       "--disallowedTools", ...NEVER_TOOLS,
       ...(writable ? this.additionalWritableDirs.flatMap((dir) => ["--add-dir", dir]) : [])];

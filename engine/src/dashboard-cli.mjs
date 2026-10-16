@@ -74,8 +74,8 @@ const dashboard = await startDashboardServer({
     if (action === "resume" && !automation && !elevateWorker) spawnAutomation();
   },
 });
-console.log(`Dashboard: ${dashboard.url}`);
-openDashboard(dashboard.url);
+console.log(`Dashboard: ${dashboard.url} (authenticated link opened in your browser)`);
+openDashboard(dashboard.launchUrl);
 
 let pending = null;
 try { pending = JSON.parse(await readFile(path.join(stateDir, "pending-codex.json"), "utf8")); }

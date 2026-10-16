@@ -12,6 +12,7 @@ import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
+import {configureProtection} from './guard/protected-paths.mjs';
 
 installTopLevelDiagnostics();
 
@@ -23,6 +24,7 @@ if (!options.workspace || !options.objective) {
 }
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
+configureProtection({workspace,stateDir,paths:options['protected-paths']});
 const maxAttempts = null;
 const pollMs = Number(options["poll-seconds"] ?? 2) * 1000;
 if (!Number.isFinite(pollMs) || pollMs < 100) throw new Error("Invalid polling interval");

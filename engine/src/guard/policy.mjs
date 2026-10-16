@@ -1,12 +1,13 @@
 import path from 'node:path';
 import {realpath,lstat} from 'node:fs/promises';
 import {PREPARE_INVALID_TASK} from './reasons.mjs';
+import {isProtectedPath,protectedPathsFor} from './protected-paths.mjs';
 
 const within=(root,file)=>{const relative=path.relative(root,file);return relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative));};
 export const normalizeCommand=command=>command.trim().replace(/^npm\.cmd\b/i,'npm').replace(/^npx\.cmd\b/i,'npx').replace(/\s+/g,' ');
 export const unsafeCommand=command=>/[\r\n;$`><]/.test(command)||/\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|writeFile|unlink|rmdir|del|erase)\b/i.test(command)||/\bgit\s+(?:reset|clean|checkout|restore|commit|add|push|rebase|stash|merge|switch|update-index|config)\b/i.test(command)||/\b(?:python|node|cmd|powershell|pwsh)\b.*(?: -[ce]| -Command| -File| \/c)\b/i.test(command)||/\b(?:npm|npx)(?:\.cmd)?\s+(?:exec|install|uninstall|publish)\b/i.test(command)||/\bprettier\s+--write\b/.test(command);
 
-export async function createPolicy(task,workspace){
+export async function createPolicy(task,workspace,security={}){
   if(!task.id||!Array.isArray(task.allowedPaths)||!task.allowedPaths.length||typeof task.qaCommand!=='string')throw Error(PREPARE_INVALID_TASK);
   const resolvedWorkspace=await realpath(workspace);
   const approvedCommands=[task.qaCommand,'npm run lint','npm run typecheck','git diff --check',
@@ -14,7 +15,7 @@ export async function createPolicy(task,workspace){
   const commandChoices=[...new Set([...approvedCommands,
     'git status --short','git diff --stat','git diff --numstat','git diff --name-only','git rev-parse HEAD',
     ...task.allowedPaths.filter(p=>/^[\w][\w./-]*$/.test(p)&&!p.split('/').includes('..')).flatMap(p=>[`git diff -- ${p}`,`git ls-files -- ${p}`,`git show HEAD:${p}`])])];
-  const policy={version:1,taskId:task.id,workspace:resolvedWorkspace,allowedPaths:task.allowedPaths,approvedCommands,commandChoices:[],runtimeReady:false,invalidToolCalls:0,failedEdits:0,stopped:false,reason:null};
+  const policy={version:1,taskId:task.id,workspace:resolvedWorkspace,protectedPaths:protectedPathsFor({workspace:resolvedWorkspace,...security}),qaCommand:task.qaCommand,allowedPaths:task.allowedPaths,approvedCommands,commandChoices:[],runtimeReady:false,invalidToolCalls:0,failedEdits:0,stopped:false,reason:null};
   for(const command of commandChoices)if(await approvedCommand(policy,command))policy.commandChoices.push(command);
   policy.commandChoices=[...new Set(policy.commandChoices.flatMap(command=>/^(?:npm|npx) /.test(command)?[command,command.replace(/^(npm|npx) /,'$1.cmd ')]:[command]))];
   return policy;
@@ -22,6 +23,7 @@ export async function createPolicy(task,workspace){
 
 export async function approvedPath(policy,file){
   if(typeof file!=='string'||!file.trim())return false;
+  if(isProtectedPath(policy,file))return false;
   const absolute=path.resolve(policy.workspace,file);
   if(!within(policy.workspace,absolute))return false;
   const scopes=[];

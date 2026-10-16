@@ -49,6 +49,8 @@ test("assessment runs Sonnet read-only with structured output and a clean env", 
   const { args, options, prompt } = calls[0];
   assert.deepEqual(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2), ["--model", "sonnet"]);
   assert.ok(args.includes("--json-schema") && args.includes("dontAsk"));
+  assert.ok(args.includes('--settings'), 'orchestrators must load the protected-path hook');
+  assert.ok(JSON.parse(args[args.indexOf('--settings')+1]).hooks.PreToolUse.length);
   assert.ok(!args.includes("Bash") && !args.includes("PowerShell"), "no unrestricted shell");
   assert.ok(!args.some((a) => /git (add|commit)/.test(a)), "assessment cannot commit");
   assert.ok(args.includes("Edit") && args.indexOf("Edit") > args.indexOf("--disallowedTools"));

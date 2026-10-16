@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
+import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
@@ -124,7 +125,8 @@ function splitTaskPrompt(task) {
   return { objective: task.objective ?? parts[0].trim(), acceptanceCriteria };
 }
 
-export async function collectGitEvidence({ workspace, task, baselineSha }) {
+export async function collectGitEvidence({ workspace, task, baselineSha, stateDir }) {
+  const protection={workspace,protectedPaths:protectedPathsFor({workspace,stateDir})};
   const [head, status] = await Promise.all([
     git(workspace, ["rev-parse", "HEAD"]),
     git(workspace, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
@@ -132,6 +134,7 @@ export async function collectGitEvidence({ workspace, task, baselineSha }) {
   const changedFiles = status.exitCode === 0 ? parseStatus(status.stdout) : [];
   const allowed = new Set(task.allowedPaths.map((item) => item.replaceAll("\\", "/")));
   const unexpectedPaths = changedFiles.filter((item) => !allowed.has(item));
+  const protectedChanges = changedFiles.filter(item => isProtectedPath(protection,item));
   let scopeStatus = "PASS";
   let scopeMessage = "All changed paths are approved.";
   if (head.exitCode !== 0 || status.exitCode !== 0) {
@@ -144,7 +147,11 @@ export async function collectGitEvidence({ workspace, task, baselineSha }) {
       : `Changes outside allowedPaths: ${unexpectedPaths.join(", ")}`;
   }
 
-  const scoped = changedFiles.filter((item) => allowed.has(item));
+  if(protectedChanges.length){scopeStatus='FAIL';scopeMessage=`Changes to protected paths: ${protectedChanges.join(', ')}`;}
+
+  // A rename/copy can carry protected contents into an otherwise approved name.
+  // Once protected changes exist, fail closed on the entire diff rather than exposing it.
+  const scoped = protectedChanges.length ? [] : changedFiles.filter((item) => allowed.has(item));
   const trackedDiff = scoped.length
     ? await git(workspace, ["diff", "--no-ext-diff", "--no-color", "HEAD", "--", ...scoped])
     : { exitCode: 0, stdout: "", stderr: "" };
@@ -165,7 +172,7 @@ export async function collectGitEvidence({ workspace, task, baselineSha }) {
   return {
     changedFiles,
     diff: { text: limited.text, bytes: originalBytes, truncated: limited.truncated },
-    scope: { status: scopeStatus, unexpectedPaths, message: scopeMessage },
+    scope: { status: scopeStatus, unexpectedPaths, protectedPaths: protectedChanges, message: scopeMessage },
   };
 }
 
@@ -181,6 +188,7 @@ function conciseClineSummary(workerResult) {
 
 /** Hash tracked and non-ignored input files, including unchanged dependencies in the repository. */
 export async function workspaceFingerprint(workspace) {
+  const protection={workspace,protectedPaths:protectedPathsFor({workspace})};
   const [head, index, untracked] = await Promise.all([
     git(workspace, ["rev-parse", "HEAD"]),
     git(workspace, ["ls-files", "--stage", "-z"]),
@@ -195,6 +203,7 @@ export async function workspaceFingerprint(workspace) {
     const relative = path.relative(workspace, fullPath);
     if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
     hash.update(JSON.stringify(file));
+    if(isProtectedPath(protection,file)){hash.update('protected');continue;}
     const details = await lstat(fullPath).catch(error => { if (error.code === "ENOENT") return null; throw error; });
     if (!details) { hash.update("missing"); continue; }
     if (details.isSymbolicLink()) hash.update("link:" + await readlink(fullPath));
@@ -223,13 +232,14 @@ export async function prepareQaPacket({
   previousPacket = null,
 }) {
   const started = Date.now();
+  assertSafeQaCommand({workspace,stateDir,command:task.qaCommand});
   const request = requestFingerprint({ task, attempt, baselineSha });
-  const before = await collectGitEvidence({ workspace, task, baselineSha });
+  const before = await collectGitEvidence({ workspace, task, baselineSha, stateDir });
   const beforeFingerprint = await workspaceFingerprint(workspace);
   const previous = previousPacket?.qaEvidence;
   const reusable = beforeFingerprint && before.scope.status === "PASS" && previous?.fingerprint?.request === request && previous.fingerprint.workspace === beforeFingerprint && previous.workspaceStable === true && previous.command.exitCode === 0 && previous.scope.status === "PASS" && !Object.values(previous.categories).some(status => ["FAIL", "INCONCLUSIVE", "TIMEOUT", "RUNNING", "NON-TERMINATING"].includes(status));
   const commandResult = reusable ? null : await runCommand(task.qaCommand, workspace);
-  const after = await collectGitEvidence({ workspace, task, baselineSha });
+  const after = await collectGitEvidence({ workspace, task, baselineSha, stateDir });
   const afterFingerprint = await workspaceFingerprint(workspace);
   const combined = commandResult ? [commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n").trim() : "";
   const summary = bounded(combined || "No command output.", OUTPUT_LIMIT);

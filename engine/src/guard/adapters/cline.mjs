@@ -41,7 +41,7 @@ export async function install({policy,policyPath,guardDir}){
 
 export async function prepareToolGuard({stateDir,workspace}){
  const task=await readJson(path.join(stateDir,'current-task.json'));
- const policy=await createPolicy(task,workspace);
+ const policy=await createPolicy(task,workspace,{stateDir});
  const guardDir=path.join(path.resolve(stateDir),adapter.stateSubdir),policyPath=path.join(guardDir,'policy.json');
  await atomicWriteJson(policyPath,policy);
  const {configDir,hooksDir,pluginPath}=await install({policy,policyPath,guardDir});

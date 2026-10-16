@@ -1,3 +1,4 @@
+import {dashboardFetch} from './dashboard-client.mjs';
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -29,7 +30,7 @@ async function fixture({ onControl } = {}) {
 
 test("status API displays a running fake task and changed-file count", async () => {
   const { root, dashboard } = await fixture();
-  const response = await fetch(`${dashboard.url}/api/status`);
+  const response = await dashboardFetch(dashboard, "/api/status");
   const status = await response.json();
 
   assert.equal(response.status, 200);
@@ -50,7 +51,7 @@ test("status API exposes the same Cline and QA values used by the dashboard", as
   const { root, state, dashboard } = await fixture();
   await state.record({ type: "cline-started", attempt: 1, startedAt: "2026-09-13T12:00:00.000Z", pid: 5151 });
   await state.record({ type: "qa-evidence-finished", attempt: 1, qaChecks: { tests: "PASS", typecheck: "NOT RUN", lint: "FAIL", build: "NOT RUN", scopeCheck: "PASS" } });
-  const status = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+  const status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
   assert.equal(status.cline.pid, 5151);
   assert.equal(status.cline.startedAt, "2026-09-13T12:00:00.000Z");
   assert.equal(status.qaChecks.typecheck, "NOT RUN");
@@ -63,9 +64,9 @@ test("status API derives increasing elapsed time while Cline runs", async () => 
   const { root, state, dashboard } = await fixture();
   const startedAt = new Date(Date.now() - 2_000).toISOString();
   await state.record({ type: "cline-started", attempt: 1, startedAt, pid: 6161 });
-  const first = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+  const first = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
   await new Promise((resolve) => setTimeout(resolve, 25));
-  const second = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+  const second = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
   assert.ok(first.cline.elapsedMs >= 1_900);
   assert.ok(second.cline.elapsedMs > first.cline.elapsedMs);
   await dashboard.close();
@@ -75,7 +76,7 @@ test("status API derives increasing elapsed time while Cline runs", async () => 
 test("control API pauses resumes and requests a safe stop", async () => {
   const { root, state, dashboard } = await fixture();
   for (const action of ["pause", "resume", "stop"]) {
-    const response = await fetch(`${dashboard.url}/api/control`, {
+    const response = await dashboardFetch(dashboard, "/api/control", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action }),
@@ -100,12 +101,12 @@ test("activity history clear removes old rows without changing task, QA, or cont
     const liveBefore = await state.readLive();
     const controlBefore = await state.readControl();
     assert.ok((await state.readEvents()).length > 0);
-    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const response = await dashboardFetch(dashboard, "/api/activity/clear", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(response.status, 200);
     assert.deepEqual(await state.readEvents(), []);
     assert.deepEqual(await state.readLive(), liveBefore);
     assert.deepEqual(await state.readControl(), controlBefore);
-    const status = await fetch(`${dashboard.url}/api/status`).then((result) => result.json());
+    const status = await dashboardFetch(dashboard, "/api/status").then((result) => result.json());
     assert.equal(status.stage, "USER_ATTENTION");
     assert.equal(status.latestQa, "Needs evidence");
     assert.deepEqual(status.events, []);
@@ -116,7 +117,7 @@ test("activity history clear is refused while Cline is running", async () => {
   const { root, state, dashboard } = await fixture();
   try {
     const liveBefore = await state.readLive();
-    const response = await fetch(`${dashboard.url}/api/activity/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const response = await dashboardFetch(dashboard, "/api/activity/clear", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.notEqual(response.status, 200);
     assert.ok((await state.readEvents()).length > 0);
     assert.deepEqual(await state.readLive(), liveBefore);
@@ -126,11 +127,11 @@ test("activity history clear is refused while Cline is running", async () => {
 test("pause-after-current remains WORKING until the task reaches paused state", async () => {
   const { root, state, dashboard } = await fixture();
   await state.setControl("pause");
-  let status = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+  let status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
   assert.equal(status.primaryStatus, "working");
 
   await state.record({ type: "paused", attempt: 1 });
-  status = await fetch(`${dashboard.url}/api/status`).then((response) => response.json());
+  status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
   assert.equal(status.primaryStatus, "paused");
   await dashboard.close();
   await rm(root, { recursive: true, force: true });
@@ -148,7 +149,7 @@ test("stopped stage takes precedence over waiting, pass, and fail QA badges", ()
 test("dashboard page exposes only the requested controls", async () => {
   const { root, dashboard } = await fixture();
   try {
-    const html = await fetch(dashboard.url).then((response) => response.text());
+    const html = await dashboardFetch(dashboard).then((response) => response.text());
     for (const control of ["Pause After Task", "Resume", "Stop After Current Task", "Elevate", "View Logs", "View Task Details"]) assert.match(html, new RegExp(control));
     for (const label of ["Agent Dock", "Overview", "Activity Log", "File Changes", "Cline Activity", "Recent Cline Events", "Tests &amp; Commands", "Task Details"]) assert.ok(html.includes(label), label);
     for (const id of ["cline-started", "cline-elapsed", "cline-pid", "qa-tests", "qa-typecheck", "qa-lint", "qa-scope", "current-action", "last-command", "last-file-read", "last-file-modified", "latest-message", "recent-events", "changed-files", "command-results", "activity-filter"]) assert.match(html, new RegExp(`id="${id}"`));
@@ -168,9 +169,9 @@ test("manual-review status exposes Elevate and the control callback fires once",
     await atomicWriteJson(path.join(run.stateDir, "qa-packet.json"), packet);
     await atomicWriteJson(path.join(run.stateDir, "last-result.json"), { task, result: { qa: { status: "manual-review", output: "failed", manualReviewCause: "implementation-strategy" }, history: [] } });
     await run.state.record({ type: "manual-review", attempt: 1, qa: "failed" });
-    const status = await fetch(`${run.dashboard.url}/api/status`).then((response) => response.json());
+    const status = await dashboardFetch(run.dashboard, "/api/status").then((response) => response.json());
     assert.equal(status.elevateAvailable, true);
-    const response = await fetch(`${run.dashboard.url}/api/control`, {
+    const response = await dashboardFetch(run.dashboard, "/api/control", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "elevate" }),
     });
     assert.equal(response.status, 200);
@@ -188,7 +189,7 @@ test("dashboard refuses cross-site, rebound-host and non-JSON write requests", a
     const { port } = new URL(dashboard.url);
     const { request } = await import("node:http");
     const send = (method, pathname, headers, body) => new Promise((resolve, reject) => {
-      const req = request({ host: "127.0.0.1", port, method, path: pathname, headers }, (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
+      const req = request({ host: "127.0.0.1", port, method, path: pathname, headers: { authorization: "Bearer "+dashboard.token, ...headers } }, (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
       req.on("error", reject);
       req.end(body);
     });

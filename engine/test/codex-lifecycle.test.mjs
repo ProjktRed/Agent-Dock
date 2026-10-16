@@ -11,7 +11,7 @@ import { runNodeLoop, verifyReview } from "../src/node-loop.mjs";
 import { atomicWriteJson } from "../src/dashboard-state.mjs";
 
 const fixture = fileURLToPath(new URL("../fixtures/fake-codex-process.mjs", import.meta.url));
-const task = { id: "test", name: "Test", prompt: "Create result", qaCommand: "fake QA", allowedPaths: ["result.txt"] };
+const task = { id: "test", name: "Test", prompt: "Create result", qaCommand: "node --version", allowedPaths: ["result.txt"] };
 const strictResult = (overrides = {}) => ({ status: "done", task: null, output: "", correction: "", commit: "", manualReviewCause: null, ...overrides });
 
 test("QA invocation does not combine mutually exclusive approval and sandbox flags", async () => {

@@ -13,12 +13,14 @@ import { verifyReview, runNodeLoop } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
+import {configureProtection} from './guard/protected-paths.mjs';
 
 installTopLevelDiagnostics();
 const exec = promisify(execFile);
 const options = parseLoopOptions(process.argv.slice(2));
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
+configureProtection({workspace,stateDir,paths:options['protected-paths']});
 const state = new DashboardState({ stateDir });
 let launchReady = false;
 
