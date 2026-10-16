@@ -272,8 +272,9 @@ export async function prepareClineRuntime({
       requestedProvider: provider, provider: clineProvider, model: remoteModel,
       baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
       ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
-      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || (provider === "opencode" && descriptor.apiKeyEnv !== "OPENCODE_API_KEY") || (provider === "openai" && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
-        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : provider === "opencode" ? "OPENCODE_API_KEY" : "OPENAI_API_KEY"]: key } }
+      // opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY (not OPENCODE_API_KEY).
+      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || ((provider === "openai" || provider === "opencode") && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
         : {}),
     };
   }
