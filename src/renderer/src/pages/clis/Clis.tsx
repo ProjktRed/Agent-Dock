@@ -31,7 +31,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
       <label className="field">
         <span>{exe ? "Executable path or command" : "Endpoint"}</span>
         <input className="input mono" value={draft.location} onChange={(e) => setDraft({ ...draft, location: e.target.value })} />
-        <span className="hint">{exe ? (h?.resolvedPath ? `Resolved to ${h.resolvedPath}` : "Resolved through the Windows PATH") : "Base URL used for every request"}</span>
+        <span className="hint">{exe ? (h?.resolvedPath ? `Resolved to ${h.resolvedPath}` : "Resolved through the Windows PATH") : cli.kind === "openai" ? "OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1 or https://opencode.ai/inference/openai/v1" : "Base URL used for every request"}</span>
       </label>
       <div className="grid-f">
         <div className="field"><span>Authentication</span><div className="row" style={{ minHeight: 36 }}><Dot tone={h?.auth.state === "ok" || h?.auth.state === "not-required" ? "ok" : h?.auth.state === "required" ? "warn" : "mut"} /><span className="ellipsis" title={h?.auth.detail}>{h?.auth.detail ?? "Not checked"}</span></div></div>

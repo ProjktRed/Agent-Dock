@@ -22,6 +22,15 @@ test("explicit Ollama selection preserves its existing model and 98K context def
   assert.equal(options.clineContextTokens, 98_304);
 });
 
+test("OpenCode Console defaults to the free DeepSeek model without requiring a base URL", async () => {
+  const { parseLoopOptions, PROVIDERS } = await import("../src/loop-options.mjs");
+  const options = parseLoopOptions(["--provider", "opencode"]);
+
+  assert.ok(PROVIDERS.includes("opencode"));
+  assert.equal(options.providerBaseUrl, null);
+  assert.equal(options.model, "deepseek-v4.1-flash-free");
+});
+
 test("loop options allow context, timeout, and Sol opt-out overrides", async () => {
   const { parseLoopOptions } = await import("../src/loop-options.mjs");
   const options = parseLoopOptions([

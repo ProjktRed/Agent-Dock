@@ -116,7 +116,7 @@ export function AddCliDialog({ onClose }: { onClose: () => void }) {
                 )}
               </>
             ) : (
-              <label className="field"><span>Endpoint</span><input className="input mono" value={location} onChange={(e) => setLocation(e.target.value)} /><span className="hint">{kind === "ollama" ? "Ollama base URL" : "OpenAI-compatible base URL, usually ending in /v1"}</span></label>
+              <label className="field"><span>Endpoint</span><input className="input mono" value={location} onChange={(e) => setLocation(e.target.value)} /><span className="hint">{kind === "ollama" ? "Ollama base URL" : kind === "openai" ? "OpenAI-compatible URL, e.g. https://openrouter.ai/api/v1 or https://opencode.ai/inference/openai/v1" : "OpenAI-compatible base URL, usually ending in /v1"}</span></label>
             )}
           </div>
         )}

@@ -211,11 +211,12 @@ export async function prepareClineRuntime({
       readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl, routerModel),
     };
   }
-  if (provider === "openrouter" || provider === "openai") {
+  if (provider === "openrouter" || provider === "opencode" || provider === "openai") {
     const descriptor = createProviderDescriptor({
       provider, model, contextTokens, maxOutputTokens, timeoutSeconds,
       providerBaseUrl, providerApiKeyEnv, fetchImpl,
     });
+    const remoteModel = descriptor.model;
     const dataDir = path.join(path.resolve(stateDir), "cline-data");
     const settingsDir = path.join(dataDir, "settings");
     const providersPath = path.join(settingsDir, "providers.json");
@@ -227,8 +228,8 @@ export async function prepareClineRuntime({
       await chmod(settingsDir, 0o700);
       const settings = {
         provider: clineProvider,
-        model,
-        ...(provider === "openai" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
+        model: remoteModel,
+        ...(provider === "openai" || provider === "opencode" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
         contextWindow: contextTokens,
         maxTokens: maxOutputTokens,
         timeout: timeoutSeconds * 1000,
@@ -268,11 +269,11 @@ export async function prepareClineRuntime({
     await descriptor.preflight();
     return {
       dataDir, contextTokens, maxOutputTokens, declaredContextTokens: null,
-      requestedProvider: provider, provider: clineProvider, model,
+      requestedProvider: provider, provider: clineProvider, model: remoteModel,
       baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
       ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
-      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || (provider === "openai" && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
-        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
+      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || (provider === "opencode" && descriptor.apiKeyEnv !== "OPENCODE_API_KEY") || (provider === "openai" && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : provider === "opencode" ? "OPENCODE_API_KEY" : "OPENAI_API_KEY"]: key } }
         : {}),
     };
   }

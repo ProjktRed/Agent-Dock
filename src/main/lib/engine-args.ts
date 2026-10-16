@@ -32,6 +32,17 @@ export function wrongProviderModel(orchestrator: "codex" | "claude", model: stri
 /** Cline CLI --thinking levels (engine --cline-thinking). */
 export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
 
+function opencodeConsoleBaseUrl(location: string): string | null {
+  try {
+    const url = new URL(location);
+    if (url.hostname.toLowerCase() !== "opencode.ai" || !/^\/inference(?:\/|$)/i.test(url.pathname)) return null;
+    if (/^\/inference\/v1\/?$/i.test(url.pathname)) return "https://opencode.ai/inference/openai/v1";
+    return location.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
 /** Engine flags for loop limits that differ from the engine defaults (passed only with guardrails off). */
 export const TUNING_FLAGS: [keyof EngineTuning, string][] = [
   ["elevationAfter", "--elevation-after"],
@@ -115,9 +126,10 @@ export function buildEngineArgs(input: {
       : clis.find((c) => c.kind === impl.provider);
     if (implCli.kind === "opencode" && implCli.location && implCli.location !== "opencode") args.push("--opencode-exe", implCli.location);
     if (impl.provider === "openai" && !providerConn) guard(`Implementation agent “${impl.name}” has no valid OpenAI-compatible provider connection.`);
+    const opencodeBaseUrl = impl.provider === "openai" && providerConn ? opencodeConsoleBaseUrl(providerConn.location) : null;
     const providerId = impl.provider === "openai" && providerConn && /^https:\/\/openrouter\.ai\/api\/v1\/?$/i.test(providerConn.location)
       ? "openrouter"
-      : impl.provider;
+      : opencodeBaseUrl ? "opencode" : impl.provider;
     args.push("--provider", providerId, "--model", impl.model);
     if (implCli.kind === "opencode") args.push("--worker", "opencode");
     args.push("--cline-context-tokens", String(impl.contextTokens));
@@ -125,7 +137,7 @@ export function buildEngineArgs(input: {
     args.push("--timeout-seconds", String(impl.timeoutSeconds));
     if (impl.reasoning && CLINE_THINKING.includes(impl.reasoning)) args.push("--cline-thinking", impl.reasoning);
     if (impl.provider === "openai" && providerConn) {
-      const baseUrl = providerConn.location.replace(/\/$/, "");
+      const baseUrl = opencodeBaseUrl ?? providerConn.location.replace(/\/+$/, "");
       args.push("--provider-base-url", baseUrl, "--provider-api-key-env", "AGENT_DOCK_PROVIDER_KEY");
       if (!providerConn.hasSecret) guard(`Implementation provider “${providerConn.name}” has no saved API key.`);
     }

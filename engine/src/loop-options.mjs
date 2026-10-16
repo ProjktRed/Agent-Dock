@@ -50,7 +50,7 @@ function clineThinking(value) {
 }
 
 export const IMPLEMENTATION_CLIS = ["cline", "codex", "claude", "opencode"];
-export const PROVIDERS = ["llamacpp", "ollama", "openrouter", "openai"];
+export const PROVIDERS = ["llamacpp", "ollama", "openrouter", "opencode", "openai"];
 
 /** --implementation-cli cline|codex|claude (+ --implementation-model / -effort / -fast for codex and claude). */
 export function parseImplementation(options) {
@@ -78,7 +78,7 @@ export function parseLoopOptions(argv) {
   const providerApiKeyEnv = options["provider-api-key-env"] ?? "AGENT_DOCK_PROVIDER_KEY";
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(providerApiKeyEnv)) throw new Error("--provider-api-key-env must be a valid environment variable name");
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;
-  const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : provider === "openrouter" ? "z-ai/glm-5.3-flash" : DEFAULT_OLLAMA_MODEL;
+  const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : provider === "openrouter" ? "z-ai/glm-5.3-flash" : provider === "opencode" ? "deepseek-v4.1-flash-free" : DEFAULT_OLLAMA_MODEL;
   return {
     ...options,
     provider,

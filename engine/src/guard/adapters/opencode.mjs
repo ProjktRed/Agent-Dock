@@ -13,8 +13,8 @@ export const SENTINEL_BASE_URL='https://127.0.0.1:1/agent-dock-guard-not-loaded/
 export const allowedTools=['shell','bash','read','edit','write','patch','glob','grep','question','skill'];
 const refusedTools=['execute','subagent','webfetch','websearch'];
 
-export function providerId(provider){return provider.id==='openrouter'?'openrouter':'agent-dock';}
-export function modelId(provider,model=provider.model){return provider.id==='openrouter'?model.replace(/^openrouter\//,''):model;}
+export function providerId(provider){return provider.id==='openrouter'?'openrouter':provider.id==='opencode'?'opencode':'agent-dock';}
+export function modelId(provider,model=provider.model){return provider.id==='openrouter'?model.replace(/^openrouter\//,''):provider.id==='opencode'?model.replace(/^opencode\//,''):model;}
 
 export function instructions(policy){
  return '\n\nEnforced editing guard: edit only '+policy.allowedPaths.join(', ')+'. Read the intended range with read immediately before editing. Existing files require a unique exact oldString/newString replacement (at most 2000 characters each); write may create new files only. Patches must be at most 4000 characters and name each affected path. Source-writing shell commands and helper files are prohibited. Two consecutive failed native edits stop this attempt. Use only approved validation/read-only shell commands, from the workspace root:\n'+policy.commandChoices.join('\n')+'\nDo not wrap commands in another shell or redirect output. Code Mode, subagents and web tools are unavailable.';

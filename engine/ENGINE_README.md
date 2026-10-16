@@ -34,6 +34,12 @@ script and waits up to 120 seconds; without one it stops with an explanation. A
 startup timeout or model mismatch is logged and stops the attempt. It never causes
 an automatic Ollama fallback.
 
+Remote OpenAI-compatible providers include OpenRouter and OpenCode Console (Zen).
+For OpenCode Console, use `--provider opencode` and model `deepseek-v4.1-flash-free`
+by default; its model preflight reads `https://opencode.ai/inference/v1/models`,
+while chat requests use `https://opencode.ai/inference/openai/v1`. Supply the API
+key through `AGENT_DOCK_PROVIDER_KEY` (or `--provider-api-key-env`).
+
 Select the preserved Ollama path explicitly with `--provider ollama`. Unless
 overridden, this continues to use `glm-4.7-flash:q4_K_M` and 98,304 context tokens.
 Node reads the selected Ollama model's `/api/show` metadata; missing context
