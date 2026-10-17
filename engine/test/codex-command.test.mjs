@@ -11,7 +11,7 @@ async function touch(file) {
   await writeFile(file, "");
 }
 
-test("Windows prefers the installed bundled codex.exe", async () => {
+test("Windows prefers the installed bundled codex.exe", {skip: process.platform !== 'win32'}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-command-"));
   try {
     const executable = path.join(root, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe");
@@ -32,7 +32,7 @@ test("Windows prefers the installed bundled codex.exe", async () => {
   }
 });
 
-test("Windows falls back to codex.cmd from PATH using hidden cmd.exe", async () => {
+test("Windows falls back to codex.cmd from PATH using hidden cmd.exe", {skip: process.platform !== 'win32'}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-command-"));
   try {
     const commandFile = path.join(root, "codex.cmd");
@@ -51,7 +51,7 @@ test("Windows falls back to codex.cmd from PATH using hidden cmd.exe", async () 
   }
 });
 
-test("explicit CODEX_COMMAND override wins over installed launchers", async () => {
+test("explicit CODEX_COMMAND override wins over installed launchers", {skip: process.platform !== 'win32'}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-command-"));
   try {
     const override = path.join(root, "custom-codex.exe");

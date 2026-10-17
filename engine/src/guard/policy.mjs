@@ -2,6 +2,7 @@ import path from 'node:path';
 import {realpath,lstat} from 'node:fs/promises';
 import {PREPARE_INVALID_TASK} from './reasons.mjs';
 import {isProtectedPath,protectedPathsFor} from './protected-paths.mjs';
+import {stripCheckOutputFilter} from './check-output-filter.mjs';
 
 const within=(root,file)=>{const relative=path.relative(root,file);return relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative));};
 export const normalizeCommand=command=>command.trim().replace(/^npm\.cmd\b/i,'npm').replace(/^npx\.cmd\b/i,'npx').replace(/\s+/g,' ');
@@ -40,7 +41,7 @@ export async function approvedPath(policy,file){
 
 export async function approvedCommand(policy,value){
   if(value?.args!==undefined&&(!Array.isArray(value.args)||!value.args.every(arg=>typeof arg==='string'&&!/\s/.test(arg))))return false;
-  const command=typeof value==='string'?value:typeof value?.command==='string'?[value.command,...(value.args??[])].join(' '):null;
+  const command=stripCheckOutputFilter(typeof value==='string'?value:typeof value?.command==='string'?[value.command,...(value.args??[])].join(' '):null);
   if(typeof command!=='string'||!command.trim()||/[\r\n;$`|><]/.test(command)||/(?<!&)&(?!&)/.test(command))return false;
   const parts=command.split(/\s*&&\s*/);if(parts.length>1){for(const part of parts)if(!await approvedCommand(policy,part))return false;return true;}
   const normalized=normalizeCommand(command);

@@ -2,6 +2,7 @@ import path from 'node:path';
 import {realpathSync,lstatSync,readdirSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {stripCheckOutputFilter} from './check-output-filter.mjs';
 
 const engineRoot=fileURLToPath(new URL('../../',import.meta.url));
 const DEFAULTS=['.git/','.env*','secrets/'];
@@ -105,6 +106,7 @@ function pathsIn(input,out=[]) {
 }
 
 function commandSafe(policy,script,cwd) {
+  script=stripCheckOutputFilter(script);
   if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?]/.test(script))return false;
   if(process.platform!=='win32'&&script.includes('\\'))return false;
   if(script.includes('&&'))return script.split('&&').every(part=>commandSafe(policy,part,cwd));

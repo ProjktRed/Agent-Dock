@@ -4,7 +4,7 @@ import {mkdtemp,mkdir,writeFile,rm,symlink} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {decide} from '../src/guard/decide.mjs';
-import {createPolicy,approvedPath} from '../src/guard/policy.mjs';
+import {createPolicy,approvedPath,approvedCommand} from '../src/guard/policy.mjs';
 import cline from '../src/guard/adapters/cline.mjs';
 import opencode from '../src/guard/adapters/opencode.mjs';
 import codex from '../src/guard/adapters/codex.mjs';
@@ -24,6 +24,26 @@ async function fixture(t) {
   const policy={...await createPolicy({id:'T',allowedPaths:['src/','.env.local'],qaCommand:'npm test'},workspace),protectedPaths:['.env*',privateDir],toolGuard:false};
   return {workspace,privateDir,policy};
 }
+
+test('only a terminal numeric head/tail filter may follow an approved check',async t=>{
+  const {policy,workspace}=await fixture(t);
+  const allowed=['npm test | tail -20','npm test 2>&1 | tail -20','npm test | head -0','npm.cmd test 2>&1 | head -12'];
+  const denied=['npm test 2>&1','npm test | sh','npm test | tee file','npm test | tail -20 > x',
+    'npm test | tail -20 | head -1','npm test | tail -20 2>&1','npm test | tail -20 && npm test',
+    'npm test | tail -20; npm test','npm test | tail -1e2','npm test | tail -+2','npm test | tail -2.5',
+    'npm test | tail -$N','npm test | tail -20 x','npm test | tail -n 20','npm test 1>&2 | head -2',
+    'npm test 2>&1 extra | tail -20','npm test 2>&1 2>&1 | tail -20','cat .env.local | tail -20',
+    'npm run unknown | tail -20','npm test\n| tail -20','npm test || tail -20'];
+  for(const command of [...allowed,...denied]) {
+    const expected=allowed.includes(command);
+    assert.equal(await approvedCommand(policy,command),expected,`approvedCommand: ${command}`);
+    for(const adapter of [claude,codex]) {
+      const guarded={...structuredClone(policy),toolGuard:true,protectionOnly:adapter.id==='claude'};
+      const result=await decide(guarded,adapter.toAction({tool_name:'Bash',tool_input:{command},cwd:workspace}),{adapter});
+      assert.equal(result.effect==='allow',expected,`${adapter.id}: ${command}`);
+    }
+  }
+});
 
 test('protected paths override approved edit scope and follow junctions, including missing files',async t=>{
   const {workspace,privateDir,policy}=await fixture(t);

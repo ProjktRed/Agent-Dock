@@ -12,18 +12,25 @@ import { compactCorrections, correctionInstructions, packetForPrompt, qaEnvironm
 import { buildCorrectionPrompt } from '../src/workflow.mjs';
 
 // A Cline process that writes the given lines, then keeps running until it is killed.
-function hangingProcess(lines) {
+function hangingProcess(lines, t) {
   const child = new EventEmitter();
+  // A real ChildProcess owns ref'd OS handles. PassThrough/EventEmitter do not.
+  const alive = setInterval(() => {}, 1000);
+  let killed = false;
   child.pid = 7400;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.stdin = new PassThrough();
   child.kill = () => {
+    if (killed) return;
+    killed = true;
+    clearInterval(alive);
     child.stdout.end();
     child.stderr.end();
     child.emit('exit', null, 'SIGKILL');
     child.emit('close', null, 'SIGKILL');
   };
+  t.after(child.kill);
   queueMicrotask(() => { for (const line of lines) child.stdout.write(`${line}\n`); });
   return child;
 }
@@ -31,11 +38,11 @@ const agentEvent = (event) => JSON.stringify({ type: 'agent_event', event });
 const say = (text) => agentEvent({ type: 'say', say: 'text', text });
 const tool = (file) => agentEvent({ type: 'say', say: 'tool', text: JSON.stringify({ tool: 'read_file', path: file }) });
 
-test('a worker repeating the same step is ended early, like a timeout', async () => {
+test('a worker repeating the same step is ended early, like a timeout', async (t) => {
   const events = [];
   const step = 'Let me try a different approach - I will add the comment to the whole expression';
   const result = await collectClineProcess('fake', [], {
-    spawnProcess: () => hangingProcess([say(step), tool('a.ts'), say(step), tool('a.ts'), say(step), tool('a.ts'), say(step)]),
+    spawnProcess: () => hangingProcess([say(step), tool('a.ts'), say(step), tool('a.ts'), say(step), tool('a.ts'), say(step)], t),
     onEvent: (e) => events.push(e), repeatLimit: 4,
   });
   assert.equal(result.exitCode, 124);
@@ -44,15 +51,15 @@ test('a worker repeating the same step is ended early, like a timeout', async ()
   assert.equal(events.filter((e) => e.type === 'cline-stalled').length, 1);
 });
 
-test('a worker that goes silent after starting is ended; silence before its first output is not', async () => {
+test('a worker that goes silent after starting is ended; silence before its first output is not', async (t) => {
   const result = await collectClineProcess('fake', [], {
-    spawnProcess: () => hangingProcess([say('Reading the task')]), stallMs: 50,
+    spawnProcess: () => hangingProcess([say('Reading the task')], t), stallMs: 50,
   });
   assert.equal(result.runResult.finishReason, 'timeout');
   assert.match(result.runResult.text, /No worker output/);
   // Silent from the start (a local model reading a long prompt): only the test ends it, after 4× stallMs.
   const quiet = await collectClineProcess('fake', [], {
-    spawnProcess: () => { const child = hangingProcess([]); setTimeout(child.kill, 200); return child; },
+    spawnProcess: () => { const child = hangingProcess([], t); const end = setTimeout(child.kill, 200); t.after(() => clearTimeout(end)); return child; },
     stallMs: 50, requireRunResult: false,
   });
   assert.equal(quiet.runResult, undefined, 'not reported as stalled');

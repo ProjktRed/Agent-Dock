@@ -9,7 +9,7 @@
 //
 // The source can be a local repository path today and a GitHub URL later; both work with git.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { logoPng } from "./logo.mjs";
@@ -87,21 +87,11 @@ function prepareWinCodeSign(repo) {
 
 /** npm ci → electron-vite build → electron-builder --dir, inside the staging copy. */
 export function buildStaging({ repo, source, branch, staging }) {
-  const commit = git(["rev-parse", "HEAD"], repo);
-  const info = {
-    commit,
-    shortCommit: commit.slice(0, 7),
-    subject: git(["log", "-1", "--format=%s"], repo),
-    committedAt: git(["log", "-1", "--format=%cI"], repo),
-    branch,
-    source,
-    builtAt: new Date().toISOString(),
-  };
-  writeFileSync(path.join(repo, "build-info.json"), `${JSON.stringify(info, null, 2)}\n`);
   mkdirSync(path.join(repo, "build"), { recursive: true });
   writeFileSync(path.join(repo, "build", "icon.png"), logoPng(256));
   run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: repo, shell: true });
-  run("npx", ["electron-vite", "build"], { cwd: repo, shell: true });
+  run("npx", ["electron-vite", "build"], { cwd: repo, shell: true, env: { AGENT_DOCK_BUILD_SOURCE: source, AGENT_DOCK_BUILD_BRANCH: branch } });
+  const info = JSON.parse(readFileSync(path.join(repo, "build-info.json"), "utf8"));
   const out = path.join(staging, "dist");
   const builder = () => run("npx", ["electron-builder", "--win", "--dir", `--config.directories.output="${out}"`], { cwd: repo, shell: true, env: { CSC_IDENTITY_AUTO_DISCOVERY: "false" } });
   try {

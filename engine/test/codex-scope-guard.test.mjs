@@ -21,7 +21,7 @@ test('patches may only touch the task paths, in any input shape', () => {
 test('with the tool guard on, the shell runs only checks and read-only commands', () => {
   const run = (command) => checkToolUse(policy, { tool_name: 'Bash', tool_input: { command }, cwd: workspace });
   assert.equal(run('npx vitest run test/x.test.js'), null);
-  assert.equal(run(['powershell.exe', '-Command', 'Get-Content src/x.js | Select-String foo']), null);
+  assert.match(run(['powershell.exe', '-Command', 'Get-Content src/x.js | Select-String foo']), /Tool guard/);
   assert.equal(run(['bash', '-lc', 'git status && git diff -- src/x.js']), null);
   assert.equal(run('rg "export" src'), null);
   assert.match(run('echo hi > src/other.js'), /Tool guard/);
@@ -34,7 +34,8 @@ test('with the tool guard on, the shell runs only checks and read-only commands'
   assert.ok(checkToolUse(policy, { tool_name: 'mcp__fs__write', tool_input: { path: 'x' } }));
   assert.match(checkToolUse(policy, { tool_name: 'mcp__browser__navigate', tool_input: { url: 'x' } }), /MCP/);
   assert.equal(shellScript({ command: ['cmd.exe', '/c', 'dir'] }), 'dir');
-  assert.equal(shellAllowed('npm test 2>&1', ''), true);
+  assert.equal(shellAllowed('npm test 2>&1', ''), false);
+  assert.equal(shellAllowed('npm test 2>&1 | tail -20', ''), true);
 });
 
 test('patch scope applies even with the tool guard off', () => {

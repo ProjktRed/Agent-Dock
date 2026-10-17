@@ -8,6 +8,13 @@ import { prepareClineRuntime } from "./cline-runtime-config.mjs";
 import { createProviderDescriptor } from "./runtime/provider.mjs";
 import { OpenCodeCliWorker } from "./opencode-cli-worker.mjs";
 
+// The engine owns this task boundary. An app polling QA PASS can arrive after
+// the next Assessment has already started.
+export async function recordLoopEvent(state,event,{autoContinue=true}={}) {
+  if(event.type==='qa-pass'&&!autoContinue)await state.setControl('pause');
+  await state.record(event);
+}
+
 /** Codex or Claude Code as the implementation worker (--implementation-cli). Null for Cline. */
 export async function createCloudImplementation(options, { stateDir, workspace }) {
   const impl = options.implementation;

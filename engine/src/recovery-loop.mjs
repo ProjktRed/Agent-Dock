@@ -65,10 +65,21 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
     return{status:'blocked',output:reason};
   };
   const stopped=async()=>{if(!(await readControl()).stopAfterSafePoint)return false;await emit('stopped');return true;};
+  const beforeNextTask=async()=>{
+    let announced=false;
+    for(;;){
+      const control=await readControl();
+      if(control.stopAfterSafePoint){await emit('stopped');return false;}
+      if(!control.pauseAfterCurrent)return true;
+      if(!announced){await emit('paused');announced=true;}
+      await sleep(pollMs);
+    }
+  };
   const operation=async(type,inputs,invoke,extra={})=>{
     const resume=pending?.operation===type?pending:null;
     const result=await runRecoverableCodex({stateDir,operation:type,inputs:JSON.parse(JSON.stringify(resume?.inputs??inputs)),
-      context:JSON.parse(JSON.stringify(resume?.context??{task,recovery:r,stopAfterTask,...extra})),invoke,emit,readControl,pollMs,pending:resume});
+      context:JSON.parse(JSON.stringify(resume?.context??{task,recovery:r,stopAfterTask,...extra})),invoke,emit,readControl,pollMs,pending:resume,
+      ...(['assessment','correction-assessment'].includes(type)?{beforeInvoke:beforeNextTask}:{})});
     if(!result.stopped)pending=null;
     return result;
   };
@@ -146,9 +157,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
     }
     for(;;) {
       if(await stopped())return{status:'stopped'};
-      if(!r && (await readControl()).pauseAfterCurrent) {
-        await emit('paused');while((await readControl()).pauseAfterCurrent){if(await stopped())return{status:'stopped'};await sleep(pollMs);}
-      }
+      if(!r && !await beforeNextTask())return{status:'stopped'};
       let result;
       try {result=await worker.withExclusive(async()=>{
         exclusiveHeld=true;
@@ -164,6 +173,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');
             assessmentOperationId=op.operationId;
           }
+          if(!await beforeNextTask())return{status:'stopped'};
           validateTask(task);
           const resumeQa=pending?.operation==='qa';
           r={version:1,baselineSha:sha,attempt:correctionResume?.attempt??pending?.attempt??1,phase:resumeQa?'qa':'worker',

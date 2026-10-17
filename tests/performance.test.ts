@@ -10,6 +10,13 @@ const base = () => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol",
 const launch = (agents: Agent[]) => buildEngineArgs({ project, agents, clis: DEFAULT_CLIS, settings: structuredClone(DEFAULT_SETTINGS) });
 const flag = (args: string[], key: string) => args[args.indexOf(key) + 1];
 
+it('forwards effective auto-continue to the engine instead of relying on a later app poll',()=>{
+  const settings=structuredClone(DEFAULT_SETTINGS);settings.workflow.autoContinue=true;
+  const plan=buildEngineArgs({project:{...project,workflowOverrides:{autoContinue:false}},agents:base(),clis:DEFAULT_CLIS,settings});
+  expect(flag(plan.args,'--auto-continue')).toBe('false');
+  expect(flag(launch(base()).args,'--auto-continue')).toBe(String(DEFAULT_SETTINGS.workflow.autoContinue));
+});
+
 describe("usage-limit backup configuration", () => {
   const configured = () => {
     const agents = base();

@@ -133,6 +133,7 @@ export function buildEngineArgs(input: {
   if (qa) useConnection(qa, "QA");
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
+  args.push('--auto-continue', String(workflow.autoContinue));
   const protectedPaths = settings.safety?.protectedPaths;
   if (!Array.isArray(protectedPaths) || protectedPaths.some(p => typeof p !== "string" || !p.trim() || /[\0\r\n]/.test(p))) problems.push("Protected paths must be nonempty paths.");
   else args.push("--protected-paths", JSON.stringify([...new Set([...protectedPaths, project.stateDir, ...(input.protectedRoots ?? [])])]));

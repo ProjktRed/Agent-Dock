@@ -209,9 +209,8 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
   for (const event of fresh) {
     if (event.type === "qa-pass") {
       if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA after ${event.attempt ?? "?"} attempt(s).`);
-      const workflow = { ...settings.workflow, ...p.workflowOverrides };
-      // Automatic continuation off: hold at the next task boundary (the engine's Pause After Task).
-      if (!workflow.autoContinue && next.processAlive) await engine.control(p, "pause", await launchArgs(p)).catch(() => {});
+      // The engine records automatic Pause before QA PASS; polling must not race
+      // the next Assessment or re-pause after the user's Resume.
     }
     if (isCompactionDone(event) && settings.attention.informational === "windows") {
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");

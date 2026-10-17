@@ -11,7 +11,7 @@ import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { TUNING, useTuning } from "./engine-tuning.mjs";
-import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
+import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 
 installTopLevelDiagnostics();
@@ -119,7 +119,7 @@ try {
     solReassessmentEnabled: options.solReassessment,
     manualResolver: options['resolve-block']==='true',
     onTask: (task) => state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }),
-    onEvent: (event) => state.record(event),
+    onEvent: (event) => recordLoopEvent(state,event,options),
     readControl: () => state.readControl(), pendingCodex,
     roles, runRole,
   });

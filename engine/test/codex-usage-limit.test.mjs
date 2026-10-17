@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import {startTestLoop} from '../fixtures/test-loop.mjs';
 import { fileURLToPath } from "node:url";
 
 import {
@@ -29,15 +30,12 @@ const task = {
 const limitMessage = "You've hit your usage limit. Purchase more credits or try again at 10:07 PM.";
 const limitError = () => new CodexUsageLimitError({ message: limitMessage, retryAt: "try again at 10:07 PM" });
 const genericFailureFixture = fileURLToPath(new URL("../fixtures/fake-codex-error.mjs", import.meta.url));
-const waitUntil = async (check, timeoutMs = 2000) => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await check();
-    if (value) return value;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Timed out waiting for test state");
-};
+// Usage-limit tests exercise orchestration, not Git/subprocess QA collection.
+const prepareQa = async ({task,attempt,baselineSha,workerResult}) => ({task,attempt,baselineSha,
+  changedFiles:['result.txt'],diff:{text:'existing implementation',bytes:23},
+  clineSummary:{exitCode:workerResult.exitCode,text:workerResult.output},
+  qaEvidence:{command:{command:task.qaCommand,exitCode:0},categories:{tests:'PASS',scopeCheck:'PASS'},scope:{status:'PASS'}},
+});
 
 test("structured Codex failures detect limits and preserve exact reset text", () => {
   const output = [
@@ -78,7 +76,8 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
   let assessments = 0;
   let firstReviewInput;
   const dashboard = await startDashboardServer({ stateDir, workspace: root, port: 0 });
-  const loop = runNodeLoop({
+  const loop = startTestLoop({
+    prepareQa,
     workspace: root, stateDir, objective: "bounded", initialTask: task, maxAttempts: 2,
     codex: { activeCount: 0 },
     worker: { withExclusive: async (fn) => fn(), run: async () => { clineRuns++; return { exitCode: 0, output: "same worker result" }; } },
@@ -95,7 +94,8 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     },
   });
   try {
-    const waiting = await waitUntil(() => state.readLive().then((live) => live.stage === "WAITING_FOR_CODEX" && live));
+    await loop.waitForEvent('waiting-for-codex');
+    const waiting = await state.readLive();
     assert.equal(waiting.qaStatus, "waiting-for-codex");
     assert.equal(waiting.attempt, 1);
     assert.equal(waiting.task.id, task.id);
@@ -121,6 +121,7 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     assert.equal(reviews, 2);
     assert.equal(assessments, 1);
   } finally {
+    await loop.stop();
     await dashboard.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -133,15 +134,17 @@ test("pending QA survives restart and Stop remains a safe recoverable state", as
   await state.initialize({ task, workspace: root, maxAttempts: 2 });
   let clineRuns = 0;
   const common = {
+    prepareQa,
     workspace: root, stateDir, objective: "bounded", initialTask: task, maxAttempts: 2,
     codex: { activeCount: 0 }, reconcile: async()=>{}, baseline: async () => ({ head: "base" }), verify: async () => {}, pollMs: 10,
     readControl: () => state.readControl(), onEvent: (event) => state.record(event), onTask: async () => {},
     worker: { withExclusive: async (fn) => fn(), run: async () => { clineRuns++; return { exitCode: 0, output: "done" }; } },
     assess: async () => ({ status: "done" }),
   };
+  let first, second;
   try {
-    const first = runNodeLoop({ ...common, review: async () => { throw limitError(); } });
-    await waitUntil(() => state.readLive().then((live) => live.stage === "WAITING_FOR_CODEX"));
+    first = startTestLoop({ ...common, review: async () => { throw limitError(); } });
+    await first.waitForEvent('waiting-for-codex');
     await state.setControl("stop");
     assert.equal((await first).status, "stopped");
     const pending = await readPendingCodex(stateDir);
@@ -152,17 +155,17 @@ test("pending QA survives restart and Stop remains a safe recoverable state", as
       pauseAfterCurrent: false, stopAfterSafePoint: false, resumeGeneration: 0,
     });
     let reviews = 0;
-    const second = runNodeLoop({
+    second = startTestLoop({
       ...common, initialTask: null, pendingCodex: pending,
       worker: { withExclusive: async (fn) => fn(), run: async () => { throw new Error("Cline must not run after restart"); } },
       review: async (input) => { reviews++; assert.deepEqual(input, pending.inputs); return { status: "pass", output: "pass", commit: "fake" }; },
     });
-    await waitUntil(() => state.readLive().then((live) => live.stage === "WAITING_FOR_CODEX"));
+    await second.waitForEvent('waiting-for-codex');
     await state.setControl("resume");
     assert.equal((await second).status, "done");
     assert.equal(reviews, 1);
     assert.equal(clineRuns, 1);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await first?.stop(); await second?.stop(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("a Resume recorded while the worker is down is honored after restart", async () => {
@@ -200,7 +203,8 @@ test("a Resume before the limit does not cause an automatic Codex retry", async 
   const state = new DashboardState({ stateDir });
   await state.initialize({ task, workspace: root, maxAttempts: 2 });
   let reviews = 0;
-  const loop = runNodeLoop({
+  const loop = startTestLoop({
+    prepareQa,
     workspace: root, stateDir, objective: "bounded", initialTask: task, maxAttempts: 2,
     codex: { activeCount: 0 },
     worker: { withExclusive: async (fn) => fn(), run: async () => ({ exitCode: 0, output: "done" }) },
@@ -214,13 +218,13 @@ test("a Resume before the limit does not cause an automatic Codex retry", async 
     assess: async () => ({ status: "done" }),
   });
   try {
-    await waitUntil(() => state.readLive().then((live) => live.stage === "WAITING_FOR_CODEX"));
+    await loop.waitForEvent('waiting-for-codex');
     await new Promise((resolve) => setTimeout(resolve, 75));
     assert.equal(reviews, 1, "Resume before WAITING must not trigger an automatic retry");
     await state.setControl("resume");
     assert.equal((await loop).status, "done");
     assert.equal(reviews, 2);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await loop.stop(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("assessment usage limit resumes the identical assessment before launching Cline", async () => {
@@ -231,7 +235,8 @@ test("assessment usage limit resumes the identical assessment before launching C
   let assessments = 0;
   let clineRuns = 0;
   let firstInput;
-  const loop = runNodeLoop({
+  const loop = startTestLoop({
+    prepareQa,
     workspace: root, stateDir, objective: "bounded", codex: { activeCount: 0 }, maxAttempts: 2,
     worker: { withExclusive: async (fn) => fn(), run: async () => { clineRuns++; return { exitCode: 0, output: "done" }; } },
     baseline: async () => ({ head: "base" }), verify: async () => {}, pollMs: 10,
@@ -247,14 +252,15 @@ test("assessment usage limit resumes the identical assessment before launching C
     review: async () => ({ status: "pass", output: "pass", commit: "fake" }),
   });
   try {
-    const waiting = await waitUntil(() => state.readLive().then((live) => live.stage === "WAITING_FOR_CODEX" && live));
+    await loop.waitForEvent('waiting-for-codex');
+    const waiting = await state.readLive();
     assert.equal(waiting.interruptedOperation, "assessment");
     assert.equal(clineRuns, 0);
     await state.setControl("resume");
     assert.equal((await loop).status, "done");
     assert.equal(assessments, 3);
     assert.equal(clineRuns, 1);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await loop.stop(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("pending assessment overrides a conflicting initial task on restart", async () => {

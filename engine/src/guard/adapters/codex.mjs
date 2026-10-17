@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { decide } from "../decide.mjs";
 import { parsePatchPaths } from "../action.mjs";
+import {stripCheckOutputFilter} from '../check-output-filter.mjs';
 import {
   CODEX_EDIT_MUST_BE_PATCH,
   codexHookError,
@@ -43,8 +44,10 @@ export function shellScript(toolInput) {
 
 /** Every shell segment must be an allowed check or read-only command, with no redirection. */
 export function shellAllowed(script, qaCommand) {
-  const text = script.trim();
-  if (!text) return false;
+  const base = stripCheckOutputFilter(script);
+  if(base===null)return false;
+  const text = base.trim().replace(/^(npm|npx)\.cmd\b/i,'$1');
+  if (!text || /[<>]/.test(text)) return false;
   if (/[`]|\$\(|<\(|>(?!&1)/.test(text.replace(/2>&1/g, ""))) return false;
   const allowed = [...READ_ONLY, ...CHECKS, ...(qaCommand?.trim() ? [qaCommand.trim().toLowerCase()] : [])];
   return text.split(/&&|\|\||;|\|/).every((segment) => {

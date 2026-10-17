@@ -30,6 +30,7 @@ export async function readPendingCodex(stateDir) {
 export async function runRecoverableCodex({
   stateDir, operation, inputs, context = {}, invoke, emit, readControl, pollMs, pending = null,
   writePending = atomicWriteJson,
+  beforeInvoke = async () => true,
   removePending = (file) => rm(file, { force: true }),
 }) {
   let record = pending ?? {
@@ -65,6 +66,7 @@ export async function runRecoverableCodex({
     if (!waitBeforeInvoke) {
       record = { ...record, status: "running", inputs, context, limit: null, waitingResumeGeneration: null, updatedAt: new Date().toISOString() };
       await writePending(pendingPath(stateDir), record);
+      if(!await beforeInvoke())return {stopped:true};
       const operationStarted = Date.now();
       const role = ['qa', 'elevate', 'resolver'].includes(operation) ? operation : 'assessment';
       const qaTelemetry = operation === "qa" ? {
@@ -77,6 +79,7 @@ export async function runRecoverableCodex({
       else await emit(startType, { ...qaTelemetry, operation, startedAt:new Date(operationStarted).toISOString(), model: roleModel(role), reasoningEffort: ROLE_EFFORT[role], automatic: context.automatic, triggeredBy: context.triggeredBy, operationId: record.operationId });
       let result;
       try {
+        if(!await beforeInvoke())return {stopped:true};
         result = await invoke(inputs);
       } catch (error) {
         if (!(error instanceof CodexUsageLimitError) && error?.code !== "CODEX_USAGE_LIMIT") {

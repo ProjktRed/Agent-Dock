@@ -115,6 +115,7 @@ export function parseLoopOptions(argv) {
     clineMaxOutputTokens: positiveInteger(options["cline-max-output-tokens"], "cline-max-output-tokens", DEFAULT_LLAMACPP_MAX_OUTPUT_TOKENS),
     timeoutSeconds: positiveInteger(options["timeout-seconds"], "timeout-seconds", DEFAULT_TIMEOUT_SECONDS),
     solReassessment: booleanOption(options["sol-reassessment"], "sol-reassessment", true),
+    autoContinue: booleanOption(options["auto-continue"], "auto-continue", true),
     // false: Cline runs with its normal tools; Node scope/HEAD checks and QA still gate every change.
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
     roleOverrides: parseRoleOverrides(options),
