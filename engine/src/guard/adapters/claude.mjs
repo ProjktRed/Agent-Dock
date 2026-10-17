@@ -28,6 +28,8 @@ export const adapter = {
   },
   toAction(event) {
     const tool=String(event?.tool_name??'');
+    // Answer-only tools: --json-schema returns the result through StructuredOutput; TodoWrite only updates the session's plan.
+    if(['StructuredOutput','TodoWrite'].includes(tool))return {kind:'output',tool,input:event.tool_input,cwd:event.cwd};
     if(['Edit','Write','NotebookEdit'].includes(tool))return {kind:'edit',tool,input:event.tool_input,paths:[event.tool_input?.file_path??event.tool_input?.notebook_path],patch:false,cwd:event.cwd};
     return codexAction(event);
   },

@@ -157,6 +157,8 @@ function commandSafe(policy,script,cwd) {
 export function protectedActionReason(policy,action) {
   if(!policy.protectedPaths?.length)return null;
   const denied='Protected-path policy refused this tool call';
+  // Output-only tools touch no files or processes.
+  if(action.kind==='output')return null;
   const cwd=action.cwd||policy.workspace;
   if(isProtectedPath(policy,cwd))return denied;
   if(action.kind==='command')return action.commands?.length&&action.commands.every(command=>{

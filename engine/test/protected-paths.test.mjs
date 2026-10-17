@@ -106,6 +106,15 @@ test('model-chosen QA commands cannot read protected paths or launch arbitrary p
   assert.equal(calls,0);
 });
 
+test('Claude answer-only tools pass the protection hook; other unknown Claude tools still stop',async t=>{
+  const {policy}=await fixture(t);
+  for(const toolGuard of [true,false]) {
+    const guarded={...structuredClone(policy),toolGuard};
+    assert.equal((await decide(structuredClone(guarded),claude.toAction({tool_name:'StructuredOutput',tool_input:{taskId:'T',summary:'see .env.local'}}),{adapter:claude})).effect,'allow',`StructuredOutput toolGuard=${toolGuard}`);
+    assert.equal((await decide(structuredClone(guarded),claude.toAction({tool_name:'TodoWrite',tool_input:{todos:[]}}),{adapter:claude})).effect,'allow',`TodoWrite toolGuard=${toolGuard}`);
+    assert.equal((await decide(structuredClone(guarded),claude.toAction({tool_name:'mcp__x__read',tool_input:{path:'src/ok.txt'}}),{adapter:claude})).effect,'stop',`mcp toolGuard=${toolGuard}`);
+  }
+});
 test('unrecognized native code tools cannot bypass the command guard',async t=>{
   const {policy}=await fixture(t);
   for(const tool_name of ['node_repl','functions.exec','spawn_agent']) {
