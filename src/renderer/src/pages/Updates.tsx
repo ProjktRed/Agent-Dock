@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DEFAULT_RELEASE_REPO, updateChannel } from "@shared/defaults";
 import type { UpdateStatus } from "@shared/types";
 import { cleanError, useApp } from "../store";
 import { ago } from "../lib/format";
@@ -20,8 +21,9 @@ export function Updates() {
   const status = useUpdateStatus();
   const [source, setSource] = useState(u.source);
   const [branch, setBranch] = useState(u.branch);
-  const [releaseRepo, setReleaseRepo] = useState(u.releaseRepo ?? "ProjktRed/Agent-Dock");
-  const release = u.channel === "release";
+  const [releaseRepo, setReleaseRepo] = useState(u.releaseRepo ?? DEFAULT_RELEASE_REPO);
+  const releaseBuild = status?.installed?.branch === "release";
+  const release = updateChannel(snap.settings, status?.installed?.branch) === "release";
   const patch = (next: Partial<typeof u>) => saveSettings({ ...snap.settings, updates: { ...u, ...next } });
   if (!status) return <div className="skel" style={{ width: "40%" }} />;
   const dev = status.state === "dev" || status.state === "portable";
@@ -87,7 +89,7 @@ export function Updates() {
         </SetRow>
         <SetRow title="Install without asking" desc="Builds and restarts automatically when no automation is running; otherwise asks" support="app"><Toggle on={u.autoInstall} onChange={(v) => patch({ autoInstall: v })} label="Install automatically" disabled={!u.autoCheck} /></SetRow>
         <SetRow title="Update channel" desc="Signed releases: built by GitHub Actions, installed only when the release signature matches the key built into this app; needs no Node.js or git. Source: builds the newest commit of a branch on this PC (developers; needs Node.js, npm and git)." support="app">
-          <select className="sel" value={release ? "release" : "git"} aria-label="Update channel" onChange={(e) => patch({ channel: e.target.value as "git" | "release" })}>
+          <select className="sel" value={release ? "release" : "git"} aria-label="Update channel" disabled={releaseBuild} title={releaseBuild ? "This is a signed release build: it updates from signed releases only." : undefined} onChange={(e) => patch({ channel: e.target.value as "git" | "release" })}>
             <option value="git">Source (build from git)</option>
             <option value="release">Signed releases</option>
           </select>

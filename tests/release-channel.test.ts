@@ -5,7 +5,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkRelease, downloadRelease, newerVersion, verifyManifest } from "../src/main/release-channel";
 import { buildManifest, generateKeyPair, signManifest } from "../scripts/sign-release.mjs";
-import { swap } from "../scripts/swap.mjs";
+import { isUninstaller, swap } from "../scripts/swap.mjs";
+import { stagingDir } from "../src/main/updater";
+import { DEFAULT_RELEASE_REPO, DEFAULT_SETTINGS, updateChannel } from "../src/shared/defaults";
 
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
@@ -93,6 +95,33 @@ describe("signed releases", () => {
     expect(existsSync(path.join(installDir, "stale.txt"))).toBe(false);
     expect(existsSync(`${installDir}.new`) || existsSync(`${installDir}.old`)).toBe(false);
     await expect(swap({ from: path.join(root, "nothing"), installDir, shortcuts: false })).rejects.toThrow(/does not contain/);
+  });
+
+  it.runIf(process.platform === "win32")("keeps the installer's uninstaller when an update replaces the files", async () => {
+    const root = await tmp();
+    const from = path.join(root, "new"), installDir = path.join(root, "AgentDock");
+    mkdirSync(from); mkdirSync(installDir);
+    writeFileSync(path.join(from, "AgentDock.exe"), "new");
+    writeFileSync(path.join(installDir, "AgentDock.exe"), "old"); writeFileSync(path.join(installDir, "Uninstall Agent Dock.exe"), "uninstaller");
+    await swap({ from, installDir, shortcuts: false });
+    expect(readFileSync(path.join(installDir, "AgentDock.exe"), "utf8")).toBe("new");
+    expect(readFileSync(path.join(installDir, "Uninstall Agent Dock.exe"), "utf8")).toBe("uninstaller");
+    expect([isUninstaller("Uninstall Agent Dock.exe"), isUninstaller("AgentDock.exe"), isUninstaller("Uninstall.txt")]).toEqual([true, false, false]);
+  });
+
+  it("puts update files beside a release:local install, and under LOCALAPPDATA for an installed app", () => {
+    const programs = path.join("C:", "Users", "a", "AppData", "Local", "Programs"), local = path.join("C:", "L");
+    expect(stagingDir(path.join(programs, "Agent Dock", "App", "AgentDock.exe"), local)).toBe(path.join(programs, "Agent Dock", "Updates"));
+    expect(stagingDir(path.join(programs, "AgentDock", "AgentDock.exe"), local)).toBe(path.join(local, "Agent Dock", "Updates"));
+  });
+
+  it("release builds always update from signed releases, in the public releases repository by default", () => {
+    const git = { updates: { ...DEFAULT_SETTINGS.updates, channel: "git" as const } };
+    expect(updateChannel(git, "release")).toBe("release");
+    expect(updateChannel(git, "dev")).toBe("git");
+    expect(updateChannel({ updates: { channel: "release" } }, "dev")).toBe("release");
+    expect(DEFAULT_SETTINGS.updates.releaseRepo).toBe(DEFAULT_RELEASE_REPO);
+    expect(DEFAULT_RELEASE_REPO).toBe("ProjktRed/agent-dock-releases");
   });
 });
 

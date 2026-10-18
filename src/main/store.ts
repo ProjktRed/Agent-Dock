@@ -24,7 +24,8 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     usage: { ...DEFAULT_SETTINGS.usage, ...(s.usage ?? {}) },
     advanced: { ...DEFAULT_SETTINGS.advanced, ...(s.advanced ?? {}) },
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },
-    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}) },
+    // The old default pointed at the private source repository; releases now live in a public one.
+    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}), ...(s.updates?.releaseRepo === "ProjktRed/Agent-Dock" ? { releaseRepo: DEFAULT_SETTINGS.updates.releaseRepo } : {}) },
     tuning: { ...DEFAULT_SETTINGS.tuning, ...(s.tuning ?? {}) },
   };
 }

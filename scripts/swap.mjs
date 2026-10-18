@@ -5,12 +5,14 @@
 //
 //   swap.mjs --from <new win-unpacked> --install-dir <App> [--wait-pid N] [--relaunch] [--result <json>]
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const EXE_NAME = "AgentDock.exe";
 export const SHORTCUT_NAME = "Agent Dock";
+/** The per-user installer's uninstaller (electron-builder NSIS) lives in the install folder but not in a release zip. */
+export const isUninstaller = (name) => /^Uninstall .+\.exe$/i.test(name);
 const log = (msg) => console.log(`[swap] ${msg}`);
 
 function run(cmd, args) {
@@ -54,6 +56,9 @@ export async function swap({ from, installDir, waitPid, relaunch, shortcuts = tr
   const r = run("robocopy", [from, fresh, "/MIR", "/R:2", "/W:1", "/NFL", "/NDL", "/NJH", "/NP"]);
   // robocopy: 0–7 are success codes, 8+ are failures.
   if (r.status >= 8) throw new Error(`robocopy into ${fresh} failed with exit code ${r.status}`);
+  // An install made by the installer keeps its uninstaller (and its own shortcuts, so none are added).
+  const uninstallers = existsSync(installDir) ? readdirSync(installDir).filter(isUninstaller) : [];
+  for (const name of uninstallers) copyFileSync(path.join(installDir, name), path.join(fresh, name));
   if (existsSync(installDir)) {
     let moved = false;
     for (let i = 0; i < 20 && !moved; i++) {
@@ -77,7 +82,7 @@ export async function swap({ from, installDir, waitPid, relaunch, shortcuts = tr
   }
   if (existsSync(old)) rmSync(old, { recursive: true, force: true });
   const exe = path.join(installDir, EXE_NAME);
-  if (shortcuts) {
+  if (shortcuts && !uninstallers.length) {
     const startMenu = path.join(process.env.APPDATA ?? "", "Microsoft", "Windows", "Start Menu", "Programs", `${SHORTCUT_NAME}.lnk`);
     const desktop = path.join(process.env.USERPROFILE ?? "", "Desktop", `${SHORTCUT_NAME}.lnk`);
     // Only create missing shortcuts: updates keep the same install path, so existing ones stay valid.

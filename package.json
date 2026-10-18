@@ -1,9 +1,11 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.23.9",
+  "version": "0.24.0",
   "description": "Agent Dock: Windows command center for the Codex ↔ Cline automation loop",
   "private": true,
+  "license": "MIT",
+  "author": "ProjktRed",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -13,6 +15,7 @@
     "test": "vitest run",
     "test:engine": "npm --prefix engine test",
     "package": "electron-vite build && electron-builder --win --dir",
+    "package:installer": "electron-vite build && electron-builder --win nsis",
     "package:linux": "electron-vite build && electron-builder --linux --dir",
     "release:local": "node scripts/release-local.mjs --launch"
   },
@@ -40,6 +43,7 @@
     "files": ["out/**", "package.json", "build-info.json"],
     "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }, { "from": "scripts", "to": "scripts", "filter": ["swap.mjs"] }],
     "win": { "target": "dir", "icon": "build/icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "include": "scripts/installer.nsh", "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}", "shortcutName": "Agent Dock", "uninstallDisplayName": "Agent Dock", "deleteAppDataOnUninstall": false },
     "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" }
   }
 }

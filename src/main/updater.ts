@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_RELEASE_REPO, updateChannel } from "@shared/defaults";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
@@ -9,7 +10,17 @@ import { checkRelease, downloadRelease, extractRelease, launchSwap, type Release
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
-export const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
+/**
+ * Update workspace. release:local installs to <root>\App, with <root>\Updates beside it. The per-user
+ * installer puts the app in %LOCALAPPDATA%\Programs\AgentDock, so its updates live under
+ * %LOCALAPPDATA%\Agent Dock\Updates instead of next to every other program.
+ */
+export function stagingDir(execPath = process.execPath, localAppData = process.env.LOCALAPPDATA) {
+  const installDir = path.dirname(execPath);
+  if (path.basename(installDir).toLowerCase() === "app" || !localAppData) return path.join(path.dirname(installDir), "Updates");
+  return path.join(localAppData, "Agent Dock", "Updates");
+}
+export const STAGING = stagingDir();
 const REPO = path.join(STAGING, "repo");
 const MAX_LOG = 400;
 
@@ -106,7 +117,7 @@ export class Updater {
       this.set({ state: "dev", source, branch, error: null });
       return this.status;
     }
-    if (settings.updates.channel === "release") return this.probeRelease(settings, quiet);
+    if (updateChannel(settings, this.installed.branch) === "release") return this.probeRelease(settings, quiet);
     if (!source) {
       this.set({ state: "error", error: "No update source configured." });
       return this.status;
@@ -147,7 +158,7 @@ export class Updater {
 
   /** Signed release channel: the newest GitHub Release, verified against the built-in release key. */
   private async probeRelease(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
-    const repo = settings.updates.releaseRepo?.trim() || "ProjktRed/Agent-Dock";
+    const repo = settings.updates.releaseRepo?.trim() || DEFAULT_RELEASE_REPO;
     if (!quiet) this.set({ state: "checking", source: `github.com/${repo} (signed releases)`, branch: "", error: null });
     try {
       this.release = await checkRelease(repo, this.appVersion, this.releaseKey);
@@ -209,7 +220,7 @@ export class Updater {
     if (!this.packaged || !this.installed) throw new Error("Updates apply to the installed app only.");
     if (this.building) throw new Error("An update is already being built.");
     if (this.status.state !== "available" || !this.status.latest) throw new Error("No update available. Check for updates first.");
-    if (settings.updates.channel === "release") {
+    if (updateChannel(settings, this.installed.branch) === "release") {
       if (!this.release) throw new Error("No verified release. Check for updates first.");
       return this.applyRelease(onReadyToQuit);
     }

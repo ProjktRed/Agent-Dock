@@ -33,6 +33,13 @@ export const DEFAULT_CLIS: CliConnection[] = [
   cli("ollama", "ollama", "Ollama", "http://127.0.0.1:11434"),
 ];
 
+/** Public repository the signed releases are published to (the source repository stays private). */
+export const DEFAULT_RELEASE_REPO = "ProjktRed/agent-dock-releases";
+
+/** Builds made by the release workflow (build-info branch "release") have no source to build from: they always use signed releases. */
+export const updateChannel = (settings: { updates: { channel?: "git" | "release" } }, installedBranch?: string | null): "git" | "release" =>
+  installedBranch === "release" ? "release" : settings.updates.channel ?? "git";
+
 export function defaultAgents(models: { qa: string; assessment: string; elevate: string; reasoning: string }): Agent[] {
   const base = { maxOutputTokens: ENGINE_DEFAULTS.maxOutputTokens, timeoutSeconds: ENGINE_DEFAULTS.timeoutSeconds, skills: ["bounded-task-handoff"], enabled: true };
   return [
@@ -85,7 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
   tuning: { elevationAfter: 3, resolverMaxStrategies: 3, maxCorrections: 0, taskMaxFiles: 1, taskMaxNewLines: 200, taskMaxReadFiles: 3, defaultContextTokens: null, defaultMaxOutputTokens: null },
-  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "", channel: "git", releaseRepo: "ProjktRed/Agent-Dock" },
+  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "", channel: "git", releaseRepo: DEFAULT_RELEASE_REPO },
   onboardingComplete: false,
   activeProjectId: null,
 };

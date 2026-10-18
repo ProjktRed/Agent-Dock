@@ -14,6 +14,14 @@ the loop.
 
 ## Getting started
 
+**Install:** download `AgentDock-Setup-<version>-win-x64.exe` from
+[the releases page](https://github.com/ProjktRed/agent-dock-releases/releases) and run it. It installs
+for your Windows account only (no admin rights) into `%LOCALAPPDATA%ProgramsAgentDock`, with Start
+menu and desktop shortcuts and an uninstaller. The installer is not Authenticode-signed yet, so Windows
+SmartScreen may warn about an unknown publisher (More info › Run anyway); the release notes list its
+SHA-256. Agent Dock then updates itself from the same page, and installs a release only when its
+signature matches the release key built into the app.
+
 **You need:** Windows 10 or 11, [Git](https://git-scm.com/download/win), and Codex CLI or Claude Code,
 installed and signed in. Agent Dock never handles their logins. Optional: Cline CLI with
 llama.cpp or Ollama, to implement with a local model instead of a cloud CLI.
@@ -313,3 +321,22 @@ debugging switches. It does not replace live-provider integration testing or an 
   lock, usually antivirus or indexing). It can intermittently fail an engine test under parallel
   load or interrupt a run. Excluding the engine state folders from real-time
   scanning is the usual fix.
+
+## Releases (maintainers)
+
+Pushing a tag `vX.Y.Z` that matches `package.json` runs `.github/workflows/release.yml`: checks and
+tests, the per-user installer (`npm run package:installer`, electron-builder NSIS), the packaged
+security check, a zip of the app, and a manifest of that zip signed with Ed25519. It publishes the
+installer, zip, `manifest.json` and `manifest.sig` to the public releases repository. Setup, once:
+
+1. `node scripts/sign-release.mjs --generate-key release-key.pem`, add the file's contents as the
+   repository secret `RELEASE_SIGNING_KEY`, delete the file, and put the printed public key in
+   `src/main/release-key.ts`.
+2. Create the public repository `ProjktRed/agent-dock-releases` with one commit (a README), or set
+   another one as the repository variable `RELEASE_REPO`.
+3. Add the secret `RELEASES_TOKEN`: a fine-grained token with Contents read/write on the releases
+   repository only.
+
+## License
+
+[MIT](LICENSE)
