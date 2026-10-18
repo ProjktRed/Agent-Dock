@@ -12,6 +12,7 @@ import type {
   ProjectStatus,
   Settings,
   SkillInfo,
+  LibraryPreview,
   UpdateStatus,
   UsageSummary,
   LocalContext,
@@ -95,6 +96,9 @@ export interface DesktopApi {
   engineLog(projectId: string): Promise<string>;
   skills(): Promise<SkillInfo[]>;
   importSkillFolder(): Promise<SkillInfo[]>;
+  skillLibraries(): Promise<{ label: string; url: string }[]>;
+  previewSkillImport(url: string, only?: string[]): Promise<LibraryPreview>;
+  installSkillImport(token: string, names: string[]): Promise<SkillInfo[]>;
   roles(): Promise<WorkflowRole[]>;
   saveRole(role: RoleDraft): Promise<WorkflowRole[]>;
   deleteRole(id: string): Promise<WorkflowRole[]>;

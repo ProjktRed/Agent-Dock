@@ -429,12 +429,28 @@ export interface EngineTuning {
   defaultMaxOutputTokens: number | null;
 }
 
+export interface SkillFinding { level: "block" | "warn"; file: string; message: string }
+export interface LibrarySkillPreview {
+  name: string; description: string; path: string;
+  files: { path: string; size: number }[]; skipped: { path: string; reason: string }[];
+  findings: SkillFinding[];
+}
+/** A GitHub skill import, pinned to one commit and scanned, before anything is written. */
+export interface LibraryPreview {
+  token: string; owner: string; repo: string; commit: string; url: string; trusted: boolean;
+  /** Large library listed by folder only; review the chosen folders before import. */
+  browse: boolean;
+  skills: LibrarySkillPreview[];
+}
+
 export interface SkillInfo {
   id: string;
   name: string;
   description: string;
   dir: string;
   source: "engine" | "imported";
+  /** GitHub library imports: "owner/repo@commit7". */
+  origin?: string;
   instructions: string;
   warnings: string[];
 }

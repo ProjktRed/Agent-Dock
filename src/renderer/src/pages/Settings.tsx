@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Agent, EngineTuning, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, LibraryPreview, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -120,10 +120,83 @@ function General() {
   );
 }
 
+/** GitHub import: preview pins one commit, downloads only text files and scans them; nothing is written until Import. */
+function SkillImport({ onClose, onImported }: { onClose: () => void; onImported: (skills: SkillInfo[]) => void }) {
+  const { toast } = useApp();
+  const [libraries, setLibraries] = useState<{ label: string; url: string }[]>([]);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<LibraryPreview | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => { void window.api.skillLibraries().then(setLibraries); }, []);
+  const load = async (target = url, only?: string[]) => {
+    setBusy(true); setPreview(null); setChosen([]); setConfirmed(false);
+    try { setPreview(await window.api.previewSkillImport(target, only)); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const importable = (preview?.skills ?? []).filter((sk) => !sk.findings.some((x) => x.level === "block"));
+  const key = (sk: { name: string; path: string }) => (preview?.browse ? sk.path : sk.name);
+  const warned = (preview?.skills ?? []).some((sk) => chosen.includes(sk.name) && sk.findings.some((x) => x.level === "warn"));
+  const install = async () => {
+    if (!preview) return;
+    setBusy(true);
+    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${chosen.length} skill(s)`); onClose(); }
+    catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Import skills from GitHub" label="Import skills from GitHub" onClose={onClose} wide>
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <span className="sub">Trusted libraries:</span>
+          {libraries.map((l) => <button key={l.url} className="chip btnlike raised info" disabled={busy} onClick={() => { setUrl(l.url); void load(l.url); }}>{l.label}</button>)}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <input className="input mono grow" value={url} placeholder="https://github.com/owner/repo/tree/main/skills/name" onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && url.trim() && void load()} aria-label="GitHub URL" />
+          <button className="btn" disabled={busy || !url.trim()} onClick={() => void load()}>{busy && !preview ? "Checking…" : "Preview"}</button>
+        </div>
+        <p className="sub" style={{ margin: 0 }}>Imports are pinned to one commit. Only text files are downloaded; scripts and binaries are skipped and never run. Skills are scanned for hidden characters and risky instructions before you import.</p>
+        {preview && (
+          <>
+            <div className={`banner ${preview.trusted ? "" : "warnb"}`}><Icon name={preview.trusted ? "lock" : "warn"} className={preview.trusted ? "info" : "warn"} /><span><span className="mono">{preview.owner}/{preview.repo}</span> at commit <span className="mono">{preview.commit.slice(0, 7)}</span>{preview.trusted ? " · trusted library" : " · not a trusted library: read every file before importing"}</span></div>
+            <section className="well" style={{ padding: 6, maxHeight: 340, overflowY: "auto" }}>
+              {preview.skills.map((sk) => {
+                const blocked = sk.findings.some((x) => x.level === "block");
+                const on = chosen.includes(key(sk));
+                return (
+                  <label key={key(sk)} className="stack" style={{ gap: 4, padding: "8px 10px", opacity: blocked ? 0.6 : 1 }}>
+                    <span className="row" style={{ gap: 8 }}>
+                      <input type="checkbox" disabled={blocked} checked={on} onChange={() => setChosen(on ? chosen.filter((n) => n !== key(sk)) : [...chosen, key(sk)])} />
+                      <span style={{ fontWeight: 600 }}>{sk.name}</span>
+                      <span className="sub ellipsis grow">{sk.description}</span>
+                      {!preview.browse && <span className="sub">{sk.files.length} file(s){sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
+                    </span>
+                    {sk.findings.filter((x) => x.file || x.level === "block").map((x, i) => <span key={i} className={`row ${x.level === "block" ? "err" : "warn"}`} style={{ gap: 6, fontSize: 12, paddingLeft: 26 }}><Icon name="warn" size="sm" />{x.level === "block" ? "Blocked: " : ""}{x.message}{x.file ? <span className="mono sub"> {x.file}</span> : null}</span>)}
+                  </label>
+                );
+              })}
+            </section>
+            {warned && <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed the warnings and want to import these skills.</span></label>}
+            <div className="row" style={{ gap: 8 }}>
+              {preview.browse
+                ? <span className="sub grow">{preview.skills.length} skills in this library. Choose up to 25 to download and review.</span>
+                : <span className="sub grow">{importable.length} of {preview.skills.length} can be imported · <button className="btn ghost sm" onClick={() => setChosen(chosen.length === importable.length ? [] : importable.map((sk) => sk.name))}>{chosen.length === importable.length ? "Select none" : "Select all"}</button></span>}
+              <button className="btn" onClick={onClose}>Cancel</button>
+              {preview.browse
+                ? <button className="btn primary" disabled={busy || !chosen.length || chosen.length > 25} onClick={() => void load(preview.url, chosen)}>Review {chosen.length || ""}</button>
+                : <button className="btn primary" disabled={busy || !chosen.length || (warned && !confirmed)} onClick={() => void install()}>Import {chosen.length || ""}</button>}
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function Skills() {
   const { snap, setAgents, saveSettings, toast } = useApp();
   const [skills, setSkills] = useState<SkillInfo[] | null>(null);
   const [selId, setSelId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     void window.api.skills().then((s) => {
       setSkills(s);
@@ -140,9 +213,10 @@ function Skills() {
   };
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="banner"><Icon name="warn" className="info" /><span>The engine always injects its bundled <span className="mono">bounded-task-handoff</span> skill into Assessment, QA and Cline handoffs. Other skills and assignments are saved here for when the engine accepts additional skills.</span></div>
+      <div className="banner"><Icon name="warn" className="info" /><span>The engine always includes its bundled <span className="mono">bounded-task-handoff</span> skill. Skills you assign to an agent are added to that role's prompt (SKILL.md plus its other Markdown files when they fit 16,000 characters); task scope and guard rules still take precedence.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
         <span className="sub grow">{skills.length} skills · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
+        <button className="btn" onClick={() => setImporting(true)}><Icon name="download" size="sm" />Import from GitHub</button>
         <button className="btn" onClick={async () => setSkills(await window.api.importSkillFolder())}><Icon name="download" size="sm" />Import from folder</button>
       </div>
       {skills.length === 0 ? <Empty title="No skills found" icon="settings" /> : (
@@ -153,7 +227,7 @@ function Skills() {
               {skills.map((s) => (
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
-                  <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`}>{s.source === "engine" ? "Engine" : "Imported"}</span></td>
+                  <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
                   <td className="sub">{assigned(s).map((a) => a.name).join(", ") || "None"}</td>
                   <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? `${s.warnings.length} warning(s)` : "Compatible"}</span></td>
                   <td onClick={(e) => e.stopPropagation()}>{s.source === "engine" ? <span className="lock"><Icon name="lock" size="sm" />Required</span> : <Toggle on={enabled(s)} onChange={(v) => saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, [s.id]: v } } })} label={`Enable ${s.name}`} />}</td>
@@ -163,6 +237,7 @@ function Skills() {
           </table>
         </section>
       )}
+      {importing && <SkillImport onClose={() => setImporting(false)} onImported={setSkills} />}
       {sel && (
         <section className="card pad stack" style={{ gap: 16 }}>
           <div className="row wrap"><h2 className="h2">{sel.name}</h2><span className="grow" /><button className="btn ghost sm" onClick={() => window.api.openPath(sel.dir)}><Icon name="external" size="sm" />Open folder</button></div>

@@ -25,12 +25,20 @@ async function readSkill(dir: string, source: SkillInfo["source"]): Promise<Skil
   const warnings: string[] = [];
   if (!parsed.name) warnings.push("SKILL.md has no `name` in its frontmatter.");
   if (!parsed.description) warnings.push("SKILL.md has no `description`.");
+  let origin: string | undefined;
+  try {
+    const source = JSON.parse(await readFile(path.join(dir, "agent-dock-source.json"), "utf8"));
+    if (typeof source.owner === "string" && typeof source.repo === "string" && typeof source.commit === "string") origin = `${source.owner}/${source.repo}@${source.commit.slice(0, 7)}`;
+  } catch {
+    // imported from a local folder
+  }
   return {
     id: `${source}:${parsed.name ?? path.basename(dir)}`,
     name: parsed.name ?? path.basename(dir),
     description: parsed.description,
     dir,
     source,
+    ...(origin ? { origin } : {}),
     instructions: parsed.body.trim(),
     warnings,
   };
@@ -56,4 +64,27 @@ export async function listSkills(engineDir: string, importedDirs: string[]): Pro
   await scan(path.join(engineDir, "skills"), "engine");
   for (const dir of importedDirs) await scan(dir, "imported");
   return found;
+}
+
+/**
+ * What the engine receives for a skill: its SKILL.md instructions plus its other Markdown files
+ * (references), when everything fits the per-skill limit. Otherwise only SKILL.md.
+ */
+export async function skillDeliveryText(skill: SkillInfo): Promise<{ text: string; referencesLeftOut: boolean }> {
+  const extras: string[] = [];
+  const walk = async (dir: string, rel: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await walk(path.join(dir, entry.name), relPath);
+      else if (entry.isFile() && /.md$/i.test(entry.name) && relPath !== "SKILL.md") extras.push(relPath);
+    }
+  };
+  await walk(skill.dir, "");
+  if (!extras.length) return { text: skill.instructions, referencesLeftOut: false };
+  let text = skill.instructions;
+  for (const rel of extras.sort()) text += `
+
+### File: ${rel}
+${(await readFile(path.join(skill.dir, rel), "utf8")).trim()}`;
+  return text.length <= SKILL_MAX_CHARS ? { text, referencesLeftOut: false } : { text: skill.instructions, referencesLeftOut: true };
 }

@@ -12,7 +12,8 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { addProject, inspectDirectory, taskHistory } from "./projects";
-import { listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS } from "./skills";
+import { listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
+import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
@@ -199,12 +200,13 @@ async function assignedSkillsFile(assigned: Record<string, string[]>) {
     .filter((s) => s.source === "imported" && store.data.settings.skills.enabled[s.id] !== false);
   const roles: Record<string, { name: string; instructions: string }[]> = {};
   for (const [role, names] of Object.entries(assigned)) {
-    roles[role] = names.flatMap((name) => {
+    roles[role] = [];
+    for (const name of names) {
       const skill = available.find((s) => s.name === name);
-      if (!skill || !skill.instructions.trim()) return [];
+      if (!skill || !skill.instructions.trim()) continue;
       if (skill.instructions.length > SKILL_MAX_CHARS) throw new Error(`Skill “${name}” is longer than ${SKILL_MAX_CHARS.toLocaleString()} characters; shorten its SKILL.md or unassign it.`);
-      return [{ name, instructions: skill.instructions }];
-    });
+      roles[role].push({ name, instructions: (await skillDeliveryText(skill)).text });
+    }
     const total = roles[role].reduce((sum, s) => sum + s.instructions.length, 0);
     if (total > ROLE_SKILLS_MAX_CHARS) throw new Error(`Skills assigned to ${role} are longer than ${ROLE_SKILLS_MAX_CHARS.toLocaleString()} characters in total; unassign some.`);
   }
@@ -541,6 +543,15 @@ function registerIpc() {
       if (!store.data.settings.skills.importedDirs.includes(dir)) store.data.settings.skills.importedDirs.push(dir);
       await store.saveSettings();
     }
+    return listSkills(engineDir, store.data.settings.skills.importedDirs);
+  });
+  handle("skills:libraries", () => TRUSTED_LIBRARIES.map(({ label, url }) => ({ label, url })));
+  handle("skills:previewLibrary", (url: string, only?: string[]) => previewLibraryImport(String(url), undefined, Array.isArray(only) ? only.map(String) : undefined));
+  handle("skills:installLibrary", async (token: string, names: string[]) => {
+    if (!Array.isArray(names) || names.some((n) => typeof n !== "string")) throw new Error("Choose the skills to import.");
+    const dirs = await installLibraryImport(String(token), names, path.join(store.dir, "skill-library"));
+    for (const dir of dirs) if (!store.data.settings.skills.importedDirs.includes(dir)) store.data.settings.skills.importedDirs.push(dir);
+    await store.saveSettings();
     return listSkills(engineDir, store.data.settings.skills.importedDirs);
   });
   handle("roles:list", () => roles.load());
