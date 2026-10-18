@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
     notifyErrors: true,
     notifyInfo: false,
     notifyDigests: true,
+    remoteApprovals: false,
     defaultProject: "last",
   },
   workflow: {

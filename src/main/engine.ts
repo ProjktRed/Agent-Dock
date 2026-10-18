@@ -153,7 +153,7 @@ export class EngineManager {
   }
 
   /** Same semantics as the engine dashboard (engine/src/dashboard-cli.mjs onControl). */
-  async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
+  async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}, source = "app"): Promise<void> {
     this.gitCache.delete(project.id);
     const running = await this.refreshAlive(project);
     if (action === "start") return this.start(project, args, false, envDelta);
@@ -165,16 +165,16 @@ export class EngineManager {
       }
       this.alive.delete(project.id);
       // The killed engine writes nothing; record the stop so it is not taken for an interruption.
-      await (await this.state(project)).record({ type: "stopped", reason: "stop-now", source: "app" }).catch(() => undefined);
+      await (await this.state(project)).record({ type: "stopped", reason: "stop-now", source }).catch(() => undefined);
       return;
     }
     if (action === "stop-after-task") {
       this.stopAfterTask.add(project.id);
-      await (await this.state(project)).setControl("pause", { source: "app" });
+      await (await this.state(project)).setControl("pause", { source });
       return;
     }
     const state = await this.state(project);
-    await state.setControl(action, { source: "app" });
+    await state.setControl(action, { source });
     if (action === "resume") this.stopAfterTask.delete(project.id);
     if ((action === "resume" || action === "resolve" || action === "retry-qa") && !running) await this.start(project, args, action === "resolve", envDelta);
     if (action === "elevate" && !running) await this.spawnEngine(project, "elevate-cli.mjs", args, envDelta);
@@ -193,6 +193,11 @@ export class EngineManager {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }
 
+  /** Adds a line to the project's Activity (and its action log). */
+  async recordEvent(project: Project, event: Record<string, unknown>): Promise<void> {
+    await (await this.state(project)).record(event);
+  }
+
   /** The engine's notification module: one set of channel rules and message shapes for app and engine. */
   notifyModule() {
     return this.load("notify.mjs");
@@ -204,10 +209,10 @@ export class EngineManager {
   }
 
   /** Approving while the engine runs leaves it to the next task boundary; with no engine it is committed now (clean tree only). */
-  async decidePlanProposal(project: Project, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]> {
+  async decidePlanProposal(project: Project, id: string, decision: "approve" | "dismiss", source = "app"): Promise<PlanProposal[]> {
     const mod = await this.load("plan-stewardship.mjs");
     const state = await this.state(project);
-    await mod.decidePlanProposal({ stateDir: project.stateDir, id, decision, source: "app", state });
+    await mod.decidePlanProposal({ stateDir: project.stateDir, id, decision, source, state });
     if (decision === "approve" && !(await this.refreshAlive(project))) await mod.applyApprovedPlanProposals({ stateDir: project.stateDir, workspace: project.path, state });
     this.gitCache.delete(project.id);
     return this.planProposals(project);

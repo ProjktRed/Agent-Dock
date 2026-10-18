@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell, Tray } from "electron";
@@ -10,6 +11,7 @@ import { appIcon } from "./icon";
 import { checkCli, detectOnPath, pickRunnable, whereAll } from "./lib/clis";
 import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
+import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { addProject, inspectDirectory, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
@@ -259,6 +261,82 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
   return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}) };
 }
 
+/** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
+async function runControl(id: string, action: ControlAction, source = "app") {
+  const p = project(id);
+  const check = launchCheck(p);
+  const starting = ["start", "resume", "resolve", "retry-qa"].includes(action) && !engine.isAlive(id);
+  if (starting && check.problems.length) throw new Error(check.problems.join(" "));
+  if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
+  // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
+  if (starting) {
+    const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
+    if (owner) {
+      const message = `QA cannot commit in ${p.name}: ${owner.dir} belongs to ${owner.owner}, not ${owner.user}. In an Administrator PowerShell run: ${ownerFixCommand(owner)}`;
+      if (action === "retry-qa") throw new Error(message);
+      notice({ kind: "warning", message });
+    }
+  }
+  const wasAlive = engine.isAlive(id);
+  await engine.control(p, action, await launchArgs(p, check), providerEnv(p), source);
+  if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
+    // The attached task is a one-shot first task.
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
+    await store.saveProjects();
+  }
+  void pollOnce();
+}
+
+// ---------- signed remote approvals (Telegram buttons, email replies) ----------
+
+let approvals: RemoteApprovals | null = null;
+/** What a waiting run offers remotely: the same choices as the attention panel, plus Stop. */
+function stateApproval(s: ProjectStatus): { target: string; actions: ApprovalAction[]; title: string; message: string } | null {
+  const reason = (s.runState === "attention" ? s.attentionReason : s.runState === "blocked" ? s.blockedReason : s.limitMessage) ?? "";
+  const actions: ApprovalAction[] = [];
+  if (s.runState === "attention") { actions.push("resume"); if (s.elevateAvailable) actions.push("elevate"); }
+  else if (s.runState === "blocked") { if (s.resolverAvailable) actions.push("resolve"); if (s.assessmentRetry) actions.push("resume"); if (s.qaRetry) actions.push("retry-qa"); }
+  else if (s.runState === "waiting-limit") actions.push("resume");
+  if (!actions.length) return null;
+  const title = { attention: "Needs your review", blocked: "Run blocked", "waiting-limit": "Usage limit reached" }[s.runState as "attention" | "blocked" | "waiting-limit"];
+  const task = s.task ? `Task ${s.task.id}${s.task.name ? ` · ${s.task.name}` : ""}\n` : "";
+  return { target: `state:${s.runState}:${s.task?.id ?? ""}:${reason.slice(0, 80)}`, actions: [...actions, "stop"], title, message: `${task}${reason.slice(0, 1200)}` };
+}
+function approvalChannels() {
+  if (store.data.settings.general.remoteApprovals !== true) return { telegram: null, email: null };
+  return { telegram: notifyChannel("telegram") as TelegramChannel | null, email: notifyChannel("email") as EmailChannel | null };
+}
+async function startApprovals() {
+  let key = store.getSecret("approvals:key");
+  if (!key) { key = randomBytes(32).toString("hex"); await store.setSecret("approvals:key", key); }
+  approvals = new RemoteApprovals({
+    key: Buffer.from(key, "hex"), file: path.join(store.dir, "remote-approvals.json"), channels: approvalChannels,
+    log: (message) => console.warn(message),
+    stillValid: async (r, action) => {
+      const p = store.data.projects.find((x) => x.id === r.projectId && !x.archived);
+      if (!p) return false;
+      if (r.target.startsWith("plan:")) return (await engine.planProposals(p)).some((x) => x.id === r.target.slice(5) && x.status === "pending" && x.applies !== false);
+      const now = stateApproval(await engine.status(p));
+      return Boolean(now && now.target === r.target && now.actions.includes(action));
+    },
+    execute: async (r, action, via) => {
+      const p = project(r.projectId), source = `remote:${via}`;
+      let result: string;
+      if (action === "approve-plan" || action === "dismiss-plan") {
+        const list = await engine.decidePlanProposal(p, r.target.slice(5), action === "approve-plan" ? "approve" : "dismiss", source);
+        const proposal = list.find((x) => x.id === r.target.slice(5));
+        result = action === "dismiss-plan" ? "plan change dismissed" : proposal?.status === "applied" ? `plan change committed (${proposal.commit?.slice(0, 7)})` : "plan change approved; it is committed between tasks";
+      } else {
+        await runControl(r.projectId, action, source);
+        result = { resume: "resumed", elevate: "Elevation started", resolve: "resolver started", "retry-qa": "QA restarted", stop: "stopping at the next safe point" }[action];
+      }
+      await engine.recordEvent(p, { type: "remote-approval", action, via, message: result, source }).catch(() => undefined);
+      return result;
+    },
+  });
+  approvals.start();
+}
+
 // ---------- status polling, notifications and app-enforced workflow rules ----------
 
 async function handleTransitions(p: Project, prev: ProjectStatus | undefined, next: ProjectStatus) {
@@ -274,9 +352,16 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       // The engine records automatic Pause before QA PASS; polling must not race
       // the next Assessment or re-pause after the user's Resume.
     }
+    if (event.type === "plan-proposal" && approvals && typeof event.id === "string") {
+      void approvals.request({ projectId: p.id, projectName: p.name, title: "Supervisor plan change", message: `${String(event.message ?? "")}\n${String(event.preview ?? "")}`, actions: ["approve-plan", "dismiss-plan"], target: `plan:${event.id}` });
+    }
     if (isCompactionDone(event) && settings.attention.informational === "windows") {
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");
     }
+  }
+  if (approvals && prev && (prev.runState !== next.runState || prev.task?.id !== next.task?.id)) {
+    const ask = stateApproval(next);
+    if (ask) void approvals.request({ projectId: p.id, projectName: p.name, ...ask });
   }
   if (prev && prev.runState !== next.runState) {
     if (next.runState === "attention") osNotify(`Attention required · ${p.name}`, (next.attentionReason ?? "Manual review requested").slice(0, 180));
@@ -595,30 +680,7 @@ function registerIpc() {
   });
   handle("engine:status", (id: string) => engine.status(project(id)));
   handle("engine:check", (id: string) => launchCheck(project(id)));
-  handle("engine:control", async (id: string, action: ControlAction) => {
-    const p = project(id);
-    const check = launchCheck(p);
-    const starting = ["start", "resume", "resolve", "retry-qa"].includes(action) && !engine.isAlive(id);
-    if (starting && check.problems.length) throw new Error(check.problems.join(" "));
-    if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
-    // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
-    if (starting) {
-      const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
-      if (owner) {
-        const message = `QA cannot commit in ${p.name}: ${owner.dir} belongs to ${owner.owner}, not ${owner.user}. In an Administrator PowerShell run: ${ownerFixCommand(owner)}`;
-        if (action === "retry-qa") throw new Error(message);
-        notice({ kind: "warning", message });
-      }
-    }
-    const wasAlive = engine.isAlive(id);
-    await engine.control(p, action, await launchArgs(p, check), providerEnv(p));
-    if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
-      // The attached task is a one-shot first task.
-      store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
-      await store.saveProjects();
-    }
-    void pollOnce();
-  });
+  handle("engine:control", (id: string, action: ControlAction) => runControl(id, action));
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
   handle("notify:setChannel", async (kind: NotifyChannel, value: string | Record<string, string> | null) => {
     if (!NOTIFY_CHANNELS.includes(kind)) throw new Error("Unknown channel");
@@ -775,6 +837,7 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   startPolling();
+  void startApprovals().catch((error) => console.error("Remote approvals not started", error));
   void checkAllClis();
   setTimeout(() => void resumeAfterRestart(), 2500);
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);

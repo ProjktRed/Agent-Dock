@@ -179,6 +179,8 @@ export interface Settings {
     notifyInfo: boolean;
     /** Remote channels (webhook / Discord URLs are stored encrypted as secrets); digests can be left out. */
     notifyDigests?: boolean;
+    /** Send signed approval requests to Telegram/email when a run waits for you (the app must be running). */
+    remoteApprovals?: boolean;
     defaultProject: string;
   };
   workflow: WorkflowSettings;

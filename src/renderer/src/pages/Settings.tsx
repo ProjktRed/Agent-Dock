@@ -600,6 +600,9 @@ function SupervisorCard() {
       <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
         <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
       </SetRow>
+      <SetRow title="Remote approvals" desc={<span>When a run waits for you (manual review, a block, a usage limit, a plan proposal), send the choices to Telegram as buttons and to email as reply lines. Each choice is a signed code for that action only: it works once, expires after 12 hours, and does nothing if the run has moved on. Telegram needs a private chat with your bot; email replies count only from the addresses below. The app must be running (the tray is enough).{g.remoteApprovals && !snap.notifyChannels.telegram && !snap.notifyChannels.email ? <b> Save a Telegram or email channel below to use it.</b> : null}</span>} support="app">
+        <Toggle on={g.remoteApprovals === true} onChange={(v) => void patch("general", { remoteApprovals: v })} label="Remote approvals" />
+      </SetRow>
       {NOTIFY_ROWS.map(({ kind, title, help, fields }) => (
         <SetRow key={kind} title={title}
           desc={snap.notifyChannels[kind]

@@ -70,6 +70,7 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-proposal-dismissed": return `Plan change dismissed: ${first(e.message)}`;
     case "plan-proposal-applied": return `Plan change committed${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
+    case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;
     case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;
     case "cline-stalled": return `Worker ended early: ${first(e.message)}`;
