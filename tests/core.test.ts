@@ -92,6 +92,16 @@ describe("engine launch args", () => {
     expect(flag("--tool-guard")).toBe("true");
     expect(plan.args).not.toContain("--codex-exe");
   });
+  it("passes assigned skills per role, without the engine's own handoff skill", () => {
+    const list = agents().map((agent) => agent.role === "implementation" ? { ...agent, skills: ["bounded-task-handoff", "tdd", "tdd"] }
+      : agent.role === "assessment" ? { ...agent, skills: ["planning"] } : agent);
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    expect(plan.skills).toEqual({ implementation: ["tdd"], assessment: ["planning"], resolver: ["planning"] });
+    expect(plan.args[plan.args.indexOf("--skills-file") + 1]).toBe(path.join(project().stateDir, "assigned-skills.json"));
+    const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
+    expect(none.skills).toEqual({});
+    expect(none.args).not.toContain("--skills-file");
+  });
   it("detects OpenCode Console and normalizes its model-list endpoint for chat", () => {
     const list = agents().map((agent) => agent.role === "implementation"
       ? { ...agent, provider: "openai" as const, providerCliId: "zen", model: "deepseek-v4.1-flash-free" }

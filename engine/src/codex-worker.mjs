@@ -172,7 +172,7 @@ export const READ_ONLY_SANDBOX = "Your sandbox is read-only on purpose. Commands
 export function buildQaPrompt(qaPacket) {
   return [
     "You are QA: GPT-6.1 Sol Medium performing one bounded independent acceptance operation. Use the QA packet first.",
-    managerHandoffSkill(),
+    managerHandoffSkill("qa"),
     "Inspect task, acceptance criteria, baseline SHA, scoped diff, changed files, deterministic evidence and worker summary.",
     "Do not fix implementation, author correction tasks, launch workers, choose the next task, or perform strategy reassessment. Assessment owns corrections.",
     "Run additional narrowly relevant commands only if evidence is missing, conflicting, or inconclusive.",
@@ -329,7 +329,7 @@ export class CodexWorker {
   async assess({ objective, previous }) {
     const result = await this.invoke([
       "You are Codex performing one assessment operation. Inspect this repository and its instructions.",
-      managerHandoffSkill(),
+      managerHandoffSkill("assessment"),
       "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
       "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
@@ -359,7 +359,7 @@ export class CodexWorker {
   resolveBlocked(input) {
     return this.invoke([
       'You are Resolver: GPT-6.1 Sol Medium. Analyze one blocked task and recommend a bounded recovery.',
-      managerHandoffSkill(),
+      managerHandoffSkill("resolver"),
       'Read only INPUT. Do not edit files, delete/move files, commit, change HEAD, grant permissions, launch workers or expand allowedPaths.',
       READ_ONLY_SANDBOX,
       'Only Node may preserve verified current-run scratch files outside the repository. Unknown/pre-existing/modified/tracked files and Git/state/security/permission failures remain blocked.',
@@ -375,7 +375,7 @@ export class CodexWorker {
   recoveryOperation(input, elevation) {
     return this.invoke([
       elevation ? "You are Elevation: GPT-6 Astra. Reassess the strategy, not merely the next symptom." : "You are Assessment: GPT-6.1 Sol. Analyze this recoverable failure and prepare one bounded correction.",
-      managerHandoffSkill(),
+      managerHandoffSkill(elevation ? "elevate" : "assessment"),
       "Read only INPUT. Preserve correct work, original task, baseline and scope. Do not edit code, commit, launch workers or choose another task.",
       READ_ONLY_SANDBOX,
       "Analyze what is correct, incorrect, incomplete, remaining criteria, why previous strategies failed, and what must be preserved.",

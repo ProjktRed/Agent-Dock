@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {parseAssignedSkills,useAssignedSkills,managerHandoffSkill} from '../src/task-handoff-skill.mjs';
+import {parseLoopOptions} from '../src/loop-options.mjs';
+import {buildInitialPrompt} from '../src/workflow.mjs';
+import {buildRolePrompt} from '../src/workflow-roles.mjs';
+import {CodexWorker,buildQaPrompt} from '../src/codex-worker.mjs';
+
+const skill=(name,body)=>({name,instructions:`${body}\nSKILL_BODY_${name}`});
+const file=roles=>({version:1,roles});
+const task={id:'T',prompt:'Task skill: implement\nFix x',allowedPaths:['x.js'],qaCommand:'npm test'};
+
+test('the skills file is validated before any role sees it',()=>{
+ assert.throws(()=>parseAssignedSkills({roles:{}}),/version:1/);
+ assert.throws(()=>parseAssignedSkills(file({worker:[skill('a','b')]})),/unknown role/);
+ assert.throws(()=>parseAssignedSkills(file({qa:[{name:'bad/name',instructions:'x'}]})),/invalid skill name/);
+ assert.throws(()=>parseAssignedSkills(file({qa:[{name:'empty',instructions:'  '}]})),/no instructions/);
+ assert.throws(()=>parseAssignedSkills(file({qa:[{name:'big',instructions:'x'.repeat(16_001)}]})),/over 16000/);
+ assert.throws(()=>parseAssignedSkills(file({qa:[1,2,3].map(n=>({name:'s'+n,instructions:'x'.repeat(15_000)}))})),/over 40000 characters in total/);
+ assert.deepEqual(parseAssignedSkills(file({'role:review-1':[skill('ok','do it')]}))['role:review-1'].map(s=>s.name),['ok']);
+});
+
+test('each role prompt carries only its own assigned skills, after the engine guidance',async t=>{
+ t.after(()=>useAssignedSkills({}));
+ useAssignedSkills(parseAssignedSkills(file({
+  implementation:[skill('tdd','Write the test first.')],qa:[skill('qa-check','Check edge cases.')],
+  assessment:[skill('plan','Prefer small tasks.')],resolver:[skill('resolve','Explain the block.')],
+  elevate:[skill('elevate','Question the strategy.')],'role:sec':[skill('sec','Look for secrets.')],
+ })));
+ const only=(prompt,name)=>{
+  for(const other of ['tdd','qa-check','plan','resolve','elevate','sec'])assert.equal(prompt.includes('SKILL_BODY_'+other),other===name,`${name} prompt and ${other}`);
+  assert.ok(prompt.indexOf(managerHandoffSkill().slice(0,60))<prompt.indexOf('Assigned skills'),'engine guidance comes first');
+ };
+ only(buildInitialPrompt(task),'tdd');
+ only(buildQaPrompt({task}),'qa-check');
+ only(buildRolePrompt({id:'sec',name:'Security',stage:'before-qa',instructions:'Review.'},{}),'sec');
+ const worker=new CodexWorker({workspace:os.tmpdir(),stateDir:os.tmpdir()});
+ const prompts=[];worker.invoke=async prompt=>{prompts.push(prompt);return {task};};
+ await worker.assess({objective:'o'}).catch(()=>{});
+ await worker.resolveBlocked({}).catch(()=>{});
+ await worker.assessCorrection({}).catch(()=>{});
+ await worker.reassessManualReview({}).catch(()=>{});
+ ['plan','resolve','plan','elevate'].forEach((name,i)=>only(prompts[i],name));
+});
+
+test('no skills file means prompts are unchanged, and --skills-file loads at startup',async t=>{
+ t.after(()=>useAssignedSkills({}));
+ useAssignedSkills({});
+ const plain=buildInitialPrompt(task);
+ assert.ok(!plain.includes('Assigned skills'));
+ const dir=await mkdtemp(path.join(os.tmpdir(),'assigned-skills-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const skillsFile=path.join(dir,'assigned-skills.json');
+ await writeFile(skillsFile,JSON.stringify(file({implementation:[skill('tdd','Write the test first.')]})));
+ parseLoopOptions(['--skills-file',skillsFile]);
+ assert.ok(buildInitialPrompt(task).includes('SKILL_BODY_tdd'));
+ parseLoopOptions([]);
+ assert.equal(buildInitialPrompt(task),plain);
+});

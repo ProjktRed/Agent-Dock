@@ -12,7 +12,7 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { addProject, inspectDirectory, taskHistory } from "./projects";
-import { listSkills } from "./skills";
+import { listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS } from "./skills";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
@@ -186,7 +186,29 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
     await mkdir(p.stateDir, { recursive: true });
     await writeFile(path.join(p.stateDir, "workflow-roles.json"), JSON.stringify(check.roles, null, 2));
   }
+  if (Object.keys(check.skills).length) {
+    await mkdir(p.stateDir, { recursive: true });
+    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify(await assignedSkillsFile(check.skills), null, 2));
+  }
   return check.args;
+}
+
+/** The SKILL.md instructions of each role's assigned skills; disabled or missing skills are left out. */
+async function assignedSkillsFile(assigned: Record<string, string[]>) {
+  const available = (await listSkills(engineDir, store.data.settings.skills.importedDirs))
+    .filter((s) => s.source === "imported" && store.data.settings.skills.enabled[s.id] !== false);
+  const roles: Record<string, { name: string; instructions: string }[]> = {};
+  for (const [role, names] of Object.entries(assigned)) {
+    roles[role] = names.flatMap((name) => {
+      const skill = available.find((s) => s.name === name);
+      if (!skill || !skill.instructions.trim()) return [];
+      if (skill.instructions.length > SKILL_MAX_CHARS) throw new Error(`Skill “${name}” is longer than ${SKILL_MAX_CHARS.toLocaleString()} characters; shorten its SKILL.md or unassign it.`);
+      return [{ name, instructions: skill.instructions }];
+    });
+    const total = roles[role].reduce((sum, s) => sum + s.instructions.length, 0);
+    if (total > ROLE_SKILLS_MAX_CHARS) throw new Error(`Skills assigned to ${role} are longer than ${ROLE_SKILLS_MAX_CHARS.toLocaleString()} characters in total; unassign some.`);
+  }
+  return { version: 1, roles };
 }
 
 function providerEnv(p: Project): NodeJS.ProcessEnv {

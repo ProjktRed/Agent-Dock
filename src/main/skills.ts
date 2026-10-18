@@ -3,6 +3,10 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { SkillInfo } from "@shared/types";
 
+/** Engine limits for assigned skills (engine/src/task-handoff-skill.mjs). */
+export const SKILL_MAX_CHARS = 16_000;
+export const ROLE_SKILLS_MAX_CHARS = 40_000;
+
 export function parseSkillFile(text: string): { name: string | null; description: string; body: string } {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { name: null, description: "", body: text };

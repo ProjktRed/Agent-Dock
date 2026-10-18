@@ -63,6 +63,8 @@ export function agentForWorkflowRole(role: WorkflowRole, agents: Agent[]): Agent
 export interface EngineLaunchPlan {
   args: string[];
   roles: EngineRoleEntry[];
+  /** Skill names assigned per engine role (engine-bundled skills excluded); resolved and written to --skills-file at start. */
+  skills: Record<string, string[]>;
   /** Block the start. */
   problems: string[];
   /** Shown, but the start goes ahead (engine guardrails off). */
@@ -255,6 +257,19 @@ export function buildEngineArgs(input: {
     roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
+  // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.
+  const skills: Record<string, string[]> = {};
+  const assign = (key: string, agent: Agent | null | undefined) => {
+    const names = (agent?.skills ?? []).filter((name) => name !== "bounded-task-handoff");
+    if (names.length) skills[key] = [...new Set(names)];
+  };
+  assign("implementation", impl);
+  assign("qa", qa);
+  assign("assessment", assessment);
+  assign("resolver", assessment);
+  if (elevation?.enabled) assign("elevate", elevation);
+  for (const entry of roleEntries) assign(`role:${entry.id}`, agentForWorkflowRole(workflowRoles.find((r) => r.id === entry.id)!, agents));
+  if (Object.keys(skills).length) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
   // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
   if (!guarded) {
     for (const [key, flag] of TUNING_FLAGS) {
@@ -273,6 +288,7 @@ export function buildEngineArgs(input: {
   return {
     args,
     roles: roleEntries,
+    skills,
     problems,
     warnings,
     summary: {

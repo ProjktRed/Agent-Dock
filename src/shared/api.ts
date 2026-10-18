@@ -28,6 +28,8 @@ export interface LaunchCheck {
   args: string[];
   /** Workflow roles the engine will run (written to <state>/workflow-roles.json at start). */
   roles: EngineRoleEntry[];
+  /** Skill names assigned per engine role (written with their instructions to <state>/assigned-skills.json at start). */
+  skills: Record<string, string[]>;
 }
 
 /** One entry of the engine's --roles-file. */
