@@ -1,9 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readImplementationProgress } from "./implementation-progress.mjs";
 import { RUN, runTokens } from "./run-budget.mjs";
 import { notify } from "./notify.mjs";
 import { applyReviewAction, buildReviewPrompt, readDeferred } from "./supervisor-review.mjs";
+import { PLAN_FILE, proposePlanChange } from "./plan-stewardship.mjs";
 
 // Supervisor v1: deterministic monitors over the loop's own events. It raises alerts (Activity,
 // desktop, webhook/Discord) and, when allowed, asks for Pause or Stop at the next safe point.
@@ -13,6 +14,8 @@ export const SUPERVISOR = {
   stallMinutes: 30, repeatFailures: 3, refusals: 5, tokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0,
   // v2: a model reviews each alert (off | propose | act); defer needs mayDefer; at most reviewMax reviews per run, 10 min apart.
   review: "off", mayDefer: false, reviewMax: 6,
+  // 0.19.4: the review may also propose IMPLEMENTATION_PLAN.md edits (always proposals; you approve each).
+  planProposals: true,
 };
 const REVIEW_GAP_MS = 10 * 60_000;
 const DEFAULTS = { ...SUPERVISOR };
@@ -40,7 +43,10 @@ export function parseSupervisorOptions(options) {
   const review = options["supervisor-review"] ?? DEFAULTS.review;
   if (!["off", "propose", "act"].includes(review)) throw new Error("--supervisor-review must be off, propose or act");
   const mayDefer = options["supervisor-may-defer"] === undefined ? false : options["supervisor-may-defer"] === "true" ? true : options["supervisor-may-defer"] === "false" ? false : (() => { throw new Error("--supervisor-may-defer must be true or false"); })();
-  return { ...DEFAULTS, ...Object.fromEntries(Object.entries(read).filter(([, v]) => v !== undefined)), mode, review, mayDefer };
+  const planOpt = options["sv-plan-proposals"];
+  if (planOpt !== undefined && !["true", "false"].includes(planOpt)) throw new Error("--sv-plan-proposals must be true or false");
+  const planProposals = planOpt === undefined ? DEFAULTS.planProposals : planOpt === "true";
+  return { ...DEFAULTS, ...Object.fromEntries(Object.entries(read).filter(([, v]) => v !== undefined)), mode, review, mayDefer, planProposals };
 }
 
 /** Starts supervising this run. Returns a stop function that clears its timers. */
@@ -82,13 +88,20 @@ async function review(run, alertEntry) {
   const events = (await run.state.readEvents(30).catch(() => [])).filter((e) => !/delta$|^cline-thinking/.test(e.type ?? ""));
   const plan = run.workspace ? await readImplementationProgress(run.workspace, {}) : null;
   const deferred = run.stateDir ? await readDeferred(run.stateDir) : [];
-  const result = await run.reviewer(buildReviewPrompt({ alert: alertEntry, task: live?.task ?? null, events, plan, deferred, mayDefer: SUPERVISOR.mayDefer }));
+  const planText = SUPERVISOR.planProposals && run.workspace ? await readFile(path.join(run.workspace, PLAN_FILE), "utf8").catch(() => null) : null;
+  const result = await run.reviewer(buildReviewPrompt({ alert: alertEntry, task: live?.task ?? null, events, plan, deferred, mayDefer: SUPERVISOR.mayDefer, planText, planProposals: SUPERVISOR.planProposals }));
   const actions = [];
   for (const action of result.actions) {
     const outcome = SUPERVISOR.review === "act" ? await applyReviewAction(run.state, action, { mayDefer: SUPERVISOR.mayDefer }) : "proposed";
     actions.push({ ...action, result: outcome });
   }
   await run.state.record({ type: "supervisor-review", mode: SUPERVISOR.review, monitor: alertEntry.monitor, message: result.summary, actions });
+  // Plan edits are never applied here: a valid set becomes a proposal you approve or dismiss in the app.
+  if (SUPERVISOR.planProposals && planText !== null && result.plan?.edits?.length && run.stateDir) {
+    const proposal = await proposePlanChange({ stateDir: run.stateDir, workspace: run.workspace, reason: result.plan.reason, edits: result.plan.edits, state: run.state });
+    if (proposal.errors) await run.state.record({ type: "plan-proposal-refused", message: proposal.errors.join("; ") });
+    else notify({ type: "plan-proposal", title: "Supervisor: plan change proposed", message: [proposal.reason || "Plan edit", proposal.preview, "Approve or dismiss it in Agent Dock (Overview → Progress)."].join("\n") });
+  }
   const lines = actions.map((a) => `${a.action}${a.action === "tighten-cap" ? ` ${a.cap} → ${a.value}` : ""}: ${a.result}`);
   notify({ type: "supervisor-review", title: "Supervisor review", message: [result.summary, ...lines].join("\n") });
 }

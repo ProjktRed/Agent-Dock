@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import type { EngineEvent, PlanPhase, ProjectStatus } from "@shared/types";
+import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration } from "../../lib/format";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
@@ -76,6 +76,49 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
           {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
         </div>
       </div>
+    </section>
+  );
+}
+
+/** Supervisor-proposed plan edits: nothing changes until you approve; approved ones are committed between tasks. */
+function PlanProposals({ projectId, refreshKey }: { projectId: string; refreshKey: string }) {
+  const { toast } = useApp();
+  const [list, setList] = useState<PlanProposal[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.api.planProposals(projectId).then((l) => live && setList(l), () => undefined);
+    return () => { live = false; };
+  }, [projectId, refreshKey]);
+  const open = list.filter((p) => p.status === "pending" || p.status === "approved");
+  if (!open.length) return null;
+  const decide = (p: PlanProposal, decision: "approve" | "dismiss") => {
+    setBusy(p.id);
+    window.api.decidePlanProposal(projectId, p.id, decision).then(setList, (error) => toast("error", (error as Error).message)).finally(() => setBusy(null));
+  };
+  return (
+    <section className="card pad stack fade-in" style={{ gap: 12 }} aria-label="Plan proposals">
+      <div className="row" style={{ gap: 8 }}>
+        <Icon name="warn" className="attn" />
+        <h2 className="h2" style={{ margin: 0 }}>Supervisor plan proposals</h2>
+      </div>
+      <p className="sub" style={{ margin: 0 }}>Edits to <span className="mono">IMPLEMENTATION_PLAN.md</span>. Nothing changes until you approve; an approved change is committed on its own between tasks (right away when the engine is idle and the workspace is clean).</p>
+      {open.map((p) => (
+        <div key={p.id} className="well pad stack" style={{ gap: 8 }}>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <b className="grow" style={{ fontWeight: 600 }}>{p.reason || "Plan edit"}</b>
+            <span className="sub">{clock(p.at)}</span>
+          </div>
+          <pre className="mono log selectable" style={{ maxHeight: 200, margin: 0, whiteSpace: "pre-wrap" }}>{p.preview}</pre>
+          {p.applies === false && <span className="sub err">No longer fits the plan: {p.problem}</span>}
+          <div className="row wrap" style={{ gap: 10 }}>
+            {p.status === "approved"
+              ? <span className="sub">Approved · waiting for the next task boundary</span>
+              : <button className="btn primary sm" disabled={busy === p.id || p.applies === false} onClick={() => decide(p, "approve")}>Approve</button>}
+            <button className="btn sm" disabled={busy === p.id} onClick={() => decide(p, "dismiss")}>{p.status === "approved" ? "Cancel" : "Dismiss"}</button>
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -165,6 +208,7 @@ export function ProgressTab() {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <AttentionPanel s={s} projectId={activeProject.id} />
+      <PlanProposals projectId={activeProject.id} refreshKey={`${s.events.length}:${s.events.at(-1)?.timestamp ?? ""}`} />
 
       {approval && s.runState !== "attention" && (
         <section className="card pad row wrap fade-in" style={{ gap: 16 }} aria-label="Last approved task">

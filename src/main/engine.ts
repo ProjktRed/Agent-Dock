@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, GitInfo, Project, ProjectStatus } from "@shared/types";
+import type { EngineInfo, GitInfo, PlanProposal, Project, ProjectStatus } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
@@ -191,6 +191,21 @@ export class EngineManager {
   /** The project's tamper-evident action log, checked entry by entry (engine/src/action-log.mjs). */
   async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string }> {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
+  }
+
+  /** Supervisor plan proposals (engine/src/plan-stewardship.mjs), checked against today's plan. */
+  async planProposals(project: Project): Promise<PlanProposal[]> {
+    return (await this.load("plan-stewardship.mjs")).listPlanProposals({ stateDir: project.stateDir, workspace: project.path });
+  }
+
+  /** Approving while the engine runs leaves it to the next task boundary; with no engine it is committed now (clean tree only). */
+  async decidePlanProposal(project: Project, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]> {
+    const mod = await this.load("plan-stewardship.mjs");
+    const state = await this.state(project);
+    await mod.decidePlanProposal({ stateDir: project.stateDir, id, decision, source: "app", state });
+    if (decision === "approve" && !(await this.refreshAlive(project))) await mod.applyApprovedPlanProposals({ stateDir: project.stateDir, workspace: project.path, state });
+    this.gitCache.delete(project.id);
+    return this.planProposals(project);
   }
 
   isStoppingAfterTask(projectId: string) {

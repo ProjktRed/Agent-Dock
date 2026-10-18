@@ -28,7 +28,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   solReassessmentEnabled=true,baseline=()=>captureGitBaseline(workspace),verify=verifyReview,
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
-  readControl,onEvent,onTask=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
+  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
   knowledgeFile,roles=[],runRole=null,
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
@@ -166,6 +166,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         try {
         if(await stopped())return{status:'stopped'};
         if(!r) {
+          // Task boundary with a clean tree (approved plan changes are committed here, never mid-task).
+          if(!task&&!pending&&!correctionResume)await betweenTasks();
           const sha=correctionResume?.baselineSha??pending?.inputs?.baselineSha??pending?.inputs?.baselineHead??pending?.context?.baselineHead??(await baseline()).head;
           let assessmentOperationId;
           if(!task) {

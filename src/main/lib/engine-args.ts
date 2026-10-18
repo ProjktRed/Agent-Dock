@@ -308,7 +308,8 @@ export function buildEngineArgs(input: {
         else args.push("--supervisor-base-url", sv.reviewerBaseUrl.trim());
         if (!sv.reviewerModel?.trim()) problems.push("The local Supervisor reviewer needs a model name.");
       }
-      args.push("--supervisor-may-defer", String(sv.mayDefer === true), "--sv-review-max", String(Math.floor(count(sv.reviewMax ?? 6))));
+      args.push("--supervisor-may-defer", String(sv.mayDefer === true), "--sv-review-max", String(Math.floor(count(sv.reviewMax ?? 6))),
+        "--sv-plan-proposals", String(sv.planProposals !== false));
     }
   }
   if (unattended) {

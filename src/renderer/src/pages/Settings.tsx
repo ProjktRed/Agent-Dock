@@ -580,6 +580,9 @@ function SupervisorCard() {
           <SetRow title="May defer stuck tasks" desc="Lets the Supervisor set a stuck task aside between steps and let Assessment choose another. The task's uncommitted work goes into a named git stash (nothing is reset or lost) and the task is listed in deferred-tasks.json." support="engine">
             <Toggle on={sv.mayDefer === true} onChange={(v) => void patch("workflow", { supervisor: { ...sv, mayDefer: v } })} label="May defer stuck tasks" />
           </SetRow>
+          <SetRow title="Suggest plan changes" desc="The review may propose edits to IMPLEMENTATION_PLAN.md (reword, split, add or remove open items; never check one off). Nothing changes until you approve it under Overview › Progress; it is then committed on its own between tasks." support="engine">
+            <Toggle on={sv.planProposals !== false} onChange={(v) => void patch("workflow", { supervisor: { ...sv, planProposals: v } })} label="Suggest plan changes" />
+          </SetRow>
         </>
       )}
       <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">

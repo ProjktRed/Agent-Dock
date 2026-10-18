@@ -156,6 +156,8 @@ export interface SupervisorSettings {
   /** Owner's choice: the Supervisor may set a stuck task aside (its work stashed) and continue with another. */
   mayDefer?: boolean;
   reviewMax?: number;
+  /** The review may propose IMPLEMENTATION_PLAN.md edits; each one waits for your approval. */
+  planProposals?: boolean;
 }
 
 export interface AttentionPolicy {
@@ -334,6 +336,21 @@ export interface PlanTask {
   title: string;
   completed: boolean;
   depth: number;
+}
+
+/** A Supervisor-proposed IMPLEMENTATION_PLAN.md change (engine/src/plan-stewardship.mjs). */
+export interface PlanProposal {
+  id: string;
+  at: string;
+  source: string;
+  reason: string;
+  preview: string;
+  status: "pending" | "approved" | "applied" | "dismissed" | "failed";
+  /** Pending/approved only: whether it still fits today's plan, and why not. */
+  applies?: boolean;
+  problem?: string | null;
+  commit?: string;
+  decidedAt?: string;
 }
 
 export interface PlanPhase {

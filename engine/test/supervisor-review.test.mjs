@@ -15,7 +15,7 @@ const fakeState=()=>{const s={live:{task:{id:'T1',name:'Thing',allowedPaths:['a.
 
 test('reviews parse strictly: unknown actions dropped, at most three, fenced JSON accepted',()=>{
  const text='```json\n'+JSON.stringify({summary:'Stuck on lint',actions:[{action:'pause',reason:'r',cap:'none',value:0},{action:'rewrite-code',reason:'x',cap:'none',value:0},{action:'none',reason:'',cap:'none',value:0},{action:'tighten-cap',reason:'t',cap:'corrections',value:2}]})+'\n```';
- assert.deepEqual(parseReview(text),{summary:'Stuck on lint',actions:[{action:'pause',reason:'r',cap:'none',value:0},{action:'tighten-cap',reason:'t',cap:'corrections',value:2}]});
+ assert.deepEqual(parseReview(text),{summary:'Stuck on lint',actions:[{action:'pause',reason:'r',cap:'none',value:0},{action:'tighten-cap',reason:'t',cap:'corrections',value:2}],plan:{reason:'',edits:[]}});
  assert.throws(()=>parseReview('{"actions":[]}'),/summary/);
  assert.match(buildReviewPrompt({alert:{monitor:'stall',message:'quiet'},task:null,events:[],plan:null,deferred:[],mayDefer:false}),/defer-task: NOT allowed/);
 });
@@ -57,7 +57,7 @@ test('an alert triggers one model review; propose mode records, act mode carries
 test('the local reviewer calls an OpenAI-compatible server and parses its JSON',async()=>{
  let body;
  const review=await createReviewer({kind:'local',model:'qwen',baseUrl:'http://127.0.0.1:8080/v1',fetchImpl:async(url,init)=>{body=[String(url),JSON.parse(init.body)];return{ok:true,json:async()=>({choices:[{message:{content:'{"summary":"fine","actions":[]}'}}]})};}});
- assert.deepEqual(await review('p'),{summary:'fine',actions:[]});
+ assert.deepEqual(await review('p'),{summary:'fine',actions:[],plan:{reason:'',edits:[]}});
  assert.equal(body[0],'http://127.0.0.1:8080/v1/chat/completions');
  assert.equal(body[1].model,'qwen');assert.deepEqual(body[1].response_format,{type:'json_object'});
  await assert.rejects(createReviewer({kind:'gpt'}),/codex, claude or local/);
@@ -75,7 +75,8 @@ test('defer at a loop boundary stashes the work, records it, and Assessment move
  const state=new DashboardState({stateDir});await state.initialize({task:A,workspace:ws});
  const objectives=[];let assessments=0;
  const packet=({task,attempt,workerResult})=>({task,baselineSha:head,attempt,diff:{text:'d',bytes:1},changedFiles:task.allowedPaths,clineSummary:{exitCode:workerResult.exitCode,text:'x'},qaEvidence:{command:{command:'t',exitCode:1},categories:{tests:'FAIL',scopeCheck:'PASS'}}});
- const result=await runNodeLoop({workspace:ws,stateDir,objective:'Build it',
+ let boundaries=0;
+ const result=await runNodeLoop({workspace:ws,stateDir,objective:'Build it',betweenTasks:async()=>{boundaries++;},
   codex:{activeCount:0,assertIdle:async()=>{}},
   assess:async input=>{objectives.push(input.objective);assessments++;return assessments===1?{status:'task',task:A}:assessments===2?{status:'task',task:B}:{status:'done'};},
   worker:{withExclusive:fn=>fn(),run:async(prompt,hooks)=>{await hooks.onStart({pid:1});if(hooks.task?.id==='A')await writeFile(path.join(ws,'a.js'),'work in progress\n');return{exitCode:0};}},
@@ -85,6 +86,7 @@ test('defer at a loop boundary stashes the work, records it, and Assessment move
   elevate:async()=>assert.fail('no elevation'),
   readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1});
  assert.equal(result.status,'done');
+ assert.equal(boundaries,3,'the between-tasks hook runs before each Assessment (plan changes are committed there)');
  assert.match(objectives[1],/Deferred tasks .*A "Stuck task" \(Stuck on the same failure\)/);
  const deferred=JSON.parse(await readFile(path.join(stateDir,'deferred-tasks.json'),'utf8'));
  assert.deepEqual(deferred.map(d=>[d.id,d.reason]),[['A','Stuck on the same failure']]);

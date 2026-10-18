@@ -626,6 +626,8 @@ function registerIpc() {
     try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
   })));
+  handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
+  handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });
   handle("skills:list", () => listSkills(engineDir, store.data.settings.skills.importedDirs));

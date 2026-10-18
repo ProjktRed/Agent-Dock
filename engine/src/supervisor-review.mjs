@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { RUN } from "./run-budget.mjs";
 import { TUNING } from "./engine-tuning.mjs";
+import { PLAN_EDITS_SCHEMA, parsePlanEdits, planExcerpt } from "./plan-stewardship.mjs";
 
 // Supervisor v2: when a monitor raises an alert, a model (Codex, Claude Code or a local
 // OpenAI-compatible server) reviews the run and proposes actions from a fixed list. In "act" mode
@@ -13,9 +14,10 @@ export const ACTABLE = new Set(["pause", "stop", "defer-task", "request-elevatio
 const CAPS = ["none", "corrections", "tasks", "tokens"];
 
 export const REVIEW_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["summary", "actions"],
+  type: "object", additionalProperties: false, required: ["summary", "actions", "plan"],
   properties: {
     summary: { type: "string" },
+    plan: PLAN_EDITS_SCHEMA,
     actions: { type: "array", maxItems: 3, items: { type: "object", additionalProperties: false, required: ["action", "reason", "cap", "value"],
       properties: { action: { type: "string", enum: REVIEW_ACTIONS }, reason: { type: "string" }, cap: { type: "string", enum: CAPS }, value: { type: "number" } } } },
   },
@@ -28,10 +30,11 @@ export function parseReview(text) {
   if (typeof value?.summary !== "string" || !Array.isArray(value.actions)) throw new Error("Supervisor review has no summary/actions");
   const actions = value.actions.filter((a) => REVIEW_ACTIONS.includes(a?.action) && a.action !== "none").slice(0, 3)
     .map((a) => ({ action: a.action, reason: String(a.reason ?? "").slice(0, 400), cap: CAPS.includes(a.cap) ? a.cap : "none", value: Number(a.value) || 0 }));
-  return { summary: value.summary.slice(0, 1200), actions };
+  return { summary: value.summary.slice(0, 1200), actions, plan: parsePlanEdits(value.plan) };
 }
 
-export function buildReviewPrompt({ alert, task, events, plan, deferred, mayDefer }) {
+export function buildReviewPrompt({ alert, task, events, plan, deferred, mayDefer, planText = null, planProposals = false }) {
+  const excerpt = planProposals && planText ? planExcerpt(planText) : "";
   return [
     "You are the Supervisor of an unattended coding run in Agent Dock. You review; you never write code.",
     "A monitor raised the alert below. Decide whether the run needs an action. Prefer no action when the loop's own limits (corrections, Elevation, run limits) will handle it.",
@@ -42,13 +45,21 @@ export function buildReviewPrompt({ alert, task, events, plan, deferred, mayDefe
     "- request-elevation: ask the stronger Elevation model to revise the strategy for the current failing task.",
     "- tighten-cap: lower one limit (cap: corrections | tasks | tokens; value: the new, lower number). Never raise a limit.",
     "- switch-backup-cli / retry-worker: proposals for the human only.",
-    "Use cap \"none\" and value 0 for actions other than tighten-cap. Reply with JSON only: {\"summary\": \"…\", \"actions\": [...]}.",
+    "Use cap \"none\" and value 0 for actions other than tighten-cap.",
+    excerpt
+      ? "Plan: if IMPLEMENTATION_PLAN.md no longer matches the work (an item is unclear, too big, missing, or obsolete), propose up to 8 line edits in \"plan\". Each edit quotes one existing line exactly in \"line\": op \"edit\" replaces it with \"text\", \"add\" inserts \"text\" after it, \"remove\" deletes it (text \"\"). Never check an item off ([x]) and never change checked items or headings: QA marks work done. The human approves every plan edit. Use {\"reason\": \"\", \"edits\": []} when the plan is fine."
+      : "Plan edits are off: always reply with \"plan\": {\"reason\": \"\", \"edits\": []}.",
+    "Reply with JSON only: {\"summary\": \"…\", \"actions\": [...], \"plan\": {\"reason\": \"…\", \"edits\": [...]}}.",
     "",
     `Alert: ${alert.monitor}: ${alert.message}`,
     `Run so far: ${RUN.tasksPassed} approved, ${RUN.failures} QA failures, ${RUN.corrections} corrections, ${RUN.elevations} Elevations, ${RUN.usage.input + RUN.usage.output} tokens.`,
     `Limits: corrections per task ${TUNING.maxCorrections || "none"}, tasks ${RUN.maxTasks || "none"}, tokens ${RUN.maxTokens || "none"}.`,
     task ? `Current task: ${task.id} — ${task.name ?? ""}; allowed paths: ${(task.allowedPaths ?? []).slice(0, 15).join(", ")}` : "Current task: none",
     plan?.total ? `Plan: ${plan.completed}/${plan.total} items done.` : "Plan: none",
+    excerpt ? `
+IMPLEMENTATION_PLAN.md (phases with open items, exact lines):
+${excerpt}
+` : "",
     deferred.length ? `Already deferred: ${deferred.map((d) => `${d.id} (${d.reason})`).join("; ")}` : "",
     "",
     "Recent events (oldest first):",

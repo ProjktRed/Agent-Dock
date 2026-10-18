@@ -16,6 +16,7 @@ import type {
   UpdateStatus,
   UsageSummary,
   LocalContext,
+  PlanProposal,
   WorkflowRole,
 } from "./types";
 
@@ -102,6 +103,10 @@ export interface DesktopApi {
   setNotifyChannel(kind: "webhook" | "discord", url: string | null): Promise<AppSnapshot>;
   testNotifyChannel(kind: "webhook" | "discord"): Promise<void>;
   /** Checks each project's hash-chained action log. */
+  /** Supervisor plan proposals for a project, newest last. */
+  planProposals(projectId: string): Promise<PlanProposal[]>;
+  /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */
+  decidePlanProposal(projectId: string, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]>;
   verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
