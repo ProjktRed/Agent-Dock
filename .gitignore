@@ -11,3 +11,6 @@ build/
 
 # Agent working notes (not part of the app)
 docs/superpowers/
+
+# Release signing keys never belong in the repository
+*.pem
