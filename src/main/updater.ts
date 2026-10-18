@@ -9,7 +9,7 @@ import { checkRelease, downloadRelease, extractRelease, launchSwap, type Release
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
-const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
+export const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
 const REPO = path.join(STAGING, "repo");
 const MAX_LOG = 400;
 

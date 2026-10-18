@@ -40,6 +40,7 @@ const api: DesktopApi = {
   verifyActionLogs: invoke("engine:verifyLogs") as DesktopApi["verifyActionLogs"],
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
+  exportDiagnostics: invoke("diagnostics:export") as DesktopApi["exportDiagnostics"],
   setAside: invoke("engine:setAside") as DesktopApi["setAside"],
   decidePlanProposal: invoke("plan:decide") as DesktopApi["decidePlanProposal"],
   usage: invoke("usage") as DesktopApi["usage"],

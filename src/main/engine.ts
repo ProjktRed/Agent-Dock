@@ -221,6 +221,14 @@ export class EngineManager {
     return this.load("notify.mjs");
   }
 
+  /** The engine's own redaction (exact secret values plus credential patterns) and action-log check, for the diagnostics export. */
+  async diagnosticsTools(secrets: string[]): Promise<{ redact: (text: string) => string; verifyActionLog: (stateDir: string) => Promise<unknown> }> {
+    const redact = await this.load("redact.mjs");
+    const actionLog = await this.load("action-log.mjs");
+    redact.useSecretValues(secrets);
+    return { redact: (text) => redact.redactText(text), verifyActionLog: (stateDir) => actionLog.verifyActionLog(stateDir) };
+  }
+
   /** Finished runs, newest first. */
   async runs(project: Project): Promise<RunReport[]> {
     return (await this.load("run-budget.mjs")).listRuns(project.stateDir);

@@ -91,6 +91,11 @@ export class AppStore {
     }
   }
 
+  /** Every stored secret, decrypted: what a diagnostics export must never contain. */
+  secretValues(): string[] {
+    return Object.keys(this.secrets).map((id) => this.getSecret(id)).filter((v): v is string => Boolean(v));
+  }
+
   hasSecret(id: string): boolean {
     return Boolean(this.secrets[id]);
   }

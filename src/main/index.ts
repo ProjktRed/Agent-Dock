@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
@@ -22,7 +23,9 @@ import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { interruptedWork } from "./lib/status";
-import { Updater } from "./updater";
+import { STAGING, Updater } from "./updater";
+import { collectDiagnostics } from "./diagnostics";
+import { zipFiles } from "./lib/zip";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
@@ -552,6 +555,25 @@ async function usage(projectId: string | null): Promise<UsageSummary> {
   return { records: records.sort((a, b) => a.timestamp.localeCompare(b.timestamp)), compactions, sessionStartedAt: alive?.startedAt ?? null, limit };
 }
 
+/** Settings › Advanced › Export diagnostics: a zip for bug reports, with every secret removed. */
+async function exportDiagnostics(): Promise<string | null> {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
+  const result = await dialog.showSaveDialog(win!, { title: "Export diagnostics", defaultPath: path.join(app.getPath("downloads"), `agent-dock-diagnostics-${stamp}.zip`), filters: [{ name: "Zip archive", extensions: ["zip"] }] });
+  if (result.canceled || !result.filePath) return null;
+  // Every stored secret plus the values Agent Dock passes to engines and CLIs.
+  const secrets = [...store.secretValues(), ...store.data.clis.flatMap((c) => c.env.filter((e) => e.secret).map((e) => e.value))];
+  const tools = await engine.diagnosticsTools(secrets);
+  const entries = await collectDiagnostics({
+    about: { app: "Agent Dock", version: app.getVersion(), packaged: app.isPackaged, build: updater?.status ? { installed: updater.status.installed, state: updater.status.state, error: updater.status.error, log: updater.status.log.slice(-40) } : null, platform: process.platform, arch: process.arch, os: `${os.type()} ${os.release()}`, electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome, engine: engineInfo, createdAt: new Date().toISOString() },
+    settings: store.data.settings, agents: agents(), clis: store.data.clis, roles: roles.roles, projects: store.data.projects,
+    statuses: Object.fromEntries(lastStatus), verifyActionLog: tools.verifyActionLog, redact: tools.redact,
+    logs: { "updater-swap.log": path.join(STAGING, "swap.log") },
+  });
+  await writeFile(result.filePath, zipFiles(entries));
+  shell.showItemInFolder(result.filePath);
+  return result.filePath;
+}
+
 function registerIpc() {
   const handle = (channel: string, fn: (...args: any[]) => unknown) =>
     ipcMain.handle(channel, (event, ...args) => {
@@ -701,6 +723,7 @@ function registerIpc() {
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
   handle("project:runs", (id: string) => engine.runs(project(id)));
+  handle("diagnostics:export", exportDiagnostics);
   handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });

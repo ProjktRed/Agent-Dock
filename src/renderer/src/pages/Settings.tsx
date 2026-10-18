@@ -734,6 +734,7 @@ function Advanced() {
   const ad = snap.settings.advanced;
   const patch = useSettingsPatch();
   const [resetOpen, setResetOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   return (
     <div className="stack" style={{ gap: 20 }}>
       <section className="card pad">
@@ -753,12 +754,14 @@ function Advanced() {
             aria-label="llama.cpp launcher"
           />
         </SetRow>
-        <SetRow title="Debug logging" support="saved"><Toggle on={ad.debug} onChange={(v) => patch("advanced", { debug: v })} label="Debug logging" /></SetRow>
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Storage and configuration</h2>
         <SetRow title="Configuration folder" desc={<span className="mono">{snap.paths.config}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.paths.config)}>Open</button></SetRow>
         <SetRow title="Engine state for app-managed projects" desc={<span className="mono">{snap.paths.projectState}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.paths.projectState)}>Open</button></SetRow>
+        <SetRow title="Export diagnostics" desc="A zip for bug reports: versions, settings, each project’s engine state, recent Activity, engine log and run reports. Secrets, project code and model prompts are left out; look through it before sharing." support="app">
+          <button className="btn sm" disabled={exporting} onClick={async () => { setExporting(true); try { const file = await window.api.exportDiagnostics(); if (file) toast("success", "Diagnostics saved"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setExporting(false); } }}>{exporting ? "Exporting…" : "Export…"}</button>
+        </SetRow>
         <SetRow title="Backup" desc="Copy the configuration folder to back up projects, agents, connections and settings. Credentials are encrypted for this Windows account only." support="app"><span className="chip mut">Manual</span></SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>
       </section>
