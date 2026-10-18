@@ -13,6 +13,7 @@ import { parseLoopOptions } from "./loop-options.mjs";
 import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
+import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 
 installTopLevelDiagnostics();
 
@@ -113,6 +114,9 @@ if (!(await state.readLive())) {
   });
 }
 await state.configureRuntime({ contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider });
+useRunLimits(parseRunLimits(options));
+await watchUsage(state, stateDir);
+const deadline = startDeadline(state);
 try {
   const result = await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
@@ -124,11 +128,15 @@ try {
     roles, runRole,
   });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), result);
+  await writeRunReport(stateDir, result);
   console.log(JSON.stringify(result));
   process.exitCode = result.status === "blocked" ? 1 : 0;
 } catch (error) {
   await state.record({ type: "blocked", qa: error.stack ?? error.message });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), { status: "blocked", output: error.message });
+  await writeRunReport(stateDir, { status: "blocked", output: error.message }).catch(() => {});
   console.error(error.message);
   process.exitCode = 1;
+} finally {
+  if (deadline) clearTimeout(deadline);
 }

@@ -71,6 +71,8 @@ export const DEFAULT_SETTINGS: Settings = {
     toolGuard: true,
     resumeAfterRestart: "ask",
     stopAfterCurrentTask: false,
+    unattended: false,
+    unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },

@@ -247,6 +247,7 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
   const lastSeen = prev?.events.at(-1)?.timestamp ?? "";
   const fresh = prev ? next.events.filter((e) => e.timestamp > lastSeen) : [];
   for (const event of fresh) {
+    if (event.type === "run-limit") osNotify(`Unattended run stopping · ${p.name}`, String(event.message ?? "A run limit was reached."));
     if (event.type === "qa-pass") {
       if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA after ${event.attempt ?? "?"} attempt(s).`);
       // The engine records automatic Pause before QA PASS; polling must not race

@@ -80,6 +80,19 @@ describe("run state", () => {
 });
 
 describe("engine launch args", () => {
+  it("unattended mode locks the tool guard, continues automatically and passes its limits last", () => {
+    const base = settings();
+    const s = { ...base, workflow: { ...base.workflow, unattended: true, toolGuard: false, autoContinue: false, unattendedLimits: { maxTasks: 4, maxHours: 2.5, maxCorrections: 3, maxElevations: 1, maxMillionTokens: 1.5, maxCostUsd: 12.5 } } };
+    const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
+    const last = (name: string) => plan.args[plan.args.lastIndexOf(name) + 1];
+    expect([last("--tool-guard"), last("--auto-continue"), last("--unattended")]).toEqual(["true", "true", "true"]);
+    expect([last("--max-tasks"), last("--max-hours"), last("--max-corrections"), last("--max-elevations")]).toEqual(["4", "2.5", "3", "1"]);
+    // Token budgets are set in millions; unset daily budgets mean no limit.
+    expect([last("--max-tokens"), last("--max-cost"), last("--max-tokens-day"), last("--max-cost-day")]).toEqual(["1500000", "12.5", "0", "0"]);
+    const noLimit = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...s, workflow: { ...s.workflow, unattendedLimits: { ...s.workflow.unattendedLimits, maxCorrections: 0 } } } });
+    expect(noLimit.problems).toContain("Unattended mode needs a correction limit of at least 1.");
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--unattended");
+  });
   it("maps the default agents onto engine flags", () => {
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
     expect(plan.problems).toEqual([]);

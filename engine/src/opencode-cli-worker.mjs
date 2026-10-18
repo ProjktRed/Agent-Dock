@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {adapter,PLUGIN_ID,prepareOpenCodeGuard,readGuardOutcome} from './guard/adapters/opencode.mjs';
 import {stopMessage} from './guard/reasons.mjs';
+import {noteUsage,openCodeUsage} from './run-budget.mjs';
 
 const FAIL_CLOSED='OpenCode guard plugin did not initialize; guarded run refused';
 const redact=(text,env,keyEnv)=>keyEnv&&env[keyEnv]?String(text).replaceAll(env[keyEnv],'[REDACTED]'):String(text);
@@ -131,6 +132,7 @@ export async function launchOpenCode({command='opencode',opencodeCommand,workspa
  policy.runtimeReady=false;policy.runtimeHandshake=null;
  await atomicWriteJson(guard.policyPath,policy);
  const result=await collectOpenCodeProcess(command,['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}`,'--agent','agent-dock','--auto',prompt],{cwd:workspace,env:childEnv,spawnProcess,timeoutMs:timeoutSeconds*1000,onStart,onEvent,apiKeyEnv:providerDescriptor.apiKeyEnv});
+ noteUsage(openCodeUsage(result.events));
  const outcome=await readGuardOutcome(guard.policyPath);
  if(!outcome.runtimeReady||outcome.runtimeHandshake!==guard.handshake)throw Error(FAIL_CLOSED+' (run handshake missing)');
  if(outcome.stopped){

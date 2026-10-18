@@ -6,6 +6,7 @@ import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult 
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
+import { claudeUsage, noteUsage } from "./run-budget.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -126,6 +127,7 @@ export class ClaudeWorker extends CodexWorker {
     } finally {
       this.activeCount--;
       await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
+      noteUsage(claudeUsage(stdout));
     }
     return parse(await readFile(path.join(invocation, "result.json"), "utf8"));
   }

@@ -12,6 +12,7 @@ import {compactCorrections,correctionInstructions,correctionText,packetForPrompt
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
 import {TUNING} from './engine-tuning.mjs';
+import {elevationAllowed} from './run-budget.mjs';
 import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
@@ -279,7 +280,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const control=await readControl();
             const manual=manualElevation || Number(control.elevateGeneration??0)>Number(r.elevateGeneration??0);
             if(manual)r.elevateGeneration=control.elevateGeneration;
-            const auto=solReassessmentEnabled&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
+            const auto=solReassessmentEnabled&&elevationAllowed()&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
             // Optional correction limit: stop for the user; Resume grants another round of corrections.
             if(!manual&&!auto&&TUNING.maxCorrections>0&&r.correctionCount-(r.correctionLimitBase??0)>=TUNING.maxCorrections) {
               r.correctionLimitBase=r.correctionCount;r.phase='correction-assessment';r.elevationAutomatic=false;r.elevationFingerprint=fingerprint;manualElevation=false;await save();

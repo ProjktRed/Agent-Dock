@@ -8,6 +8,7 @@ import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task
 import { TUNING, taskSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
+import { codexUsage, noteUsage } from "./run-budget.mjs";
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -316,6 +317,7 @@ export class CodexWorker {
       this.activeCount--;
       output ||= [stdoutOutput, stderrOutput].filter(Boolean).join("\n");
       await writeFile(path.join(invocation, "events.ndjson"), output);
+      noteUsage(codexUsage(stdoutOutput));
     }
     return parse(await readFile(outputFile, "utf8"));
   }

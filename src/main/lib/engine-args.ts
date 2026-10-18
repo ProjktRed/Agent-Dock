@@ -137,7 +137,9 @@ export function buildEngineArgs(input: {
   if (qa) useConnection(qa, "QA");
 
   const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
-  args.push('--auto-continue', String(workflow.autoContinue));
+  const unattended = workflow.unattended === true;
+  // Unattended: never waits at a task boundary and never runs with the tool guard off.
+  args.push('--auto-continue', String(unattended || workflow.autoContinue));
   const protectedPaths = settings.safety?.protectedPaths;
   if (!Array.isArray(protectedPaths) || protectedPaths.some(p => typeof p !== "string" || !p.trim() || /[\0\r\n]/.test(p))) problems.push("Protected paths must be nonempty paths.");
   else args.push("--protected-paths", JSON.stringify([...new Set([...protectedPaths, project.stateDir, ...(input.protectedRoots ?? [])])]));
@@ -288,7 +290,17 @@ export function buildEngineArgs(input: {
   }
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
-  args.push("--tool-guard", String(workflow.toolGuard));
+  args.push("--tool-guard", String(unattended || workflow.toolGuard));
+  if (unattended) {
+    const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...workflow.unattendedLimits };
+    const whole = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
+    if (!(whole(limits.maxCorrections) >= 1)) problems.push("Unattended mode needs a correction limit of at least 1.");
+    // After the tuning flags, so the unattended correction limit wins.
+    args.push("--unattended", "true", "--max-tasks", String(Math.floor(whole(limits.maxTasks))), "--max-hours", String(whole(limits.maxHours)),
+      "--max-elevations", String(Math.floor(whole(limits.maxElevations))), "--max-corrections", String(Math.max(1, Math.floor(whole(limits.maxCorrections)))),
+      "--max-tokens", String(Math.round(whole(limits.maxMillionTokens) * 1_000_000)), "--max-cost", String(whole(limits.maxCostUsd)),
+      "--max-tokens-day", String(Math.round(whole(limits.maxMillionTokensDay) * 1_000_000)), "--max-cost-day", String(whole(limits.maxCostUsdDay)));
+  }
 
   return {
     args,

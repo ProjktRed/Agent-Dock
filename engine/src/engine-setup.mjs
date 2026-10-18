@@ -1,4 +1,5 @@
 import { CloudImplementationWorker } from "./cloud-impl-worker.mjs";
+import { trackRunEvent } from "./run-budget.mjs";
 import { CodexWorker } from "./codex-worker.mjs";
 import { ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
@@ -13,6 +14,7 @@ import { OpenCodeCliWorker } from "./opencode-cli-worker.mjs";
 export async function recordLoopEvent(state,event,{autoContinue=true}={}) {
   if(event.type==='qa-pass'&&!autoContinue)await state.setControl('pause');
   await state.record(event);
+  await trackRunEvent(state,event);
 }
 
 /** Codex or Claude Code as the implementation worker (--implementation-cli). Null for Cline. */

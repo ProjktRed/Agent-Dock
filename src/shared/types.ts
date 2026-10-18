@@ -124,6 +124,14 @@ export interface WorkflowSettings {
   toolGuard: boolean;
   resumeAfterRestart: "ask" | "auto" | "paused";
   stopAfterCurrentTask: boolean;
+  /** Unattended mode: guards locked on, automatic continuation, and run-wide limits the engine enforces. */
+  unattended: boolean;
+  /** 0 = no limit, except corrections, which always need a limit when unattended. Token budgets are in millions;
+   *  spend budgets in USD count only what the CLIs report (Claude Code, OpenCode). */
+  unattendedLimits: {
+    maxTasks: number; maxHours: number; maxCorrections: number; maxElevations: number;
+    maxMillionTokens?: number; maxCostUsd?: number; maxMillionTokensDay?: number; maxCostUsdDay?: number;
+  };
 }
 
 export interface AttentionPolicy {

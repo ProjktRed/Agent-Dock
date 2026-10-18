@@ -17,6 +17,8 @@ const SECTIONS: { value: Section; label: string }[] = [
   { value: "updates", label: "Updates" },
   { value: "advanced", label: "Advanced" },
 ];
+/** Unattended limits that keep their decimals; the others are whole counts. */
+const DECIMAL_LIMITS = new Set<string>(["maxHours", "maxMillionTokens", "maxCostUsd", "maxMillionTokensDay", "maxCostUsdDay"]);
 const ACCENTS = [
   ["Pastel blue", "#82A9E8"],
   ["Lavender", "#AD9ADA"],
@@ -429,6 +431,35 @@ function Safety() {
         <SetRow title="Restrict the implementation worker" desc="Native edits only inside the task's approved paths; shell limited to the task's QA command, lint/typecheck, exact-file Prettier and read-only Git; interpreters and redirection stop the attempt" support="engine">
           <Toggle on={w.toolGuard} onChange={(v) => patch("workflow", { toolGuard: v })} label="Tool guard" danger={!w.toolGuard} />
         </SetRow>
+      </section>
+      <section className="card pad stack" style={{ gap: 12 }}>
+        <h2 className="h2" style={{ marginBottom: 4 }}>Unattended mode</h2>
+        <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder." support="engine">
+          <Toggle on={w.unattended === true} onChange={(v) => patch("workflow", { unattended: v })} label="Unattended mode" />
+        </SetRow>
+        {w.unattended && (
+          <div className="grid-4">
+            {([
+              ["maxTasks", "Stop after approved tasks", "0 = no limit"],
+              ["maxHours", "Stop after hours", "0 = no limit"],
+              ["maxCorrections", "Corrections per task", "then stop for you (at least 1)"],
+              ["maxElevations", "Automatic Elevations per run", "0 = no limit"],
+              ["maxMillionTokens", "Token budget per run (millions)", "0 = no limit"],
+              ["maxCostUsd", "Spend budget per run (USD)", "Claude Code and OpenCode report cost; 0 = no limit"],
+              ["maxMillionTokensDay", "Token budget per day (millions)", "this project, all runs today"],
+              ["maxCostUsdDay", "Spend budget per day (USD)", "this project, all runs today"],
+            ] as const).map(([key, label, hint]) => {
+              const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...w.unattendedLimits };
+              return (
+                <label className="field" key={key}><span>{label}</span>
+                  <input className="input mono" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
+                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= (key === "maxCorrections" ? 1 : 0) && v !== limits[key]) patch("workflow", { unattendedLimits: { ...limits, [key]: DECIMAL_LIMITS.has(key) ? v : Math.floor(v) } }); else e.target.value = String(limits[key] ?? 0); }} />
+                  <span className="hint">{hint}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Always enforced by the engine</h2>

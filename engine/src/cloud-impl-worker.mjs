@@ -10,6 +10,7 @@ import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
+import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // Cline worker: one exclusive lock, never replayed after an interruption, and every change still
@@ -134,6 +135,7 @@ export class CloudImplementationWorker {
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
+    noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout));
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };
     let summary = "";
     if (this.cli === "codex") {
