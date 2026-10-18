@@ -1,0 +1,49 @@
+# Every push to the main branches and every pull request: typecheck, app tests, engine tests and the
+# build, on Windows (where Agent Dock ships) and Linux (where the engine also runs).
+name: CI
+
+on:
+  push:
+    branches: [dev, master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # The tests and the bundle build do not need the Electron binary itself.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # Engine tests create throwaway repositories and commit in them.
+      - name: Git identity for test repositories
+        run: |
+          git config --global user.email "ci@agent-dock.invalid"
+          git config --global user.name "Agent Dock CI"
+          git config --global init.defaultBranch master
+      - run: npm ci
+      - run: npm run typecheck
+      - name: App tests
+        run: npm test
+      - name: Engine tests
+        run: npm run test:engine
+      - run: npm run build

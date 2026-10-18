@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ControlAction, Notice } from "@shared/api";
-import type { Agent, AppSnapshot, CliConnection, CliHealth, Project, ProjectStatus, Settings } from "@shared/types";
+import type { Agent, AppSnapshot, CliConnection, CliHealth, Project, ProjectStatus, Settings, WorkflowRole } from "@shared/types";
 
-export type Route = "overview" | "projects" | "agents" | "clis" | "settings";
+export type Route = "overview" | "projects" | "workflow" | "agents" | "clis" | "settings";
 interface Toast extends Notice {
   id: number;
 }
@@ -25,6 +25,7 @@ interface AppContextValue {
   setProjects: (projects: Project[]) => void;
   setAgents: (agents: Agent[]) => void;
   setClis: (clis: CliConnection[]) => void;
+  setRoles: (roles: WorkflowRole[]) => void;
   control: (projectId: string, action: ControlAction, successMessage?: string) => Promise<boolean>;
   refresh: () => Promise<void>;
   collapsed: boolean;
@@ -107,6 +108,7 @@ export function AppProvider({ initial, children }: { initial: AppSnapshot; child
       setProjects: (projects) => setSnap((s) => ({ ...s, projects })),
       setAgents: (agents) => setSnap((s) => ({ ...s, agents })),
       setClis: (clis) => setSnap((s) => ({ ...s, clis })),
+      setRoles: (roles) => setSnap((s) => ({ ...s, roles })),
       control: async (projectId, action, successMessage) => {
         try {
           await window.api.control(projectId, action);

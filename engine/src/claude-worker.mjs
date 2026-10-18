@@ -3,15 +3,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
+import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { redactText } from "./redact.mjs";
+import {installProtection} from './guard/install-protection.mjs';
+import {claudeSkillArgs} from './skill-isolation.mjs';
+import { claudeUsage, noteUsage } from "./run-budget.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
-const ROLE_LABELS = new Map([
-  ["GPT-6.1 Sol Medium", "Claude Sonnet (medium effort)"],
-  ["GPT-6.1 Sol", "Claude Sonnet"],
-  ["GPT-6 Astra", "Claude Opus"],
-  ["You are Codex performing", "You are Claude performing"],
-]);
+const CODEX_DEFAULT_LABELS = new Set(["gpt-6.1-sol", "gpt-6-astra"]);
 // No role gets a free shell or file editing. Only exact command prefixes are allowed;
 // Node's independent scope/HEAD verification still gates every QA commit.
 const shell = (prefixes) => prefixes.flatMap((p) => [`Bash(${p}:*)`, `PowerShell(${p}:*)`]);
@@ -26,13 +26,7 @@ const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]
 
 /** Child sessions must not inherit the launching Claude session's host/session wiring. */
 export function claudeChildEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
-}
-
-export function relabelPrompt(prompt) {
-  let text = prompt;
-  for (const [from, to] of ROLE_LABELS) text = text.split(from).join(to);
-  return text;
+  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
 }
 
 export function extractClaudeResult(stdout) {
@@ -57,20 +51,25 @@ export class ClaudeWorker extends CodexWorker {
     this.pidFile = path.join(this.stateDir, "codex-process.json"); // same single-orchestrator lock as Codex
   }
 
-  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+  async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+    prompt = redactText(prompt, { assignments: false });
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
-    const text = relabelPrompt(prompt);
+    const text = prompt;
     await writeFile(path.join(invocation, "schema.json"), JSON.stringify(schema));
     await writeFile(path.join(invocation, "prompt.txt"), text);
     const writable = sandbox !== "read-only";
-    // The base class passes its role labels; elevation is the only Opus role, whatever labels are active.
-    model = ["gpt-6-astra", CLAUDE_MODELS.elevate].includes(model) ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
-    reasoningEffort = CLAUDE_MODELS.reasoning;
+    // Codex default labels (orchestrator models never configured) map to the Claude defaults:
+    // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
+    if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
+    reasoningEffort ||= CLAUDE_MODELS.reasoning;
+    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
     const args = [...this.prefixArgs, "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
-      "--no-session-persistence", "--strict-mcp-config", "--permission-mode", "dontAsk",
+      "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
+      // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
+      ...protectionArgs,
       "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
       "--disallowedTools", ...NEVER_TOOLS,
       ...(writable ? this.additionalWritableDirs.flatMap((dir) => ["--add-dir", dir]) : [])];
@@ -118,6 +117,7 @@ export class ClaudeWorker extends CodexWorker {
     } finally {
       this.activeCount--;
       await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
+      noteUsage(claudeUsage(stdout));
     }
     return parse(await readFile(path.join(invocation, "result.json"), "utf8"));
   }

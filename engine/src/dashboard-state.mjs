@@ -3,8 +3,12 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import path from "node:path";
 import { diagnostic } from "./diagnostics.mjs";
 import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
-import { migrateRecoveryState, recoveryClassification } from './recovery-policy.mjs';
+import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } from './recovery-policy.mjs';
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
+import { selectedAutoSkills } from './task-handoff-skill.mjs';
+import { appendAction, flushActionLog } from './action-log.mjs';
+import { redactDeep } from './redact.mjs';
+export { flushActionLog };
 
 async function readJson(file, fallback) {
   try {
@@ -86,23 +90,28 @@ export class DashboardState {
         resumeGeneration: 0,
       });
     }
-    await this.appendEvent({ type: "task-loaded", taskId: task.id });
+    const skills = selectedAutoSkills(task).map((skill) => skill.name);
+    await this.appendEvent({ type: "task-loaded", taskId: task.id, ...(skills.length ? { skills } : {}) });
   }
 
   async record(event) {
+    event = redactDeep(event);
     this.live ??= await this.readLive();
     const next = { ...this.live, updatedAt: new Date().toISOString() };
     if(event.type==='recovery-state') {
       Object.assign(next,event.recovery);
       if(event.consumeCodexResult) next.codexOperation=null;
     }
+    if(event.type==='codex-operation-consumed') next.codexOperation=null;
     if(event.type==='known-issues-selected')next.knownIssues=event.knownIssues;
     if(['codex-assessing','codex-qa-started','sol-reassessment-started','resolver-started'].includes(event.type)) {
       next.activeReasoningRole=event.type==='resolver-started'?'Resolver':event.type==='codex-qa-started'?'QA':event.type==='sol-reassessment-started'?'Elevation':'Assessment';
       next.activeReasoningModel=event.model;
       next.assessmentRunning=next.activeReasoningRole==='Assessment';
     }
-    if(['codex-finished','codex-qa-finished','sol-reassessment-finished','resolver-finished','resolver-error','blocked','waiting-for-codex'].includes(event.type)) {
+    if(event.type==='role-started'){next.activeReasoningRole=event.roleName??'Workflow role';next.activeReasoningModel=event.model;next.assessmentRunning=false;}
+    if(event.type==='role-result'||event.type==='role-error')(next.roleResults??=[]).push({roleName:event.roleName,stage:event.stage,verdict:event.verdict??null,summary:event.summary??event.message??'',error:event.type==='role-error',at:new Date().toISOString()}),next.roleResults=next.roleResults.slice(-20);
+    if(['codex-finished','codex-qa-finished','sol-reassessment-finished','resolver-finished','resolver-error','blocked','waiting-for-codex','role-finished','role-error'].includes(event.type)) {
       next.activeReasoningRole=null;next.assessmentRunning=false;
     }
     if (event.attempt !== undefined) next.attempt = event.attempt;
@@ -157,7 +166,7 @@ export class DashboardState {
       next.qaStatus = "fail";
       next.manualReview = false;
     }
-    if (["codex-finished", "codex-qa-finished", "sol-reassessment-finished", "resolver-finished"].includes(event.type) && event.codexOperation?.status === "completed") {
+    if (["codex-finished", "codex-qa-finished", "sol-reassessment-finished", "resolver-finished", "role-finished"].includes(event.type) && event.codexOperation?.status === "completed") {
       next.codexOperation = event.codexOperation;
     } else if (["codex-assessing", "codex-qa-started", "cline-started", "qa-pass", "manual-review", "loop-complete"].includes(event.type)) {
       next.codexOperation = null;
@@ -179,11 +188,14 @@ export class DashboardState {
       "qa-evidence-started": ["codex-qa", "idle", "running", false],
       "qa-evidence-finished": ["codex-qa", "idle", "running", false],
       "qa-fail": ["fail", "idle", "fail", false],
+      "qa-retry": ["codex-qa", "idle", "running", false],
+      "role-gate-failed": ["fail", "idle", "fail", false],
       retry: ["retry", "idle", "waiting", false],
       "qa-pass": ["pass", "idle", "pass", false],
       "manual-review": [recoveryClassification({output:event.qa,manualReviewCause:event.manualReviewCause})==='blocked'?'BLOCKED':'USER_ATTENTION', "idle", "fail", false],
       "user-attention": ["USER_ATTENTION", "idle", "fail", false],
       "blocked": ["BLOCKED", "idle", "fail", false],
+      "task-set-aside": ["waiting", "idle", "waiting", false],
       "sol-reassessment-started": ["elevating", "idle", "fail", false],
       "sol-reassessment-finished": ["USER_ATTENTION", "idle", "fail", false],
       "resolver-started": ["resolving", "idle", "waiting", false],
@@ -194,12 +206,15 @@ export class DashboardState {
       paused: ["paused", "idle", next.qaStatus, next.manualReview],
       stopped: ["stopped", "idle", next.qaStatus, next.manualReview],
     };
+    if (event.type === "orchestrator-fallback") next.activeReasoningModel = event.model ?? null;
     const transition = transitions[event.type];
     if (transition) {
       [next.stage, next.clineStatus, next.qaStatus, next.manualReview] = transition;
     }
     if(['user-attention','manual-review'].includes(event.type)&&next.stage==='USER_ATTENTION') {next.userAttention=true;next.userAttentionReason=event.qa;next.userAttentionSince??=new Date().toISOString();}
     if(event.type==='blocked') {next.userAttention=false;next.blockedReason=event.qa;next.elevateRunning=false;}
+    if(event.type==='qa-retry') {next.blockedReason=null;next.resolverResult=null;}
+    if(event.type==='task-set-aside') {next.blockedReason=null;next.resolverResult=null;next.userAttention=false;next.userAttentionReason=null;}
     if(event.type==='qa-pass') {next.userAttention=false;next.userAttentionReason=null;next.elevateResult=null;}
     if (event.type === "codex-usage-limit" || event.type === "waiting-for-codex") {
       if (event.operation === "assessment" || event.operation === 'correction-assessment') next.qaStatus = "waiting";
@@ -212,7 +227,7 @@ export class DashboardState {
       }
       if(event.operation==='resolver')next.resolverRunning=false;
       if (event.operation === "qa" && event.source === "manual-elevate") next.elevateRunning = false;
-    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished') {
+    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished' || event.type === "cline-started" || event.type === "implementation-limit-resumed") {
       next.interruptedOperation = null;
       next.codexLimitMessage = null;
       next.codexRetryAt = null;
@@ -237,8 +252,10 @@ export class DashboardState {
   async appendEvent(event) {
     await mkdir(this.stateDir, { recursive: true });
     const currentTaskId = (await this.readLive())?.task?.id;
-    const entry = { timestamp: new Date().toISOString(), taskId: currentTaskId, ...event };
+    const entry = redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event });
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
+    // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.
+    await appendAction(this.stateDir, entry).catch((error) => diagnostic("ACTION_LOG_WRITE_FAILED", { message: error.message }));
   }
 
   async readLive() {
@@ -255,13 +272,14 @@ export class DashboardState {
     };
   }
 
-  setControl(action) {
+  /** source names who asked (app, dashboard, cli, run-limit); it is kept in the action log. */
+  setControl(action, { source, reason } = {}) {
     const previous=this.controlQueue??Promise.resolve();
-    const request=previous.catch(()=>{}).then(()=>this.applyControl(action));
+    const request=previous.catch(()=>{}).then(()=>this.applyControl(action, source, reason));
     this.controlQueue=request;return request;
   }
 
-  async applyControl(action) {
+  async applyControl(action, source, reason) {
     const current = await this.readControl();
     const next = { ...current };
     if (action === "pause") next.pauseAfterCurrent = true;
@@ -270,6 +288,18 @@ export class DashboardState {
       next.stopAfterSafePoint = false;
       next.resumeGeneration = Number(current.resumeGeneration ?? 0) + 1;
     } else if (action === "stop") next.stopAfterSafePoint = true;
+    // Picked up by the loop at its next boundary (no worker running): the task is set aside, its work stashed.
+    else if (action === "defer") { next.deferGeneration = Number(current.deferGeneration ?? 0) + 1; next.deferReason = String(reason ?? "Deferred").slice(0, 400); }
+    // Elevation for the failing task, taken up by the running loop when the task is waiting on a correction.
+    else if (action === "request-elevation") next.elevateGeneration = Number(current.elevateGeneration ?? 0) + 1;
+    else if(action==='retry-qa') {
+      let recovery=null;
+      try{recovery=JSON.parse(await readFile(path.join(this.stateDir,'current-task.json'),'utf8'))?.automation?.recovery??null;}catch{}
+      const availability=qaRetryAvailability(recovery);
+      if(!availability.available)throw Error('Retry QA unavailable: '+availability.reason);
+      next.qaRetryGeneration=Number(current.qaRetryGeneration??0)+1;
+      next.stopAfterSafePoint=false;
+    }
     else if(action==='resolve') {
       const live=await this.readLive(),input=await loadResolverCase(this.stateDir);
       const availability=resolverAvailability({live,input});
@@ -308,7 +338,7 @@ export class DashboardState {
         await atomicWriteJson(this.livePath, this.live);
       }
     }
-    await this.appendEvent({ type: `control-${action}` });
+    await this.appendEvent({ type: `control-${action}`, ...(source ? { source } : {}), ...(reason ? { reason } : {}) });
     return next;
   }
 

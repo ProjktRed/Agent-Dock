@@ -8,6 +8,7 @@ const TYPES: { kind: CliKind; label: string; desc: string; exe: boolean; default
   { kind: "codex", label: "Codex CLI", desc: "OpenAI coding agent · orchestrator", exe: true, defaultLocation: "codex" },
   { kind: "claude", label: "Claude Code", desc: "Anthropic CLI · orchestrator", exe: true, defaultLocation: "claude" },
   { kind: "cline", label: "Cline CLI", desc: "Implementation worker", exe: true, defaultLocation: "cline" },
+  { kind: "opencode", label: "OpenCode", desc: "Implementation worker", exe: true, defaultLocation: "opencode" },
   { kind: "ollama", label: "Ollama", desc: "Local model runtime", exe: false, defaultLocation: "http://127.0.0.1:11434" },
   { kind: "llamacpp", label: "llama.cpp server", desc: "OpenAI-compatible local server", exe: false, defaultLocation: "http://127.0.0.1:8081/v1" },
   { kind: "openai", label: "OpenAI-compatible API", desc: "Any /v1 endpoint", exe: false, defaultLocation: "https://" },
@@ -115,7 +116,7 @@ export function AddCliDialog({ onClose }: { onClose: () => void }) {
                 )}
               </>
             ) : (
-              <label className="field"><span>Endpoint</span><input className="input mono" value={location} onChange={(e) => setLocation(e.target.value)} /><span className="hint">{kind === "ollama" ? "Ollama base URL" : "OpenAI-compatible base URL, usually ending in /v1"}</span></label>
+              <label className="field"><span>Endpoint</span><input className="input mono" value={location} onChange={(e) => setLocation(e.target.value)} /><span className="hint">{kind === "ollama" ? "Ollama base URL" : kind === "openai" ? "OpenAI-compatible URL, e.g. https://openrouter.ai/api/v1 or https://opencode.ai/inference/openai/v1" : "OpenAI-compatible base URL, usually ending in /v1"}</span></label>
             )}
           </div>
         )}

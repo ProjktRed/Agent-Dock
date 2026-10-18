@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Agent, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, LibraryPreview, NotifyChannel, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -17,6 +17,8 @@ const SECTIONS: { value: Section; label: string }[] = [
   { value: "updates", label: "Updates" },
   { value: "advanced", label: "Advanced" },
 ];
+/** Unattended limits that keep their decimals; the others are whole counts. */
+const DECIMAL_LIMITS = new Set<string>(["maxHours", "maxMillionTokens", "maxCostUsd", "maxMillionTokensDay", "maxCostUsdDay"]);
 const ACCENTS = [
   ["Pastel blue", "#82A9E8"],
   ["Lavender", "#AD9ADA"],
@@ -29,6 +31,52 @@ function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
   return <K extends keyof Settings>(key: K, patch: Partial<Settings[K]>) =>
     saveSettings({ ...snap.settings, [key]: { ...(snap.settings[key] as object), ...patch } as Settings[K] });
+}
+
+/**
+ * A loop limit the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
+ * Off: editable; saved on blur. Null-able values (engine defaults) clear to the default when emptied.
+ */
+function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof EngineTuning; min: number; max: number; unit?: string; zeroLabel?: string; fallback?: number; label: string }) {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const guarded = snap.settings.advanced.engineGuardrails !== false;
+  const stored = snap.settings.tuning[k];
+  const engineValue = (DEFAULT_SETTINGS.tuning[k] ?? fallback) as number;
+  const value = (guarded ? engineValue : stored ?? fallback) as number;
+  const [text, setText] = useState(stored == null ? "" : String(stored));
+  useEffect(() => setText(stored == null ? "" : String(stored)), [stored]);
+  const unitFor = (v: number) => (unit && v === 1 && /s$/.test(unit) ? unit.slice(0, -1) : unit);
+  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${v.toLocaleString()}${unit ? ` ${unitFor(v)}` : ""}`);
+  if (guarded) {
+    return (
+      <span className="row" style={{ gap: 10 }}>
+        <span className="mono">{show(value)}</span>
+        <span className="lock" title="Turn off engine guardrails (Settings › Advanced) to change"><Icon name="lock" size="sm" />Fixed by engine</span>
+      </span>
+    );
+  }
+  const commit = () => {
+    const raw = text.replace(/[\s,]/g, "");
+    if (raw === "" && fallback !== undefined) return void patch("tuning", { [k]: null } as Partial<EngineTuning>);
+    const next = Number(raw);
+    if (Number.isInteger(next) && next >= min && next <= max) {
+      if (next !== stored) void patch("tuning", { [k]: next } as Partial<EngineTuning>);
+    } else setText(stored == null ? "" : String(stored));
+  };
+  return (
+    <span className="row" style={{ gap: 8 }}>
+      <input className="input mono" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? fallback.toLocaleString() : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
+      {unit && <span className="sub">{unit}</span>}
+      {zeroLabel && <span className="hint">0 = {zeroLabel.toLowerCase()}</span>}
+    </span>
+  );
+}
+
+function GuardrailsNote() {
+  const { snap } = useApp();
+  if (snap.settings.advanced.engineGuardrails === false) return <div className="banner warnb"><Icon name="warn" className="warn" /><span>Engine guardrails are off: the values below are passed to the engine. Defaults reproduce the engine's built-in behaviour.</span></div>;
+  return <div className="banner"><Icon name="lock" className="info" /><span>Values marked <b>Fixed by engine</b> become editable when you turn off engine guardrails (Settings › Advanced).</span></div>;
 }
 
 function General() {
@@ -74,10 +122,86 @@ function General() {
   );
 }
 
+/** GitHub import: preview pins one commit, downloads only text files and scans them; nothing is written until Import. */
+function SkillImport({ onClose, onImported }: { onClose: () => void; onImported: (skills: SkillInfo[]) => void }) {
+  const { toast } = useApp();
+  const [libraries, setLibraries] = useState<{ label: string; url: string }[]>([]);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<LibraryPreview | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => { void window.api.skillLibraries().then(setLibraries); }, []);
+  const load = async (target = url, only?: string[]) => {
+    setBusy(true); setPreview(null); setChosen([]); setConfirmed(false);
+    try { setPreview(await window.api.previewSkillImport(target, only)); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const importable = (preview?.skills ?? []).filter((sk) => !sk.findings.some((x) => x.level === "block"));
+  const key = (sk: { name: string; path: string }) => (preview?.browse ? sk.path : sk.name);
+  const warned = (preview?.skills ?? []).some((sk) => chosen.includes(sk.name) && sk.findings.some((x) => x.level === "warn"));
+  const install = async () => {
+    if (!preview) return;
+    setBusy(true);
+    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${chosen.length} skill(s)`); onClose(); }
+    catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Import skills from GitHub" label="Import skills from GitHub" onClose={onClose} wide>
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <span className="sub">Trusted libraries:</span>
+          {libraries.map((l) => <button key={l.url} className="chip btnlike raised info" disabled={busy} onClick={() => { setUrl(l.url); void load(l.url); }}>{l.label}</button>)}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <input className="input mono grow" value={url} placeholder="https://github.com/owner/repo/tree/main/skills/name" onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && url.trim() && void load()} aria-label="GitHub URL" />
+          <button className="btn" disabled={busy || !url.trim()} onClick={() => void load()}>{busy && !preview ? "Checking…" : "Preview"}</button>
+        </div>
+        <p className="sub" style={{ margin: 0 }}>Imports are pinned to one commit. Only text files are downloaded; scripts and binaries are skipped and never run. Skills are scanned for hidden characters and risky instructions before you import.</p>
+        {preview && (
+          <>
+            <div className={`banner ${preview.trusted ? "" : "warnb"}`}><Icon name={preview.trusted ? "lock" : "warn"} className={preview.trusted ? "info" : "warn"} /><span><span className="mono">{preview.owner}/{preview.repo}</span> at commit <span className="mono">{preview.commit.slice(0, 7)}</span>{preview.trusted ? " · trusted library" : " · not a trusted library: read every file before importing"}</span></div>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="sub grow">{preview.browse ? `${preview.skills.length} skills in this library. Choose up to 60 to download and review.` : `${importable.length} of ${preview.skills.length} can be imported.`}{chosen.length ? ` ${chosen.length} selected.` : ""}</span>
+              <button className="btn sm" onClick={() => setChosen(chosen.length ? [] : preview.browse ? preview.skills.slice(0, 60).map((sk) => sk.path) : importable.map((sk) => sk.name))}>{chosen.length ? "Select none" : preview.browse && preview.skills.length > 60 ? "Select first 60" : "Select all"}</button>
+            </div>
+            <section className="well" style={{ padding: 6, maxHeight: 340, overflowY: "auto" }}>
+              {preview.skills.map((sk) => {
+                const blocked = sk.findings.some((x) => x.level === "block");
+                const on = chosen.includes(key(sk));
+                return (
+                  <label key={key(sk)} className="stack" style={{ gap: 4, padding: "8px 10px", opacity: blocked ? 0.6 : 1 }}>
+                    <span className="row" style={{ gap: 8 }}>
+                      <input type="checkbox" disabled={blocked} checked={on} onChange={() => setChosen(on ? chosen.filter((n) => n !== key(sk)) : [...chosen, key(sk)])} />
+                      <span style={{ fontWeight: 600 }}>{sk.name}</span>
+                      <span className="sub ellipsis grow">{sk.description}</span>
+                      {!preview.browse && <span className="sub">{sk.files.length} file(s){sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
+                    </span>
+                    {sk.findings.filter((x) => x.file || x.level === "block").map((x, i) => <span key={i} className={`row ${x.level === "block" ? "err" : "warn"}`} style={{ gap: 6, fontSize: 12, paddingLeft: 26 }}><Icon name="warn" size="sm" />{x.level === "block" ? "Blocked: " : ""}{x.message}{x.file ? <span className="mono sub"> {x.file}</span> : null}</span>)}
+                  </label>
+                );
+              })}
+            </section>
+            {warned && <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed the warnings and want to import these skills.</span></label>}
+            <div className="row" style={{ gap: 8 }}>
+              <span className="grow" />
+              <button className="btn" onClick={onClose}>Cancel</button>
+              {preview.browse
+                ? <button className="btn primary" disabled={busy || !chosen.length || chosen.length > 60} onClick={() => void load(preview.url, chosen)}>Review {chosen.length || ""}</button>
+                : <button className="btn primary" disabled={busy || !chosen.length || (warned && !confirmed)} onClick={() => void install()}>Import {chosen.length || ""}</button>}
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function Skills() {
   const { snap, setAgents, saveSettings, toast } = useApp();
   const [skills, setSkills] = useState<SkillInfo[] | null>(null);
   const [selId, setSelId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   useEffect(() => {
     void window.api.skills().then((s) => {
       setSkills(s);
@@ -87,43 +211,74 @@ function Skills() {
   if (!skills) return <div className="skel" style={{ width: "50%" }} />;
   const sel = skills.find((s) => s.id === selId) ?? null;
   const enabled = (s: SkillInfo) => snap.settings.skills.enabled[s.id] ?? true;
-  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name));
+  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name) || (a.autoSkills ?? []).includes(s.name) || (a.role === "implementation" && a.autoAllImported !== false && s.source === "imported" && enabled(s)));
+  const assignedLabel = (s: SkillInfo) => assigned(s).map((a) => (a.skills.includes(s.name) ? a.name : `${a.name} (when relevant)`)).join(", ");
+  // Grouped by source: the engine's own skill, each GitHub library, and folder imports. Large groups start collapsed.
+  const groupOf = (s: SkillInfo) => (s.source === "engine" ? "Engine" : s.origin ? s.origin.split("@")[0] : "Imported from folder");
+  const groups = [...new Set(skills.map(groupOf))].map((name) => ({ name, items: skills.filter((s) => groupOf(s) === name) }));
+  const isCollapsed = (g: { name: string; items: SkillInfo[] }) => collapsed[g.name] ?? g.items.length > 8;
+  const setAll = (value: boolean) => setCollapsed(Object.fromEntries(groups.map((g) => [g.name, value])));
+  const setGroupEnabled = (items: SkillInfo[], value: boolean) =>
+    saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, ...Object.fromEntries(items.map((s) => [s.id, value])) } } });
   const toggleAgent = async (agent: Agent, skill: SkillInfo) => {
     const has = agent.skills.includes(skill.name);
     setAgents(await window.api.saveAgent({ ...agent, skills: has ? agent.skills.filter((x) => x !== skill.name) : [...agent.skills, skill.name] }));
   };
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="banner"><Icon name="warn" className="info" /><span>The engine always injects its bundled <span className="mono">bounded-task-handoff</span> skill into Assessment, QA and Cline handoffs. Other skills and assignments are saved here for when the engine accepts additional skills.</span></div>
+      <div className="banner"><Icon name="warn" className="info" /><span>The engine always includes its bundled <span className="mono">bounded-task-handoff</span> skill. Skills you assign to an agent are added to that role's prompt (SKILL.md plus its other Markdown files when they fit 16,000 characters); task scope and guard rules still take precedence.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
         <span className="sub grow">{skills.length} skills · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
+        {groups.length > 1 && <>
+          <button className="btn ghost sm" onClick={() => setAll(false)}><Icon name="chevronDown" size="sm" />Expand all</button>
+          <button className="btn ghost sm" onClick={() => setAll(true)}><Icon name="chevronRight" size="sm" />Collapse all</button>
+        </>}
+        <button className="btn" onClick={() => setImporting(true)}><Icon name="download" size="sm" />Import from GitHub</button>
         <button className="btn" onClick={async () => setSkills(await window.api.importSkillFolder())}><Icon name="download" size="sm" />Import from folder</button>
       </div>
       {skills.length === 0 ? <Empty title="No skills found" icon="settings" /> : (
         <section className="well scroll-x" style={{ padding: 6 }}>
           <table className="tbl" style={{ minWidth: 720 }}>
             <thead><tr><th>Skill</th><th>Source</th><th>Assigned to</th><th>Compatibility</th><th>Enabled</th></tr></thead>
-            <tbody>
-              {skills.map((s) => (
+            {groups.map((g) => {
+              const shut = isCollapsed(g);
+              const imported = g.items.filter((s) => s.source !== "engine");
+              const on = imported.filter(enabled).length;
+              return (
+            <tbody key={g.name}>
+              <tr className="click" onClick={() => setCollapsed({ ...collapsed, [g.name]: !shut })} aria-expanded={!shut}>
+                <td colSpan={4}>
+                  <span className="row" style={{ gap: 8, fontWeight: 600 }}>
+                    <Icon name={shut ? "chevronRight" : "chevronDown"} size="sm" />
+                    <span className={g.name === "Engine" || g.name === "Imported from folder" ? "" : "mono"}>{g.name}</span>
+                    <span className="sub" style={{ fontWeight: 400 }}>{g.items.length} skill{g.items.length === 1 ? "" : "s"}{imported.length ? ` · ${on} enabled` : ""}</span>
+                  </span>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>{imported.length > 1 && <button className="btn ghost sm" onClick={() => setGroupEnabled(imported, on < imported.length)}>{on < imported.length ? "Enable all" : "Disable all"}</button>}</td>
+              </tr>
+              {!shut && g.items.map((s) => (
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
-                  <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`}>{s.source === "engine" ? "Engine" : "Imported"}</span></td>
-                  <td className="sub">{assigned(s).map((a) => a.name).join(", ") || "None"}</td>
+                  <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
+                  <td className="sub">{assignedLabel(s) || "None"}</td>
                   <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? `${s.warnings.length} warning(s)` : "Compatible"}</span></td>
                   <td onClick={(e) => e.stopPropagation()}>{s.source === "engine" ? <span className="lock"><Icon name="lock" size="sm" />Required</span> : <Toggle on={enabled(s)} onChange={(v) => saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, [s.id]: v } } })} label={`Enable ${s.name}`} />}</td>
                 </tr>
               ))}
             </tbody>
+              );
+            })}
           </table>
         </section>
       )}
+      {importing && <SkillImport onClose={() => setImporting(false)} onImported={setSkills} />}
       {sel && (
         <section className="card pad stack" style={{ gap: 16 }}>
           <div className="row wrap"><h2 className="h2">{sel.name}</h2><span className="grow" /><button className="btn ghost sm" onClick={() => window.api.openPath(sel.dir)}><Icon name="external" size="sm" />Open folder</button></div>
           {sel.warnings.map((w) => <div className="banner warnb" key={w}><Icon name="warn" className="warn" /><span>{w}</span></div>)}
           <p className="sub" style={{ margin: 0 }}>{sel.description}</p>
           <div className="field">
-            <span className="row" style={{ gap: 8 }}>Assign to agents<Support kind="saved" /></span>
+            <span className="row" style={{ gap: 8 }}>Assign to agents<Support kind="engine" /></span>
             <div className="row wrap" style={{ gap: 8 }}>
               {snap.agents.map((a) => {
                 const on = a.skills.includes(sel.name);
@@ -172,14 +327,15 @@ function Workflow() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
+        <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
-        <SetRow title="Automatic elevation" desc="One short Elevation reassessment on a manual-review case. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
-        <SetRow title="QA failure handling" desc="Actionable failures return a bounded correction to Cline, with no numeric retry limit" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
-        <SetRow title="Strategy reassessment" desc="On attempts 5, 10, 15… QA must issue a materially revised correction strategy" support="engine"><span className="chip mut">Every 5 attempts</span></SetRow>
-        <SetRow title="Blocked cases" desc="The read-only Resolver runs once all workers are idle; at most three distinct recovery strategies per task" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
+        <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
+        <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
+        <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>
+        <SetRow title="Resolver strategies" desc="Blocked cases: the read-only Resolver runs once all workers are idle. Distinct recovery strategies per task before human review." support="engine"><Tunable k="resolverMaxStrategies" min={1} max={20} unit="per task" label="Resolver strategies per task" /></SetRow>
         <SetRow title="After the app restarts" desc="When a project was mid-task and its engine is no longer running" support="app">
           <select className="sel" value={w.resumeAfterRestart} onChange={(e) => patch("workflow", { resumeAfterRestart: e.target.value as typeof w.resumeAfterRestart })} aria-label="Resume behaviour">
-            <option value="ask">Ask me</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
+            <option value="ask">Show a notice</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
           </select>
         </SetRow>
         <SetRow title="Stop after current task" desc={activeProject ? `One-off request for ${activeProject.name}` : "Select a project first"} support="engine">
@@ -210,7 +366,7 @@ function Workflow() {
 function Context() {
   const { snap, healths, setAgents } = useApp();
   const patch = useSettingsPatch();
-  const impl = snap.agents.filter((x) => x.role === "implementation");
+  const impl = snap.agents.filter((x) => x.role === "implementation" && snap.clis.find((c) => c.id === x.cliId)?.kind === "cline");
   return (
     <div className="stack" style={{ gap: 20 }}>
       <div className="row wrap sub" style={{ gap: 18 }}>
@@ -219,14 +375,17 @@ function Context() {
       </div>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Defaults</h2>
-        <SetRow title="Engine default context window" desc="Used for new Implementation agents" support="engine"><span className="mono">{snap.engine.defaults.contextTokens.toLocaleString()}</span></SetRow>
-        <SetRow title="Engine default maximum output" support="engine"><span className="mono">{snap.engine.defaults.maxOutputTokens.toLocaleString()}</span></SetRow>
+        <GuardrailsNote />
+        <SetRow title="Default context window" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultContextTokens" min={1024} max={10_000_000} fallback={snap.engine.defaults.contextTokens} unit="tokens" label="Default context window" /></SetRow>
+        <SetRow title="Default maximum output" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultMaxOutputTokens" min={256} max={1_000_000} fallback={snap.engine.defaults.maxOutputTokens} unit="tokens" label="Default maximum output" /></SetRow>
         <SetRow title="Context warning threshold" desc="Warn when a configured context reaches this share of the model's reported maximum" support="app">
           <input type="range" min={50} max={95} step={5} value={snap.settings.context.warnThresholdPercent} onChange={(e) => patch("context", { warnThresholdPercent: Number(e.target.value) })} aria-label="Warning threshold" style={{ accentColor: "var(--a)", width: 200 }} />
           <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Large files" desc="Assessment sizes tasks for the local worker: one file per task where possible, new files under ~200 lines, at most three files to read" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
+        <SetRow title="Files per task" desc="Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
+        <SetRow title="New file size" desc="Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
+        <SetRow title="Files to read" desc="Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>
@@ -250,7 +409,7 @@ function Context() {
             </tbody>
           </table>
         </div>
-        <span className="hint">QA, Assessment and Elevation context is managed inside the orchestrator CLI and is not configurable by the engine.</span>
+        <span className="hint">QA, Assessment, Elevation, workflow roles and Codex / Claude Code implementation agents manage their own context inside their CLI.</span>
       </section>
     </div>
   );
@@ -265,7 +424,7 @@ function Safety() {
   return (
     <div className="stack" style={{ gap: 20 }}>
       {!w.toolGuard && (
-        <div className="banner warnb fade-in" role="alert"><Icon name="warn" className="warn" /><div className="grow"><div style={{ fontWeight: 600 }}>This configuration can cause unsafe repository changes</div><div className="sub">With the tool guard off, Cline runs with its normal tools: it can run interpreters, redirect output and write helper files. Node scope/HEAD checks and QA still gate every accepted change.</div></div></div>
+        <div className="banner fade-in" role="status"><Icon name="lock" className="info" /><div className="grow"><div style={{ fontWeight: 600 }}>Protected-path checks stay on</div><div className="sub">Turning off the optional tool guard does not allow protected paths, interpreters or arbitrary shell scripts. Cline and OpenCode still use restricted tools to enforce this boundary. Loop-limit settings are independent.</div></div></div>
       )}
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Worker tool guard</h2>
@@ -273,6 +432,37 @@ function Safety() {
           <Toggle on={w.toolGuard} onChange={(v) => patch("workflow", { toolGuard: v })} label="Tool guard" danger={!w.toolGuard} />
         </SetRow>
       </section>
+      <section className="card pad stack" style={{ gap: 12 }}>
+        <h2 className="h2" style={{ marginBottom: 4 }}>Unattended mode</h2>
+        <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder. Token budgets count new input and output; input read from a prompt cache (about a tenth of the price) is reported but not counted." support="engine">
+          <Toggle on={w.unattended === true} onChange={(v) => patch("workflow", { unattended: v })} label="Unattended mode" />
+        </SetRow>
+        {w.unattended && (
+          <div className="grid-4">
+            {([
+              ["maxTasks", "Stop after approved tasks", "0 = no limit"],
+              ["maxHours", "Stop after hours", "0 = no limit"],
+              ["maxCorrections", "Corrections per task", "then stop for you (at least 1)"],
+              ["maxElevations", "Automatic Elevations per run", "0 = no limit"],
+              ["maxMillionTokens", "Token budget per run (millions)", "cache reads not counted; 0 = no limit"],
+              ["maxCostUsd", "Spend budget per run (USD)", "Claude Code and OpenCode report cost; 0 = no limit"],
+              ["maxMillionTokensDay", "Token budget per day (millions)", "this project, all runs today"],
+              ["maxCostUsdDay", "Spend budget per day (USD)", "this project, all runs today"],
+            ] as const).map(([key, label, hint]) => {
+              const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...w.unattendedLimits };
+              return (
+                <label className="field" key={key}><span>{label}</span>
+                  <input className="input mono" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
+                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= (key === "maxCorrections" ? 1 : 0) && v !== limits[key]) patch("workflow", { unattendedLimits: { ...limits, [key]: DECIMAL_LIMITS.has(key) ? v : Math.floor(v) } }); else e.target.value = String(limits[key] ?? 0); }} />
+                  <span className="hint">{hint}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      <SupervisorCard />
+      <StopAllCard />
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Always enforced by the engine</h2>
         <ul className="list">
@@ -283,12 +473,13 @@ function Safety() {
             "Failed work is left in place for inspection, never reset or committed automatically",
             "A dirty baseline after a crash blocks automatic restart",
             "Usage-limit failures wait for Resume instead of counting as QA failures",
+            "Saved keys, tokens and webhook URLs, and well-known credential formats, are hidden before anything is logged, notified or sent to a model",
           ].map((t) => <li key={t}><St kind="done" /><span>{t}</span></li>)}
         </ul>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
-        <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="saved" /></div>
-        <span className="sub">Extra paths to keep out of every task. Saved for engine support; today, scope is enforced through each task's allowed paths.</span>
+        <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="engine" /></div>
+        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. Project check scripts still run as trusted code.</span>
         <div className="row wrap" style={{ gap: 8 }}>
           {paths.map((p) => <span className="chip raised mono" key={p}>{p}<button className="x" aria-label={`Remove ${p}`} onClick={() => patch("safety", { protectedPaths: paths.filter((x) => x !== p) })}><Icon name="close" size="sm" /></button></span>)}
         </div>
@@ -307,27 +498,276 @@ function Safety() {
   );
 }
 
+/** Remote channels; secrets are typed here once, stored encrypted, and never shown again. */
+const NOTIFY_ROWS: { kind: NotifyChannel; title: string; help: string; fields: { key: string; label: string; placeholder: string; secret?: boolean }[] }[] = [
+  { kind: "webhook", title: "Webhook", help: "POSTs JSON {source, project, type, title, message, at}. https only.", fields: [{ key: "url", label: "URL", placeholder: "https://…", secret: true }] },
+  { kind: "discord", title: "Discord", help: "A Discord channel webhook URL (Channel settings › Integrations › Webhooks).", fields: [{ key: "url", label: "URL", placeholder: "https://discord.com/api/webhooks/…", secret: true }] },
+  { kind: "slack", title: "Slack", help: "A Slack incoming webhook URL (Slack app › Incoming Webhooks).", fields: [{ key: "url", label: "URL", placeholder: "https://hooks.slack.com/services/…", secret: true }] },
+  { kind: "telegram", title: "Telegram", help: "A bot from @BotFather and the chat it writes to. Send your bot a message first, then use your numeric chat ID (for example from @userinfobot).", fields: [{ key: "token", label: "bot token", placeholder: "123456789:ABC…", secret: true }, { key: "chatId", label: "chat ID", placeholder: "chat ID" }] },
+  { kind: "email", title: "Email (AgentMail)", help: "Sent from your AgentMail inbox with its API key. Only what needs you, never routine alerts or digests.", fields: [{ key: "apiKey", label: "API key", placeholder: "AgentMail API key", secret: true }, { key: "inbox", label: "from inbox", placeholder: "you@agentmail.to" }, { key: "to", label: "send to", placeholder: "me@example.com" }] },
+];
+
+/** Supervisor v1 (monitors, what it may do) and the remote notification channels. */
+function SupervisorCard() {
+  const { snap, toast, refresh } = useApp();
+  const patch = useSettingsPatch();
+  const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...snap.settings.workflow.supervisor };
+  const g = snap.settings.general;
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const saveChannel = async (kind: NotifyChannel, value: string | Record<string, string> | null) => {
+    try {
+      await window.api.setNotifyChannel(kind, value); await refresh();
+      setDrafts((d) => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${kind}.`))));
+      toast("success", value ? "Saved (encrypted)" : "Removed");
+    } catch (error) { toast("error", (error as Error).message); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Supervisor</h2>
+      <SetRow title="What the Supervisor may do" desc="It watches every run for repeated failures, stalls, token burn, guard refusals, plan drift and scope creep. Pause or Stop act only on serious signs, at the next safe point. It never edits code, commits, approves QA or loosens a guard, limit or path." support="engine">
+        <select className="sel" value={sv.mode} aria-label="Supervisor mode" onChange={(e) => void patch("workflow", { supervisor: { ...sv, mode: e.target.value as typeof sv.mode } })}>
+          <option value="off">Off</option>
+          <option value="alert">Alert only</option>
+          <option value="pause">Alert and pause</option>
+          <option value="stop">Alert and stop</option>
+        </select>
+      </SetRow>
+      {sv.mode !== "off" && (
+        <div className="grid-4">
+          {([
+            ["repeatFailures", "Same QA failure in a row", "alert (and act) after this many"],
+            ["stallMinutes", "Stall after minutes", "no engine activity; alert only"],
+            ["refusals", "Guard refusals in 10 min", "alert; act at twice this"],
+            ["millionTokensPerTask", "Tokens per task (millions)", "alert; act at twice this; 0 = off"],
+            ["planDrift", "Approved tasks without plan progress", "IMPLEMENTATION_PLAN.md; alert only"],
+            ["scopePaths", "Allowed paths per task", "or broad paths like src/**; alert only"],
+            ["digestHours", "Digest every hours", "0 = only at the end of a run"],
+          ] as const).map(([key, label, hint]) => (
+            <label className="field" key={key}><span>{label}</span>
+              <input className="input mono" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
+                onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== sv[key]) void patch("workflow", { supervisor: { ...sv, [key]: ["stallMinutes", "millionTokensPerTask", "digestHours"].includes(key) ? v : Math.floor(v) } }); else e.target.value = String(sv[key]); }} />
+              <span className="hint">{hint}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {sv.mode !== "off" && (
+        <>
+          <SetRow title="Model review" desc="On each alert (at most a few per run, 10 minutes apart) a model reviews the run read-only and chooses from pause, stop, defer, request Elevation or lower a limit. Propose: shown to you only. Act: the allowed actions are carried out; switching CLIs and retrying a worker stay suggestions." support="engine">
+            <select className="sel" value={sv.review ?? "off"} aria-label="Supervisor model review" onChange={(e) => void patch("workflow", { supervisor: { ...sv, review: e.target.value as "off" | "propose" | "act" } })}>
+              <option value="off">Off</option>
+              <option value="propose">Propose only</option>
+              <option value="act">Act</option>
+            </select>
+          </SetRow>
+          {(sv.review ?? "off") !== "off" && (
+            <div className="grid-4">
+              <label className="field"><span>Reviewer</span>
+                <select className="sel" value={sv.reviewer ?? "auto"} aria-label="Reviewer" onChange={(e) => void patch("workflow", { supervisor: { ...sv, reviewer: e.target.value as "auto" | "codex" | "claude" | "local" } })}>
+                  <option value="auto">Orchestrator's CLI</option>
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude Code</option>
+                  <option value="local">Local (OpenAI-compatible)</option>
+                </select>
+                <span className="hint">runs read-only</span>
+              </label>
+              <label className="field"><span>Model</span>
+                <input className="input mono" defaultValue={sv.reviewerModel ?? ""} placeholder={sv.reviewer === "local" ? "required" : "CLI default"} aria-label="Reviewer model"
+                  onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerModel ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerModel: e.target.value.trim() } }); }} />
+                <span className="hint">e.g. a small, cheap model</span>
+              </label>
+              {sv.reviewer === "local" && (
+                <label className="field"><span>Server URL</span>
+                  <input className="input mono" defaultValue={sv.reviewerBaseUrl ?? ""} aria-label="Reviewer server URL"
+                    onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerBaseUrl ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerBaseUrl: e.target.value.trim() } }); }} />
+                  <span className="hint">llama.cpp / Ollama …/v1</span>
+                </label>
+              )}
+              <label className="field"><span>Reviews per run</span>
+                <input className="input mono" inputMode="numeric" defaultValue={sv.reviewMax ?? 6} aria-label="Reviews per run"
+                  onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== sv.reviewMax) void patch("workflow", { supervisor: { ...sv, reviewMax: v } }); else e.target.value = String(sv.reviewMax ?? 6); }} />
+                <span className="hint">caps the review cost</span>
+              </label>
+            </div>
+          )}
+          <SetRow title="May defer stuck tasks" desc="Lets the Supervisor set a stuck task aside between steps and let Assessment choose another. The task's uncommitted work goes into a named git stash (nothing is reset or lost) and the task is listed in deferred-tasks.json." support="engine">
+            <Toggle on={sv.mayDefer === true} onChange={(v) => void patch("workflow", { supervisor: { ...sv, mayDefer: v } })} label="May defer stuck tasks" />
+          </SetRow>
+          <SetRow title="Suggest plan changes" desc="The review may propose edits to IMPLEMENTATION_PLAN.md (reword, split, add or remove open items; never check one off). Nothing changes until you approve it under Overview › Progress; it is then committed on its own between tasks." support="engine">
+            <Toggle on={sv.planProposals !== false} onChange={(v) => void patch("workflow", { supervisor: { ...sv, planProposals: v } })} label="Suggest plan changes" />
+          </SetRow>
+        </>
+      )}
+      <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
+        <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
+      </SetRow>
+      <SetRow title="Remote approvals" desc={<span>When a run waits for you (manual review, a block, a usage limit, a plan proposal), send the choices to Telegram as buttons and to email as reply lines. Each choice is a signed code for that action only: it works once, expires after 12 hours, and does nothing if the run has moved on. Telegram needs a private chat with your bot; email replies count only from the addresses below. The app must be running (the tray is enough).{g.remoteApprovals && !snap.notifyChannels.telegram && !snap.notifyChannels.email ? <b> Save a Telegram or email channel below to use it.</b> : null}</span>} support="app">
+        <Toggle on={g.remoteApprovals === true} onChange={(v) => void patch("general", { remoteApprovals: v })} label="Remote approvals" />
+      </SetRow>
+      {NOTIFY_ROWS.map(({ kind, title, help, fields }) => (
+        <SetRow key={kind} title={title}
+          desc={snap.notifyChannels[kind]
+            ? `Saved (encrypted)${snap.notifyDetails[kind] ? ` · ${snap.notifyDetails[kind]}` : ""}. ${kind === "email" ? "Only what needs you: attention, blocked runs, run limits, plan proposals and alerts that paused or stopped a run." : "The engine sends alerts, run limits, attention, blocked runs and digests here itself, even with the app closed."}`
+            : help}
+          support="engine">
+          {snap.notifyChannels[kind] ? (
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn sm" onClick={() => void window.api.testNotifyChannel(kind).then(() => toast("success", "Test sent"), (error) => toast("error", (error as Error).message))}>Send test</button>
+              <button className="btn sm danger" onClick={() => void saveChannel(kind, null)}>Remove</button>
+            </div>
+          ) : (
+            <div className="row wrap" style={{ gap: 8 }}>
+              {fields.map((f) => (
+                <input key={f.key} className="input mono" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [`${kind}.${f.key}`]: e.target.value }))} style={{ minWidth: 0, flex: "1 1 140px" }} />
+              ))}
+              <button className="btn sm" disabled={fields.some((f) => !drafts[`${kind}.${f.key}`]?.trim())}
+                onClick={() => void saveChannel(kind, fields.length === 1 ? drafts[`${kind}.url`].trim() : Object.fromEntries(fields.map((f) => [f.key, drafts[`${kind}.${f.key}`].trim()])))}>Save</button>
+            </div>
+          )}
+        </SetRow>
+      ))}
+    </section>
+  );
+}
+
+/** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
+function StopAllCard() {
+  const { snap, toast } = useApp();
+  const patch = useSettingsPatch();
+  const retention = snap.settings.general.retentionDays ?? 30;
+  const [confirmNow, setConfirmNow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [logs, setLogs] = useState<Awaited<ReturnType<typeof window.api.verifyActionLogs>> | null>(null);
+  const stop = async (now: boolean) => {
+    setBusy(true);
+    try {
+      const results = await window.api.stopAll(now);
+      toast("success", results.length ? results.map((r) => `${r.project}: ${r.result}`).join(" · ") : "No project was running.");
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); setConfirmNow(false); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Stop all and action log</h2>
+      <SetRow title="Stop every running project" desc="At the next safe point, or at once (kills engines and their workers mid-task; unfinished work stays in the working tree). Also in the tray menu." support="app">
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn sm" disabled={busy} onClick={() => void stop(false)}>Stop all</button>
+          <button className="btn sm danger" disabled={busy} onClick={() => setConfirmNow(true)}>Stop all now…</button>
+        </div>
+      </SetRow>
+      <SetRow title="From a terminal" desc={snap.paths.stopAll ? <span>Works without the app; add <span className="mono">--now</span> to stop at once or <span className="mono">--project "Name"</span> for one project: <span className="mono">{snap.paths.stopAll}</span></span> : "The launcher could not be written to the config folder."} support="app">
+        {snap.paths.stopAll ? <button className="btn sm" onClick={() => void navigator.clipboard.writeText(`"${snap.paths.stopAll}"`).then(() => toast("success", "Command copied"))}>Copy command</button> : null}
+      </SetRow>
+      <SetRow title="Action log" desc="Every activity event and control request (with who asked: app, dashboard, terminal or a run limit), chained by SHA-256 in action-log.ndjson in each project's state folder. Clearing activity history never touches it; an edited or deleted entry breaks the chain." support="engine">
+        <button className="btn sm" onClick={() => void window.api.verifyActionLogs().then(setLogs, (error) => toast("error", (error as Error).message))}>Verify logs</button>
+      </SetRow>
+      <SetRow title="Keep history" desc="Days to keep per-call folders (prompts and answers), Cline sessions and action-log archives. The newest 100 calls are always kept; the action log records what was removed, so the rest still verifies. Applied when a run starts; 0 keeps everything." support="engine">
+        <input className="input mono" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
+          onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== retention) void patch("general", { retentionDays: v }); else e.target.value = String(retention); }} />
+      </SetRow>
+      {logs && (
+        <ul className="list">
+          {logs.length ? logs.map((l) => (
+            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${l.entries} entries${l.lastAt ? `, last ${new Date(l.lastAt).toLocaleString()}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
+          )) : <li><span>No projects.</span></li>}
+        </ul>
+      )}
+      {confirmNow && (
+        <Modal label="Stop all now" onClose={() => setConfirmNow(false)}>
+          <div>
+            <h2 className="h2">Stop every running project now?</h2>
+            <p className="sub" style={{ margin: "6px 0 0" }}>Engines and their workers are killed mid-task. Unfinished work stays in the working tree for you to inspect; nothing is committed or reset.</p>
+          </div>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="grow" />
+            <button className="btn ghost" onClick={() => setConfirmNow(false)}>Cancel</button>
+            <button className="btn primary" disabled={busy} onClick={() => void stop(true)}>Stop all now</button>
+          </div>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+/** Engine guardrails switch (Settings › Advanced and first setup). Turning it off asks for confirmation. */
+export function EngineGuardrails() {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const [confirm, setConfirm] = useState(false);
+  const on = snap.settings.advanced.engineGuardrails !== false;
+  return (
+    <>
+      <SetRow
+        title="Engine guardrails"
+        desc={on ? "On: each role may use its own CLI; models must come from that role's CLI, Fast only where the CLI reports it, and the engine's loop limits are fixed." : "Off: each role may use its own CLI and any model, effort or speed, and the loop limits in Workflow rules and Context limits are editable. Mismatches are shown as warnings and the run starts anyway."}
+        support="app"
+      >
+        <Toggle on={on} onChange={(v) => (v ? patch("advanced", { engineGuardrails: true }) : setConfirm(true))} label="Engine guardrails" />
+      </SetRow>
+      {confirm && (
+        <Modal label="Turn off engine guardrails" onClose={() => setConfirm(false)}>
+          <div>
+            <h2 className="h2">Turn off engine guardrails?</h2>
+            <p className="sub" style={{ margin: "6px 0 0" }}>For users who know what each choice does. The engine's safety checks stay on either way: only QA commits, scope and HEAD are verified, unsafe states stop for you.</p>
+          </div>
+          <ul className="sub" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+            <li>QA, Assessment and Elevation may run on different CLIs; the engine routes each role to its own CLI.</li>
+            <li>Any model id is passed as typed, even one the CLI doesn't list or that belongs to another CLI. A wrong id fails that role's call.</li>
+            <li>Fast is sent even when the model or account doesn't report it.</li>
+            <li>Loop limits become editable: elevation threshold, correction limit, Resolver strategies, task sizing and default context.</li>
+            <li>Launch checks become warnings instead of stopping the start.</li>
+          </ul>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="grow" />
+            <button className="btn ghost" onClick={() => setConfirm(false)}>Keep on</button>
+            <button className="btn primary" onClick={() => { void patch("advanced", { engineGuardrails: false }); setConfirm(false); }}>Turn off</button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function Advanced() {
-  const { snap, saveSettings, toast } = useApp();
+  const { snap, saveSettings, toast, refresh } = useApp();
   const ad = snap.settings.advanced;
   const patch = useSettingsPatch();
   const [resetOpen, setResetOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   return (
     <div className="stack" style={{ gap: 20 }}>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Engine</h2>
+        <EngineGuardrails />
         <SetRow title="Engine folder" desc={<span className="mono">{snap.engine.dir}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.engine.dir)}>Open</button></SetRow>
         <SetRow title="Node runtime" desc="Runs engine/src/cli.mjs. System Node is used when found on PATH; otherwise Electron's bundled runtime" support="app">
           <select className="sel" value={ad.nodeRuntime} onChange={(e) => patch("advanced", { nodeRuntime: e.target.value as typeof ad.nodeRuntime })} aria-label="Node runtime"><option value="system">System Node (PATH)</option><option value="electron">Electron's bundled Node</option></select>
         </SetRow>
-        <SetRow title="llama.cpp launcher" desc={<span className="mono">{ad.llamaCppLauncher}</span>} support="saved"><span className="hint" style={{ maxWidth: 220 }}>The engine starts this script when llama.cpp is unreachable; its path is currently fixed in the engine.</span></SetRow>
-        <SetRow title="Debug logging" support="saved"><Toggle on={ad.debug} onChange={(v) => patch("advanced", { debug: v })} label="Debug logging" /></SetRow>
+        <SetRow title="llama.cpp launcher" desc="Script the engine runs to start llama.cpp when it is unreachable (and for router-mode model lists). Empty: start llama.cpp yourself." support="engine">
+          <input
+            className="input mono"
+            style={{ width: 300 }}
+            defaultValue={ad.llamaCppLauncher}
+            placeholder="C:\llama\start-server.cmd"
+            onBlur={(e) => e.target.value.trim() !== ad.llamaCppLauncher && patch("advanced", { llamaCppLauncher: e.target.value.trim() })}
+            aria-label="llama.cpp launcher"
+          />
+        </SetRow>
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Storage and configuration</h2>
         <SetRow title="Configuration folder" desc={<span className="mono">{snap.paths.config}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.paths.config)}>Open</button></SetRow>
         <SetRow title="Engine state for app-managed projects" desc={<span className="mono">{snap.paths.projectState}</span>} support="app"><button className="btn sm" onClick={() => window.api.openPath(snap.paths.projectState)}>Open</button></SetRow>
-        <SetRow title="Backup" desc="Copy the configuration folder to back up projects, agents, connections and settings. Credentials are encrypted for this Windows account only." support="app"><span className="chip mut">Manual</span></SetRow>
+        <SetRow title="Export diagnostics" desc="A zip for bug reports: versions, settings, each project’s engine state, recent Activity, engine log and run reports. Secrets, project code and model prompts are left out; look through it before sharing." support="app">
+          <button className="btn sm" disabled={exporting} onClick={async () => { setExporting(true); try { const file = await window.api.exportDiagnostics(); if (file) toast("success", "Diagnostics saved"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setExporting(false); } }}>{exporting ? "Exporting…" : "Export…"}</button>
+        </SetRow>
+        <SetRow title="Export and import settings" desc="A file with your agents, workflow roles, connections and settings, to move to another computer or share a setup. API keys, secret values and projects are not included. To back up everything, copy the configuration folder (credentials only open on this Windows account)." support="app">
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn sm" onClick={async () => { try { if (await window.api.exportSettings()) toast("success", "Settings exported"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Export…</button>
+            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${r.agents} agent(s), ${r.roles} role(s) and ${r.clis} connection(s)`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
+          </div>
+        </SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>
       </section>
       {resetOpen && (
@@ -343,8 +783,18 @@ function Advanced() {
   );
 }
 
+let pendingSection: Section | null = null;
+/** Open a specific section the next time the Settings page mounts (call before go("settings")). */
+export const openSettingsSection = (section: Section) => {
+  pendingSection = section;
+};
+
 export function SettingsPage() {
-  const [section, setSection] = useState<Section>("workflow");
+  const [section, setSection] = useState<Section>(() => {
+    const initial = pendingSection ?? "workflow";
+    pendingSection = null;
+    return initial;
+  });
   return (
     <>
       <div><h1 className="h1">Settings</h1><div className="sub">Changes save immediately. Labels show whether the engine enforces a setting, the app applies it, or it is saved for later.</div></div>

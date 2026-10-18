@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DEFAULT_RELEASE_REPO, updateChannel } from "@shared/defaults";
 import type { UpdateStatus } from "@shared/types";
 import { cleanError, useApp } from "../store";
 import { ago } from "../lib/format";
@@ -20,9 +21,12 @@ export function Updates() {
   const status = useUpdateStatus();
   const [source, setSource] = useState(u.source);
   const [branch, setBranch] = useState(u.branch);
+  const [releaseRepo, setReleaseRepo] = useState(u.releaseRepo ?? DEFAULT_RELEASE_REPO);
+  const releaseBuild = status?.installed?.branch === "release";
+  const release = updateChannel(snap.settings, status?.installed?.branch) === "release";
   const patch = (next: Partial<typeof u>) => saveSettings({ ...snap.settings, updates: { ...u, ...next } });
   if (!status) return <div className="skel" style={{ width: "40%" }} />;
-  const dev = status.state === "dev";
+  const dev = status.state === "dev" || status.state === "portable";
   const busy = status.state === "checking" || status.state === "building" || status.state === "ready";
 
   return (
@@ -43,6 +47,7 @@ export function Updates() {
             {status.state === "checking" ? <Spinner /> : <Icon name="refresh" size="sm" />}Check now
           </button>
         </div>
+        {status.state === "portable" && <div className="banner"><Icon name="lock" className="info" /><span>Portable copy: updates are off, so it never rebuilds itself on the PC it is plugged into. Its settings and projects live in the <span className="mono">data</span> folder next to <span className="mono">AgentDock.exe</span>. To update it, replace the app files with a newer portable build and keep that folder.</span></div>}
         {status.state === "up-to-date" && <div className="row ok"><St kind="done" />Up to date with {status.branch} · checked {ago(status.checkedAt)}</div>}
         {status.state === "error" && <div className="banner errb"><Icon name="warn" className="err" /><span>{status.error}</span></div>}
         {(status.state === "available" || status.state === "building" || status.state === "ready") && status.latest && (
@@ -58,7 +63,10 @@ export function Updates() {
             </div>
             <ul className="list">
               {status.commits.slice(0, 12).map((c) => (
-                <li key={c.hash}><span className="mono mut">{c.hash.slice(0, 7)}</span><span className="grow ellipsis">{c.subject}</span><span className="sub">{ago(c.date)}</span></li>
+                <li key={c.hash} className="commit">
+                  <div className="row" style={{ gap: 10 }}><span className="mono mut">{c.hash.slice(0, 7)}</span><b className="grow ellipsis" style={{ fontWeight: 600 }}>{c.subject}</b><span className="sub">{ago(c.date)}</span></div>
+                  {c.body && <div className="changelog selectable">{c.body}</div>}
+                </li>
               ))}
             </ul>
             <span className="hint">The app keeps running while the new version builds from a clean copy of the committed code, then restarts. Running automation must be stopped first.</span>
@@ -74,13 +82,30 @@ export function Updates() {
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Automatic updates</h2>
         <SetRow title="Check for updates on launch" desc="Compares the installed commit with the source branch" support="app"><Toggle on={u.autoCheck} onChange={(v) => patch({ autoCheck: v })} label="Check on launch" /></SetRow>
+        <SetRow title="Check while running" desc="Asks the source for a newer commit in the background and when you return to the window (at most every 10 minutes). Free: no download unless there is an update." support="app">
+          <select className="sel" value={u.checkMinutes} disabled={!u.autoCheck} onChange={(e) => patch({ checkMinutes: Number(e.target.value) })} aria-label="Background update check interval">
+            {[0, 15, 30, 60, 180].map((m) => <option key={m} value={m}>{m === 0 ? "Off (launch only)" : m < 60 ? `Every ${m} min` : `Every ${m / 60} h`}</option>)}
+          </select>
+        </SetRow>
         <SetRow title="Install without asking" desc="Builds and restarts automatically when no automation is running; otherwise asks" support="app"><Toggle on={u.autoInstall} onChange={(v) => patch({ autoInstall: v })} label="Install automatically" disabled={!u.autoCheck} /></SetRow>
-        <SetRow title="Update source" desc={`Local repository path now; a GitHub URL (https://github.com/owner/repo.git) works the same way later. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
-          <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "E:\\Automation_App"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
+        <SetRow title="Update channel" desc="Signed releases: built by GitHub Actions, installed only when the release signature matches the key built into this app; needs no Node.js or git. Source: builds the newest commit of a branch on this PC (developers; needs Node.js, npm and git)." support="app">
+          <select className="sel" value={release ? "release" : "git"} aria-label="Update channel" disabled={releaseBuild} title={releaseBuild ? "This is a signed release build: it updates from signed releases only." : undefined} onChange={(e) => patch({ channel: e.target.value as "git" | "release" })}>
+            <option value="git">Source (build from git)</option>
+            <option value="release">Signed releases</option>
+          </select>
+        </SetRow>
+        {release ? (
+          <SetRow title="Release repository" desc="owner/name on GitHub. Its releases must be public and signed by the Agent Dock release key." support="app">
+            <input className="input mono" style={{ width: 240 }} value={releaseRepo} onChange={(e) => setReleaseRepo(e.target.value)} onBlur={() => releaseRepo.trim() !== (u.releaseRepo ?? "") && patch({ releaseRepo: releaseRepo.trim() })} aria-label="Release repository" />
+          </SetRow>
+        ) : (<>
+        <SetRow title="Update source" desc={`A GitHub URL (https://github.com/owner/repo.git) or a local repository path. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
+          <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "https://github.com/owner/repo.git"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
         </SetRow>
         <SetRow title="Branch" desc="Only committed history on this branch is used" support="app">
           <input className="input mono" style={{ width: 160 }} value={branch} placeholder={status.installed?.branch ?? "master"} onChange={(e) => setBranch(e.target.value)} onBlur={() => branch !== u.branch && patch({ branch: branch.trim() })} aria-label="Update branch" />
         </SetRow>
+        </>)}
       </section>
     </div>
   );

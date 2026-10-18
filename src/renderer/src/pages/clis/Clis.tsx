@@ -5,6 +5,7 @@ import { clock, connectionMeta } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../components/ui";
 import { AddCliDialog } from "./AddCliDialog";
+import { effortLabel, useModelCatalog } from "../../lib/models";
 
 type DetailTab = "connection" | "models" | "caps" | "env" | "logs";
 
@@ -30,7 +31,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
       <label className="field">
         <span>{exe ? "Executable path or command" : "Endpoint"}</span>
         <input className="input mono" value={draft.location} onChange={(e) => setDraft({ ...draft, location: e.target.value })} />
-        <span className="hint">{exe ? (h?.resolvedPath ? `Resolved to ${h.resolvedPath}` : "Resolved through the Windows PATH") : "Base URL used for every request"}</span>
+        <span className="hint">{exe ? (h?.resolvedPath ? `Resolved to ${h.resolvedPath}` : "Resolved through the Windows PATH") : cli.kind === "openai" ? "OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1 or https://opencode.ai/inference/openai/v1" : "Base URL used for every request"}</span>
       </label>
       <div className="grid-f">
         <div className="field"><span>Authentication</span><div className="row" style={{ minHeight: 36 }}><Dot tone={h?.auth.state === "ok" || h?.auth.state === "not-required" ? "ok" : h?.auth.state === "required" ? "warn" : "mut"} /><span className="ellipsis" title={h?.auth.detail}>{h?.auth.detail ?? "Not checked"}</span></div></div>
@@ -57,10 +58,118 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
   );
 }
 
+/** Codex CLI / Claude Code: the models the CLI itself reports (model/list, initialize). */
+function CloudModels({ kind, name }: { kind: "codex" | "claude"; name: string }) {
+  const { toast } = useApp();
+  const catalog = useModelCatalog();
+  const list = catalog?.[kind];
+  const busy = catalog?.refreshing[kind];
+  return (
+    <div className="stack fade-in" style={{ gap: 12 }}>
+      <div className="row" style={{ gap: 10 }}>
+        <span className="sub grow">{list ? `${list.models.length} models · ${list.source} · ${clock(list.fetchedAt)}` : `No list from ${name} yet`}</span>
+        <button className="btn sm" disabled={busy} onClick={() => window.api.refreshModels(kind).catch((e) => toast("error", cleanError(e)))}>{busy ? <Spinner /> : <Icon name="refresh" size="sm" />}Refresh</button>
+      </div>
+      {list?.error && <div className="banner"><Icon name="warn" className="warn" /><span>{list.error}</span></div>}
+      {list?.fastBlockedReason && <div className="banner"><Icon name="warn" className="warn" /><span>Fast: {list.fastBlockedReason}</span></div>}
+      <div className="well" style={{ padding: 6 }}>
+        {list?.models.length ? (
+          <ul className="list">
+            {list.models.map((m) => (
+              <li key={m.id} style={{ padding: "4px 8px", alignItems: "flex-start" }}>
+                <div className="grow stack" style={{ gap: 2 }}>
+                  <span className="row" style={{ gap: 8 }}>
+                    <b style={{ fontWeight: 600 }}>{m.displayName}</b>
+                    <span className="mono mut" style={{ fontSize: 11.5 }}>{m.resolved ?? m.id}</span>
+                    {m.isDefault && <span className="chip info" style={{ height: 18, fontSize: 10.5 }}>CLI default</span>}
+                    {m.fast && <span className="chip" style={{ height: 18, fontSize: 10.5 }} title={m.fastDescription ?? ""}>Fast</span>}
+                  </span>
+                  <span className="sub">{m.description}{m.efforts.length ? ` · effort ${m.efforts.map(effortLabel).join(", ")}` : " · no effort setting"}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="empty">{busy ? `Asking ${name}…` : `Press Refresh to ask ${name} for its models.`}</div>
+        )}
+      </div>
+      <span className="hint">Pick a model, effort and speed per agent in Agents. Reading the list is free: no prompt is sent.</span>
+    </div>
+  );
+}
+
+/** Local providers: the model list collected from the provider itself, refreshed on demand. */
+export function LocalModels({ cli }: { cli: CliConnection }) {
+  const { setClis, toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [dir, setDir] = useState(cli.modelsDir ?? "");
+  const collected = cli.collected;
+  const collect = async () => {
+    setBusy(true);
+    try {
+      const clis = await window.api.collectModels(cli.id);
+      setClis(clis);
+      const next = clis.find((c) => c.id === cli.id)?.collected;
+      if (next?.error) toast("warning", next.error);
+      else toast("success", `${next?.models.length ?? 0} models from ${cli.name}`);
+    } catch (e) {
+      toast("error", cleanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveDir = async (value: string | null) => {
+    setClis(await window.api.saveCli({ ...cli, modelsDir: value }));
+    setDir(value ?? "");
+  };
+  return (
+    <div className="stack fade-in" style={{ gap: 12 }}>
+      {cli.kind === "llamacpp" && (
+        <div className="well pad stack" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Models folder (router mode)</b>{cli.modelsDir ? <span className="chip info">On</span> : <span className="chip">Off · launcher's single model</span>}</div>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input mono grow" value={dir} placeholder="D:\models" onChange={(e) => setDir(e.target.value)} aria-label="Models folder" />
+            <button className="btn sm" onClick={async () => { const found = await window.api.detectModelsDir(); if (found) setDir(found); else toast("warning", "No models folder found in the launcher settings"); }}>Detect</button>
+            <button className="btn sm" disabled={dir.trim() === (cli.modelsDir ?? "")} onClick={() => void saveDir(dir.trim() || null)}>Save</button>
+            {cli.modelsDir && <button className="btn ghost sm" onClick={() => void saveDir(null)}>Turn off</button>}
+          </div>
+          <span className="hint">With a folder set, the engine starts llama.cpp with --models-dir: the server lists every model in the folder and loads the one the Implementation agent uses. Each subfolder counts as one model. Applies when the engine next starts the server.</span>
+        </div>
+      )}
+      <div className="row" style={{ gap: 10 }}>
+        <span className="sub grow">
+          {collected ? `${collected.models.length} models · ${collected.source} · ${clock(collected.at)}` : `No list collected from ${cli.name} yet`}
+        </span>
+        <button className="btn sm" disabled={busy} onClick={() => void collect()}>{busy ? <Spinner /> : <Icon name="refresh" size="sm" />}Refresh</button>
+      </div>
+      {collected?.error && <div className="banner"><Icon name="warn" className="warn" /><span>{collected.error}</span></div>}
+      <div className="well" style={{ padding: 6 }}>
+        {collected?.models.length ? (
+          collected.models.map((m) => (
+            <button key={m.id} className={`radio ${cli.defaultModel === m.id ? "on" : ""}`} role="radio" aria-checked={cli.defaultModel === m.id} onClick={async () => setClis(await window.api.saveCli({ ...cli, defaultModel: m.id }))}>
+              <span className="rd" /><span className="mono grow">{m.id}</span>
+              {m.thinking && <span className="chip">Thinking</span>}
+              <span className="sub">{m.detail}</span>
+              {cli.defaultModel === m.id && <span className="chip info" style={{ height: 18, fontSize: 10.5 }}>Default</span>}
+            </button>
+          ))
+        ) : (
+          <div className="empty">{busy ? `Asking ${cli.name}…` : `Press Refresh to ask ${cli.name} for its models.`}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ClisPage() {
   const { snap, healths, setClis, toast, statuses } = useApp();
   const [selId, setSelId] = useState(snap.clis.find((c) => healths[c.id] && healths[c.id].state !== "connected")?.id ?? snap.clis[0]?.id);
   const [tab, setTab] = useState<DetailTab>("connection");
+  const catalog = useModelCatalog();
+  const modelCount = (c: CliConnection) => {
+    const n = c.kind === "codex" || c.kind === "claude" ? catalog?.[c.kind]?.models.length : c.collected?.models.length;
+    return n ? `${n} models` : null;
+  };
   const [adding, setAdding] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -112,7 +221,7 @@ export function ClisPage() {
                       <td><button className="rowbtn" aria-pressed={c.id === sel.id}><span className="name" style={{ fontWeight: 600 }}>{c.name}</span><span className="mono mut ellipsis" style={{ fontSize: 11, maxWidth: 260 }}>{hh?.resolvedPath ?? c.location}</span></button></td>
                       <td><span className={`row ${meta.tone}`} style={{ gap: 6 }}><Dot tone="" live={!hh} />{meta.label}</span>{hh && hh.state === "connected" && hh.auth.state === "required" && <span className="sub">Sign-in required</span>}</td>
                       <td className="mono">{hh?.version ?? "—"}</td>
-                      <td className="sub">{hh?.models.length ? `${hh.models.length} discovered` : "—"}</td>
+                      <td className="sub">{modelCount(c) ?? (hh?.models.length ? `${hh.models.length} discovered` : "—")}</td>
                     </tr>
                   );
                 })}
@@ -140,7 +249,12 @@ export function ClisPage() {
               { value: "logs", label: "Logs" },
             ]} />
             {tab === "connection" && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
-            {tab === "models" && (
+            {tab === "models" && (sel.kind === "llamacpp" || sel.kind === "ollama") && <LocalModels key={sel.id} cli={sel} />}
+            {tab === "models" && (sel.kind === "codex" || sel.kind === "claude") && <CloudModels kind={sel.kind} name={sel.name} />}
+            {tab === "models" && sel.kind === "cline" && (
+              <div className="well pad sub fade-in">Cline runs the model set on the agent that uses it, served by llama.cpp or Ollama. Their Models tabs list what is available.</div>
+            )}
+            {tab === "models" && !["llamacpp", "ollama", "codex", "claude", "cline"].includes(sel.kind) && (
               <div className="stack fade-in" style={{ gap: 12 }}>
                 <div className="row"><span className="sub grow">{h?.models.length ? `${h.models.length} models discovered` : "No models discovered"}</span><button className="btn sm" onClick={() => check(sel.id)}>Refresh</button></div>
                 <div className="well" style={{ padding: 6 }}>

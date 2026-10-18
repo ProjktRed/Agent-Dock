@@ -31,7 +31,7 @@ const lastEventWith = (events, predicate) => events.slice().reverse().find(predi
 
 export function dashboardEvents(events = []) {
   // Display-only: leave persisted activity and the worker protocol untouched.
-  return events.filter((event) => !(event.type === "cline-message"
+  return events.filter((event) => event.type !== "cline-compaction" && !(event.type === "cline-message"
     && /^auto-compact(?:ing|ed|ion-skipped)$/.test(String(event.message ?? event.action ?? "").trim())));
 }
 

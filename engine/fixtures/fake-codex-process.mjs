@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { unlinkSync, writeFileSync } from "node:fs";
 if (process.argv.includes("--approve-for-me") && process.argv.includes("--sandbox")) {
   console.error("Conflicting approval and sandbox arguments");
   process.exit(2);
@@ -11,6 +12,10 @@ let pids = [];
 try { pids = JSON.parse(await readFile(pidFile)); } catch {}
 pids.push(process.pid);
 await writeFile(pidFile, JSON.stringify(pids));
+// Present for exactly this process's life (PIDs are reused quickly on Windows, a marker is not).
+const marker = `${pidFile}.alive-${process.pid}`;
+writeFileSync(marker, "");
+process.on("exit", () => { try { unlinkSync(marker); } catch {} });
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const output = process.argv[process.argv.indexOf("--output-last-message") + 1];

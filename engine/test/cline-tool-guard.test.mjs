@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import * as guard from '../src/cline-tool-guard.mjs';
+import * as guard from '../src/guard/adapters/cline.mjs';
 import {ClineCliWorker,buildClineArgs} from '../src/cline-cli-worker.mjs';
 const exec=promisify(execFile);
 const task={id:'edit',allowedPaths:['tests/example.ts'],qaCommand:'npx vitest run tests/example.ts'};

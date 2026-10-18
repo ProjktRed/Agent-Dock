@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ClaudeWorker, claudeChildEnv, extractClaudeResult, relabelPrompt } from "../src/claude-worker.mjs";
+import { ClaudeWorker, claudeChildEnv, extractClaudeResult } from "../src/claude-worker.mjs";
 import { CodexUsageLimitError } from "../src/codex-worker.mjs";
 
 function fakeSpawn(envelope, calls) {
@@ -49,13 +49,16 @@ test("assessment runs Sonnet read-only with structured output and a clean env", 
   const { args, options, prompt } = calls[0];
   assert.deepEqual(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2), ["--model", "sonnet"]);
   assert.ok(args.includes("--json-schema") && args.includes("dontAsk"));
+  assert.ok(args.includes('--settings'), 'orchestrators must load the protected-path hook');
+  assert.ok(JSON.parse(args[args.indexOf('--settings')+1]).hooks.PreToolUse.length);
   assert.ok(!args.includes("Bash") && !args.includes("PowerShell"), "no unrestricted shell");
   assert.ok(!args.some((a) => /git (add|commit)/.test(a)), "assessment cannot commit");
   assert.ok(args.includes("Edit") && args.indexOf("Edit") > args.indexOf("--disallowedTools"));
   assert.equal(options.env.CLAUDECODE, undefined);
   assert.equal(options.env.CLAUDE_CODE_SESSION_ID, undefined);
   assert.equal(options.env.ANTHROPIC_API_KEY, "k");
-  assert.match(prompt, /You are Claude performing/);
+  assert.match(prompt, /^You are Assessment, performing/);
+  assert.doesNotMatch(prompt, /GPT-6|Sol\b|Astra|Sonnet|Opus/, "role prompts name no model");
 });
 
 test("QA may run scoped checks and commit, but never gets a free shell", async () => {
@@ -66,7 +69,7 @@ test("QA may run scoped checks and commit, but never gets a free shell", async (
   const { args, prompt } = calls[0];
   assert.ok(args.includes("Bash(git commit:*)") && args.includes("Bash(npm test:*)"));
   assert.ok(!args.includes("Bash") && !args.includes("PowerShell"));
-  assert.match(prompt, /Claude Sonnet \(medium effort\)/);
+  assert.match(prompt, /^You are QA, performing/);
 });
 
 test("elevation uses Opus", async () => {
@@ -75,7 +78,7 @@ test("elevation uses Opus", async () => {
   await w.reassessManualReview({});
   const { args, prompt } = calls[0];
   assert.equal(args[args.indexOf("--model") + 1], "opus");
-  assert.match(prompt, /Elevation: Claude Opus/);
+  assert.match(prompt, /^You are Elevation\./);
 });
 
 test("usage limits become the loop's resumable usage-limit error", () => {
@@ -84,7 +87,6 @@ test("usage limits become the loop's resumable usage-limit error", () => {
   assert.equal(extractClaudeResult(JSON.stringify({ is_error: false, result: "```json\n{\"a\":1}\n```" })), '{"a":1}');
 });
 
-test("helpers strip only Claude session variables and relabel roles", () => {
+test("helpers strip only Claude session variables", () => {
   assert.deepEqual(claudeChildEnv({ CLAUDECODE: "1", CLAUDE_PID: "2", CLAUDEX: "keep", PATH: "p" }), { CLAUDEX: "keep", PATH: "p" });
-  assert.equal(relabelPrompt("You are Elevation: GPT-6 Astra."), "You are Elevation: Claude Opus.");
 });

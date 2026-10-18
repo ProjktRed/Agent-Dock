@@ -4,18 +4,17 @@ import {CodexUsageLimitError} from '../src/codex-worker.mjs';
 import {harness,correction,until} from '../fixtures/recovery-harness.mjs';
 for(const phase of ['qa','correction-assessment','elevation']) {
  test(phase+' usage limit survives restart with identical input, count, task and no worker relaunch',async t=>{
-  const {root,options,state,seed}=await harness(t);await seed({phase,correctionCount:3});
+  const {root,options,state,seed,startLoop}=await harness(t);await seed({phase,correctionCount:3});
   let calls=0,received;
   const operation=async input=>{calls++;received??=structuredClone(input);assert.deepEqual(input,received);throw new CodexUsageLimitError({message:'usage limit',retryAt:'try again at 10:07 PM'});};
-  let waitingReached;const waiting=new Promise(resolve=>{waitingReached=resolve;});
-  const first=runNodeLoop({...options,initialTask:null,review:operation,assessCorrection:operation,elevate:operation,onEvent:async event=>{await options.onEvent(event);if(event.type==='waiting-for-codex')waitingReached();}});
-  await Promise.race([waiting, first.then(result=>{throw new Error('Loop ended before usage-limit wait: '+JSON.stringify(result));})]);
+  const first=startLoop({initialTask:null,review:operation,assessCorrection:operation,elevate:operation});
+  await first.waitForEvent('waiting-for-codex');
   assert.equal((await state.readLive()).stage,'WAITING_FOR_CODEX');
   assert.equal((await state.readLive()).correctionCount,3);await state.setControl('pause');await state.setControl('stop');assert.equal((await first).status,'stopped');
   const pending=await readPendingCodex(root);assert.deepEqual(pending.inputs,received);
   await state.setControl('resume');let runs=0;
   const resumed=async input=>{assert.deepEqual(input,received);return phase==='qa'?{status:'pass',output:'verified',commit:'x'}:correction(phase==='elevation'?'strategy-revised':'correction');};
-  const result=await runNodeLoop({...options,initialTask:null,pendingCodex:pending,
+  const result=await startLoop({initialTask:null,pendingCodex:pending,
     review:phase==='qa'?resumed:async()=>({status:'pass',output:'verified',commit:'x'}),
     assessCorrection:phase==='correction-assessment'?resumed:options.assessCorrection,elevate:phase==='elevation'?resumed:()=>assert.fail(),
     worker:{withExclusive:fn=>fn(),run:async(p,h)=>{runs++;await h.onStart({pid:12});return{exitCode:0};}}

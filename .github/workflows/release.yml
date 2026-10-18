@@ -1,0 +1,117 @@
+# Signed release: pushing a tag vX.Y.Z (matching package.json) builds the Windows app, the per-user
+# installer and a zip, signs a manifest of the zip with the RELEASE_SIGNING_KEY secret (Ed25519) and
+# publishes a GitHub Release in the public releases repository (repository variable RELEASE_REPO,
+# default ProjktRed/Agent-Dock; the source is the private ProjktRed/Agent-Dock-Dev), using the RELEASES_TOKEN secret: a fine-grained token with
+# Contents read/write on that repository only. Installed apps verify the signature before updating.
+# Run it by hand (Actions › Release › Run workflow, once this file is on the default branch) or push a
+# tag ending in -dry (v0.24.2-dry) for a dry run: the same checks and build, with the
+# installer and zip attached to the run as an artifact; nothing is signed or published.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-dry') }}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          # Release notes list the commits since the previous tag.
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+      - name: Signing key, release key and tag
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          test -n "$RELEASE_SIGNING_KEY" || { echo "::error::Add the repository secret RELEASE_SIGNING_KEY (see scripts/sign-release.mjs)"; exit 1; }
+          test -n "$RELEASES_TOKEN" || { echo "::error::Add the repository secret RELEASES_TOKEN (fine-grained token, Contents read/write on the releases repository)"; exit 1; }
+          # A build without the public key could never verify, and so never install, its own updates.
+          grep -q 'BEGIN PUBLIC KEY' src/main/release-key.ts || { echo "::error::Put the release public key in src/main/release-key.ts before tagging"; exit 1; }
+          [ "v$VERSION" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1; }
+      - name: Git identity for test repositories
+        run: |
+          git config --global user.email "ci@agent-dock.invalid"
+          git config --global user.name "Agent Dock CI"
+          git config --global init.defaultBranch master
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:engine
+      - name: Icon
+        run: node -e "import('./scripts/logo.mjs').then(m=>{require('fs').mkdirSync('build',{recursive:true});require('fs').writeFileSync('build/icon.png',m.logoPng(256))})"
+      - name: Build
+        env:
+          AGENT_DOCK_BUILD_SOURCE: https://github.com/${{ github.repository }}
+          AGENT_DOCK_BUILD_BRANCH: release
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run package:installer
+      - name: Packaged security (fuses, bundled Node, debug switches refused)
+        run: node scripts/verify-packaged-security.mjs dist/win-unpacked/AgentDock.exe
+      - name: Swap script is bundled
+        shell: bash
+        run: test -f dist/win-unpacked/resources/scripts/swap.mjs
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath "AgentDock-$env:VERSION-win-x64.zip"
+      - name: Dry run artifact
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: AgentDock-${{ env.VERSION }}-dry-run
+          path: |
+            dist/AgentDock-Setup-${{ env.VERSION }}-win-x64.exe
+            AgentDock-${{ env.VERSION }}-win-x64.zip
+          retention-days: 7
+      - name: Sign
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out .
+      - name: Release notes
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        run: |
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          installer="AgentDock-Setup-$VERSION-win-x64.exe"
+          {
+            echo "Install: download $installer and run it (per user, no admin rights). Windows may warn about an unknown publisher: choose More info, then Run anyway."
+            echo
+            echo "Installed apps update themselves from this page and install only releases signed with the Agent Dock release key."
+            echo
+            echo "SHA-256 of $installer: $(sha256sum "dist/$installer" | cut -d' ' -f1)"
+            echo
+            echo "## Changes"
+            git log --no-merges --format='- %s' ${previous:+"$previous..$GITHUB_REF_NAME"} | head -100
+          } > notes.md
+      - name: Publish
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          RELEASE_REPO: ${{ vars.RELEASE_REPO || 'ProjktRed/Agent-Dock' }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md

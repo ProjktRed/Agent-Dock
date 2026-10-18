@@ -26,7 +26,7 @@ async function setup() {
   git(workspace, "init"); git(workspace, "config", "user.email", "test@example.invalid"); git(workspace, "config", "user.name", "Test");
   await writeFile(path.join(workspace, "result.txt"), "before\n");
   git(workspace, "add", "."); git(workspace, "commit", "-m", "baseline");
-  const task = { id: "T", name: "T", prompt: "Change result", acceptanceCriteria: ["result changed"], qaCommand: "node -e \"console.log('ok')\"", allowedPaths: ["result.txt"] };
+  const task = { id: "T", name: "T", prompt: "Change result", acceptanceCriteria: ["result changed"], qaCommand: "node --version", allowedPaths: ["result.txt"] };
   const stateDir = path.join(root, ".state");
   const state = new DashboardState({ stateDir });
   await state.initialize({ task, workspace, maxAttempts: 2 });

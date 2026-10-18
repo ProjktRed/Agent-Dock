@@ -131,7 +131,7 @@ test("scope violations are explicit and only approved files enter the scoped dif
     await writeFile(path.join(root, "outside.txt"), "forbidden\n");
     const packet = await prepareQaPacket({
       workspace: root, stateDir: path.join(root, ".state"),
-      task: { id: "T", name: "T", prompt: "T", acceptanceCriteria: [], qaCommand: "generic-check", allowedPaths: ["result.txt"] },
+      task: { id: "T", name: "T", prompt: "T", acceptanceCriteria: [], qaCommand: "npm run generic-check", allowedPaths: ["result.txt"] },
       attempt: 1, baselineSha: git(root, "rev-parse", "HEAD"),
       workerResult: { exitCode: 0, runResult: { finishReason: "completed", text: "done" } },
       runCommand: async () => ({ exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 }),

@@ -133,7 +133,11 @@ test("llama.cpp readiness and metrics are checked around every Cline attempt", a
     assert.equal(ready[0].model, "glm-4.7-flash-ud-q3-k-xl");
     const metrics = events.filter((event) => event.type === "cline-provider-metrics");
     assert.equal(metrics.length, 2);
-    assert.deepEqual(metrics[0], {
+    // Each attempt's samples share runStartedAt (partial samples during long attempts use it too).
+    assert.match(metrics[0].runStartedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.notEqual(metrics[0].runStartedAt, undefined);
+    const { runStartedAt: _first, ...firstMetrics } = metrics[0];
+    assert.deepEqual(firstMetrics, {
       type: "cline-provider-metrics",
       requestedProvider: "llamacpp",
       provider: "openai-compatible",
@@ -239,6 +243,52 @@ test("non-Ollama providers bypass Ollama metadata preflight", async () => {
     assert.equal(fetched, false);
     assert.equal(result.dataDir, undefined);
   } finally { await rm(stateDir, { recursive: true, force: true }); }
+});
+
+test("OpenCode Console preflight uses its catalog URL and strips the CLI model prefix", async () => {
+  const { createProviderDescriptor } = await import("../src/runtime/provider.mjs");
+  let requested;
+  const descriptor = createProviderDescriptor({
+    provider: "opencode", model: "opencode/deepseek-v4.1-flash-free", providerApiKeyEnv: "TEST_OPENCODE_KEY",
+    env: { TEST_OPENCODE_KEY: "unit" },
+    fetchImpl: async (url, options) => {
+      requested = { url, options };
+      return { ok: true, json: async () => ({ data: [{ id: "deepseek-v4.1-flash-free" }] }) };
+    },
+  });
+
+  assert.equal(descriptor.baseUrl, "https://opencode.ai/inference/openai/v1");
+  assert.equal(descriptor.model, "deepseek-v4.1-flash-free");
+  assert.equal((await descriptor.preflight()).model, "deepseek-v4.1-flash-free");
+  assert.equal(requested.url, "https://opencode.ai/inference/v1/models");
+  assert.equal(requested.options.headers.authorization, "Bearer unit");
+});
+
+test("Cline remaps the Agent Dock key to OpenCode Console's expected environment name", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "cline-opencode-"));
+  const priorKey = process.env.AGENT_DOCK_PROVIDER_KEY;
+  process.env.AGENT_DOCK_PROVIDER_KEY = "unit";
+  try {
+    const { prepareClineRuntime } = await import("../src/cline-runtime-config.mjs");
+    const runtime = await prepareClineRuntime({
+      stateDir, provider: "opencode", model: "opencode/deepseek-v4.1-flash-free", contextTokens: 65_536,
+      maxOutputTokens: 4_096, timeoutSeconds: 900,
+      fetchImpl: async () => ({ ok: true, json: async () => ({ data: [{ id: "deepseek-v4.1-flash-free" }] }) }),
+    });
+    await runtime.ensureReady();
+    const settings = JSON.parse(await readFile(path.join(runtime.dataDir, "settings", "providers.json"), "utf8"));
+
+    assert.equal(runtime.provider, "openai-compatible");
+    assert.equal(runtime.model, "deepseek-v4.1-flash-free");
+    assert.equal(runtime.baseUrl, "https://opencode.ai/inference/openai/v1");
+    assert.deepEqual(runtime.providerEnv, { OPENAI_API_KEY: "unit" });
+    assert.equal(settings.providers["openai-compatible"].settings.model, "deepseek-v4.1-flash-free");
+    assert.equal(settings.providers["openai-compatible"].settings.baseUrl, runtime.baseUrl);
+  } finally {
+    if (priorKey === undefined) delete process.env.AGENT_DOCK_PROVIDER_KEY;
+    else process.env.AGENT_DOCK_PROVIDER_KEY = priorKey;
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("Ollama context preflight rejects insufficient metadata without reducing context", async () => {

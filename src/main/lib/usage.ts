@@ -6,7 +6,11 @@ import { readNdjsonTail } from "./json-file";
 /** Role of one orchestrator invocation, from the opening line the engine writes into prompt.txt. */
 export function classifyPrompt(prompt: string): TokenRecord["role"] {
   const head = prompt.slice(0, 240);
+  // Checked first: role names are user text and may contain words like "QA".
+  if (/^You are the implementation worker/i.test(head)) return "implementation";
+  if (/^You are .{1,120}?, a custom workflow role/i.test(head)) return "custom";
   if (/^You are Resolver/i.test(head)) return "resolver";
+  if (/^You are Assessment\b/i.test(head)) return "assessment";
   if (/reassessment|^You are Sol\b|Elevation|Astra/i.test(head)) return "elevation";
   if (/\bQA\b/.test(head)) return "qa";
   return "assessment";
@@ -47,6 +51,9 @@ export function parseInvocationUsage(events: string): { provider: string; input:
   return found;
 }
 
+/** Parsed invocations, keyed by folder: a finished invocation's events file no longer changes. */
+const invocationCache = new Map<string, { mtimeMs: number; size: number; record: TokenRecord | null }>();
+
 export async function readOrchestratorUsage(stateDir: string, projectId: string, sinceMs = 0): Promise<TokenRecord[]> {
   const codexDir = path.join(stateDir, "codex");
   let names: string[];
@@ -62,13 +69,21 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
       try {
         const info = await stat(path.join(dir, "events.ndjson"));
         if (info.mtimeMs < sinceMs) return;
+        const cached = invocationCache.get(dir);
+        if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) {
+          if (cached.record) records.push(cached.record);
+          return;
+        }
         const [events, prompt] = await Promise.all([
           readFile(path.join(dir, "events.ndjson"), "utf8"),
           readFile(path.join(dir, "prompt.txt"), "utf8").catch(() => ""),
         ]);
         const usage = parseInvocationUsage(events);
-        if (!usage) return;
-        records.push({
+        if (!usage) {
+          invocationCache.set(dir, { mtimeMs: info.mtimeMs, size: info.size, record: null });
+          return;
+        }
+        const record: TokenRecord = {
           timestamp: new Date(info.mtimeMs).toISOString(),
           role: classifyPrompt(prompt),
           provider: usage.provider,
@@ -78,7 +93,9 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
           output: usage.output,
           projectId,
           taskId: null,
-        });
+        };
+        invocationCache.set(dir, { mtimeMs: info.mtimeMs, size: info.size, record });
+        records.push(record);
       } catch {
         // Invocation still running or incomplete.
       }
@@ -87,25 +104,48 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
   return records;
 }
 
-/** llama.cpp metrics the engine samples around every Cline attempt (`cline-provider-metrics`). */
+/**
+ * llama.cpp metrics the engine samples for every Cline attempt (`cline-provider-metrics`). While an
+ * attempt runs it writes partial samples (cumulative for that attempt, `runStartedAt` identifies
+ * it); only the latest sample per attempt counts, and the final one replaces the partials.
+ */
 export function implementationUsage(events: EngineEvent[], projectId: string): TokenRecord[] {
-  return events
-    .filter((e) => e.type === "cline-provider-metrics" && typeof e.promptTokens === "number")
-    .map((e) => ({
-      timestamp: e.timestamp,
-      role: "implementation" as const,
-      provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · local`,
-      model: typeof e.model === "string" ? e.model : null,
-      input: Number(e.promptTokens) || 0,
-      cached: 0,
-      output: Number(e.generatedTokens) || 0,
-      projectId,
-      taskId: e.taskId ?? null,
-    }));
+  const latest = new Map<string, EngineEvent>();
+  events.forEach((e, i) => {
+    if (e.type !== "cline-provider-metrics" || typeof e.promptTokens !== "number") return;
+    const key = typeof e.runStartedAt === "string" ? e.runStartedAt : `event-${i}`;
+    const current = latest.get(key);
+    // Events are in time order: a newer sample replaces a partial one; the final sample stays.
+    if (!current || current.partial === true) latest.set(key, e);
+  });
+  return [...latest.values()].map((e) => ({
+    timestamp: e.timestamp,
+    role: "implementation" as const,
+    provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · local`,
+    model: typeof e.model === "string" ? e.model : null,
+    input: Number(e.promptTokens) || 0,
+    cached: 0,
+    output: Number(e.generatedTokens) || 0,
+    projectId,
+    taskId: e.taskId ?? null,
+    local: true,
+  }));
+}
+
+const COMPACTION_TEXT = /^auto-compact(?:ing|ed|ion-skipped)$/;
+
+/** Cline context compaction bookkeeping (old logs: plain messages; new: cline-compaction events). Hidden from activity. */
+export function isCompactionEvent(e: EngineEvent): boolean {
+  return e.type === "cline-compaction" || (e.type === "cline-message" && COMPACTION_TEXT.test(String(e.message ?? e.action ?? "").trim()));
+}
+
+/** A compaction that actually happened (not "compacting" or "skipped"). */
+export function isCompactionDone(e: EngineEvent): boolean {
+  return e.type === "cline-compaction" ? e.phase === "completed" : e.type === "cline-message" && String(e.message ?? e.action ?? "").trim() === "auto-compacted";
 }
 
 export function countCompactions(events: EngineEvent[]): number {
-  return events.filter((e) => e.type === "cline-message" && /^auto-compact(?:ed|ing)$/.test(String(e.message ?? e.action ?? "").trim())).length;
+  return events.filter(isCompactionDone).length;
 }
 
 export async function readActivity(stateDir: string, limit: number): Promise<EngineEvent[]> {

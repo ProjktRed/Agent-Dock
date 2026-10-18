@@ -28,9 +28,20 @@ export const DEFAULT_CLIS: CliConnection[] = [
   cli("codex", "codex", "Codex CLI", "codex"),
   cli("cline", "cline", "Cline CLI", "cline"),
   cli("claude", "claude", "Claude Code", "claude"),
+  cli("opencode", "opencode", "OpenCode", "opencode"),
   cli("llamacpp", "llamacpp", "llama.cpp server", "http://127.0.0.1:8081/v1"),
   cli("ollama", "ollama", "Ollama", "http://127.0.0.1:11434"),
 ];
+
+/** Public repository the signed releases are published to. The source lives in the private ProjktRed/Agent-Dock-Dev. */
+export const DEFAULT_RELEASE_REPO = "ProjktRed/Agent-Dock";
+/** The source repository's former address, now the public releases repository: never a place to build updates from. */
+export const FORMER_SOURCE = /^https:\/\/github\.com\/ProjktRed\/Agent-Dock(?:\.git)?\/?$/i;
+export const DEV_SOURCE = "https://github.com/ProjktRed/Agent-Dock-Dev.git";
+
+/** Builds made by the release workflow (build-info branch "release") have no source to build from: they always use signed releases. */
+export const updateChannel = (settings: { updates: { channel?: "git" | "release" } }, installedBranch?: string | null): "git" | "release" =>
+  installedBranch === "release" ? "release" : settings.updates.channel ?? "git";
 
 export function defaultAgents(models: { qa: string; assessment: string; elevate: string; reasoning: string }): Agent[] {
   const base = { maxOutputTokens: ENGINE_DEFAULTS.maxOutputTokens, timeoutSeconds: ENGINE_DEFAULTS.timeoutSeconds, skills: ["bounded-task-handoff"], enabled: true };
@@ -62,6 +73,9 @@ export const DEFAULT_SETTINGS: Settings = {
     notifyCompleted: true,
     notifyErrors: true,
     notifyInfo: false,
+    notifyDigests: true,
+    remoteApprovals: false,
+    retentionDays: 30,
     defaultProject: "last",
   },
   workflow: {
@@ -70,14 +84,18 @@ export const DEFAULT_SETTINGS: Settings = {
     toolGuard: true,
     resumeAfterRestart: "ask",
     stopAfterCurrentTask: false,
+    unattended: false,
+    unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },
+    supervisor: { mode: "alert", stallMinutes: 30, repeatFailures: 3, refusals: 5, millionTokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0, review: "off", reviewer: "auto", reviewerModel: "", reviewerBaseUrl: "http://127.0.0.1:8080/v1", mayDefer: false, reviewMax: 6, planProposals: true },
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },
   safety: { protectedPaths: [".git/", ".env*", "secrets/"] },
-  usage: { manualBudgets: [], codexPollMinutes: 5, claudeProbeMinutes: 0 },
-  advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd" },
+  usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
+  advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
-  updates: { autoCheck: true, autoInstall: false, source: "", branch: "" },
+  tuning: { elevationAfter: 3, resolverMaxStrategies: 3, maxCorrections: 0, taskMaxFiles: 1, taskMaxNewLines: 200, taskMaxReadFiles: 3, defaultContextTokens: null, defaultMaxOutputTokens: null },
+  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "", channel: "git", releaseRepo: DEFAULT_RELEASE_REPO },
   onboardingComplete: false,
   activeProjectId: null,
 };

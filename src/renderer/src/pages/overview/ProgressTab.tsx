@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
-import type { EngineEvent, PlanPhase, ProjectStatus } from "@shared/types";
+import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration } from "../../lib/format";
+import { describeEvent, isHiddenEvent } from "../../lib/events";
+import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
 
@@ -14,31 +16,117 @@ const CYCLE = [
 ] as const;
 
 function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
-  const { control, activeProject } = useApp();
+  const { control, activeProject, toast } = useApp();
   const kind = s.runState;
+  // Codex's Windows sandbox failed to prepare a folder QA writes to (usually the shared .git).
+  const sandboxError = kind === "blocked" && /helper_unknown_error|setup refresh had errors/i.test(s.blockedReason ?? "");
+  const [owner, setOwner] = useState<{ dir: string; owner: string; user: string; command: string } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!sandboxError) return;
+    let live = true;
+    const check = () => window.api.gitOwner(projectId).then((o) => live && setOwner(o)).catch(() => live && setOwner(null));
+    void check();
+    const t = setInterval(check, 15_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [sandboxError, projectId]);
   if (!["attention", "blocked", "waiting-limit"].includes(kind)) return null;
   const meta = {
     attention: { title: "Attention required: manual review", tone: "attnb", text: s.attentionReason, help: "The engine stopped for your review. Elevation can propose a revised correction, which then goes through independent QA." },
-    blocked: { title: "Blocked: safe continuation is not possible", tone: "errb", text: s.blockedReason, help: "Scope, HEAD, permission or state problems never continue automatically. The diff is left in place for inspection." },
+    blocked: s.assessmentRetry
+      ? { title: "Blocked: Assessment could not choose a task", tone: "errb", text: s.blockedReason, help: "Assessment stopped before any task started, so nothing was changed. Fix the cause it reports if there is one, then retry: the engine runs Assessment again." }
+      : { title: "Blocked: safe continuation is not possible", tone: "errb", text: s.blockedReason, help: "Scope, HEAD, permission or state problems never continue automatically. The diff is left in place for inspection." },
     "waiting-limit": { title: "Waiting: orchestrator usage limit", tone: "warnb", text: s.limitMessage, help: "Resume reruns only the interrupted Assessment or QA operation with the same inputs." },
   }[kind as "attention" | "blocked" | "waiting-limit"];
   return (
-    <section className={`banner ${meta.tone} fade-in`} role="alert" style={{ padding: 18 }}>
+    <section id="attention-panel" className={`banner ${meta.tone} fade-in`} role="alert" style={{ padding: 18 }}>
       <Icon name="warn" className={kind === "blocked" ? "err" : "attn"} />
       <div className="grow stack" style={{ gap: 10 }}>
         <div style={{ fontWeight: 600, color: "var(--t)" }}>{meta.title}</div>
         {meta.text && <div className="mono log" style={{ maxHeight: 140 }}>{meta.text}</div>}
         {s.limitRetryAt && <div className="sub">Provider reports retry after: {s.limitRetryAt}</div>}
         <div className="sub">{meta.help}</div>
+        {sandboxError && (
+          <div className="well pad stack" style={{ gap: 8 }}>
+            <b style={{ fontWeight: 600 }}>Codex could not start any command for QA</b>
+            {owner === undefined ? (
+              <span className="sub">Checking the repository's .git folder…</span>
+            ) : owner ? (
+              <>
+                <span className="sub">Its Windows sandbox has to change the permissions of <span className="mono">{owner.dir}</span> so QA can commit, but that folder belongs to <b>{owner.owner}</b>, not to you ({owner.user}). This happens when a sandboxed Codex created the repository.</span>
+                <span className="sub">Open Windows PowerShell as Administrator and run this once. It makes you the owner and leaves the permissions as they are:</span>
+                <div className="mono log selectable" style={{ maxHeight: 60 }}>{owner.command}</div>
+                <span className="sub">Then press Retry QA. This page rechecks the folder every 15 seconds.</span>
+              </>
+            ) : (
+              <span className="sub">The repository's .git folder now belongs to you{s.qaRetry ? ", so QA can run again: press Retry QA." : "."} If it fails again, Codex's sandbox log is in <span className="mono">%USERPROFILE%\.codex\.sandbox</span>.</span>
+            )}
+          </div>
+        )}
         <div className="row wrap" style={{ gap: 10 }}>
           {s.elevateAvailable && <button className="btn primary sm" onClick={() => control(projectId, "elevate", "Elevation requested")}>Elevate</button>}
           {s.resolverAvailable && <button className="btn primary sm" onClick={() => control(projectId, "resolve", "Resolver requested")}>Resolve block</button>}
           {(kind === "waiting-limit" || kind === "attention") && <button className="btn sm" onClick={() => control(projectId, "resume", "Resumed")}>Resume</button>}
+          {kind === "blocked" && s.assessmentRetry && <button className="btn primary sm" onClick={() => control(projectId, "resume", "Assessment restarted")}>Retry Assessment</button>}
+          {kind === "blocked" && s.qaRetry && <button className="btn primary sm" disabled={sandboxError && Boolean(owner)} title={sandboxError && owner ? "Fix the folder owner first" : "Collect fresh check results for the finished attempt and let QA review it again"} onClick={() => control(projectId, "retry-qa", "QA restarted on the finished attempt")}>Retry QA</button>}
+          {(kind === "blocked" || kind === "attention") && !s.processAlive && (
+            <button className="btn sm" title="Put the task's uncommitted work in a named git stash (nothing is deleted), list it as deferred, and let the next Run choose another task"
+              onClick={() => void window.api.setAside(projectId).then((r) => toast("success", r.stash ? `Task ${r.id} set aside. Its work is in git stash "${r.stash.message}".` : `Task ${r.id} set aside.`), (error) => toast("error", (error as Error).message))}>Set task aside</button>
+          )}
           {activeProject && <button className="btn ghost sm" onClick={() => window.api.openPath(activeProject.path)}><Icon name="external" size="sm" />Open workspace</button>}
           {!s.elevateAvailable && kind === "attention" && s.elevateReason && <span className="sub">Elevate unavailable: {s.elevateReason}</span>}
-          {!s.resolverAvailable && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
+          {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
         </div>
       </div>
+    </section>
+  );
+}
+
+/** Supervisor-proposed plan edits: nothing changes until you approve; approved ones are committed between tasks. */
+function PlanProposals({ projectId, refreshKey }: { projectId: string; refreshKey: string }) {
+  const { toast } = useApp();
+  const [list, setList] = useState<PlanProposal[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.api.planProposals(projectId).then((l) => live && setList(l), () => undefined);
+    return () => { live = false; };
+  }, [projectId, refreshKey]);
+  const open = list.filter((p) => p.status === "pending" || p.status === "approved");
+  if (!open.length) return null;
+  const decide = (p: PlanProposal, decision: "approve" | "dismiss") => {
+    setBusy(p.id);
+    window.api.decidePlanProposal(projectId, p.id, decision).then(setList, (error) => toast("error", (error as Error).message)).finally(() => setBusy(null));
+  };
+  return (
+    <section className="card pad stack fade-in" style={{ gap: 12 }} aria-label="Plan proposals">
+      <div className="row" style={{ gap: 8 }}>
+        <Icon name="warn" className="attn" />
+        <h2 className="h2" style={{ margin: 0 }}>Supervisor plan proposals</h2>
+      </div>
+      <p className="sub" style={{ margin: 0 }}>Edits to <span className="mono">IMPLEMENTATION_PLAN.md</span>. Nothing changes until you approve; an approved change is committed on its own between tasks (right away when the engine is idle and the workspace is clean).</p>
+      {open.map((p) => (
+        <div key={p.id} className="well pad stack" style={{ gap: 8 }}>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <b className="grow" style={{ fontWeight: 600 }}>{p.reason || "Plan edit"}</b>
+            <span className="sub">{clock(p.at)}</span>
+          </div>
+          <pre className="mono log selectable" style={{ maxHeight: 200, margin: 0, whiteSpace: "pre-wrap" }}>
+            {p.preview.split("\n").map((line, i) => (
+              <div key={i} className={line.startsWith("+ ") ? "ok" : line.startsWith("- ") ? "err" : line.startsWith("@@") ? "mut" : undefined}>{line}</div>
+            ))}
+          </pre>
+          {p.applies === false && <span className="sub err">No longer fits the plan: {p.problem}</span>}
+          <div className="row wrap" style={{ gap: 10 }}>
+            {p.status === "approved"
+              ? <span className="sub">Approved · waiting for the next task boundary</span>
+              : <button className="btn primary sm" disabled={busy === p.id || p.applies === false} onClick={() => decide(p, "approve")}>Approve</button>}
+            <button className="btn sm" disabled={busy === p.id} onClick={() => decide(p, "dismiss")}>{p.status === "approved" ? "Cancel" : "Dismiss"}</button>
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -48,8 +136,7 @@ function lastApproval(events: EngineEvent[]) {
 }
 
 function eventLine(e: EngineEvent): string {
-  const detail = e.message ?? e.qa ?? (e.model ? `model ${e.model}` : "");
-  return `${clock(e.timestamp)}  ${e.type}${e.attempt != null ? ` #${e.attempt}` : ""}${detail ? `  ${String(detail).split(/\r?\n/)[0].slice(0, 160)}` : ""}`;
+  return `${clock(e.timestamp)}  ${describeEvent(e)}`;
 }
 
 function PlanTree({ phases, current, activeTitle }: { phases: PlanPhase[]; current: number | null; activeTitle: string | null }) {
@@ -103,7 +190,12 @@ function checkKind(value: string): StatusKind {
 }
 
 export function ProgressTab() {
-  const { activeProject, activeStatus: s } = useApp();
+  const { activeProject, activeStatus: s, snap } = useApp();
+  // Implementation runs on Cline (local model), Codex or Claude Code; label the step with the agent's CLI.
+  const impl = agentForRoleClient("implementation", activeProject, snap.agents);
+  const implCli = snap.clis.find((c) => c.id === impl?.cliId);
+  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" ? `Cline · ${impl.provider === "ollama" ? "Ollama" : "llama.cpp"}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
+  const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -124,6 +216,7 @@ export function ProgressTab() {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <AttentionPanel s={s} projectId={activeProject.id} />
+      <PlanProposals projectId={activeProject.id} refreshKey={`${s.events.length}:${s.events.at(-1)?.timestamp ?? ""}`} />
 
       {approval && s.runState !== "attention" && (
         <section className="card pad row wrap fade-in" style={{ gap: 16 }} aria-label="Last approved task">
@@ -183,7 +276,7 @@ export function ProgressTab() {
                     <St kind={kind} />
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
                   </div>
-                  <div className="sub">{c.agent}</div>
+                  <div className="sub">{c.key === "implementation" ? implLabel : c.agent}</div>
                   {active && <div style={{ fontSize: 12, color: "#b9c7d8" }}>{s.activeModel ?? s.label}</div>}
                 </div>
                 {i < CYCLE.length - 1 && <span className="arrow" aria-hidden="true"><Icon name="chevronRight" /></span>}
@@ -193,7 +286,7 @@ export function ProgressTab() {
         </div>
         <div>
           <div className="loop" aria-hidden="true" />
-          <div className="loop-l">A failed QA returns a bounded correction to Implementation; every fifth attempt the strategy is reassessed</div>
+          <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
         </div>
         <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: 12 }}>
           <span><span className="sub">Stage</span> {s.stage}</span>
@@ -267,7 +360,7 @@ export function ProgressTab() {
               <div className="sub">No task loaded yet. Assessment chooses the first bounded task when the engine starts.</div>
             )}
             <Disclosure title="Activity" meta={`${s.events.length} recent events`}>
-              <div className="mono log selectable">{s.events.slice(-60).map(eventLine).join("\n") || "No activity yet."}</div>
+              <div className="mono log selectable">{s.events.filter((e) => !isHiddenEvent(e)).slice(-60).map(eventLine).join("\n") || "No activity yet."}</div>
             </Disclosure>
             <div>
               <button className="disc" onClick={async () => setLog(log === null ? await window.api.engineLog(activeProject.id) : null)} aria-expanded={log !== null}>

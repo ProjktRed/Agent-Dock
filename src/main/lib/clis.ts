@@ -11,7 +11,7 @@ function runCli(location: string, args: string[], timeoutMs: number) {
 
 export async function whereAll(command: string): Promise<string[]> {
   if (/[\\/]/.test(command)) return existsSync(command) ? [command] : [];
-  const result = await run("where", [command], { timeoutMs: 5000 });
+  const result = process.platform === "win32" ? await run("where", [command], { timeoutMs: 5000 }) : await run("which", ["-a", command], { timeoutMs: 5000 });
   if (result.code !== 0) return [];
   return result.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
@@ -65,6 +65,9 @@ function helpCapabilities(kind: CliConnection["kind"], help: string): Capability
       flagCap("Isolated data directory", "--data-dir", "partial"),
       cap("Token metrics", "partial", "Measured through the llama.cpp /metrics endpoint, not by Cline"),
     ];
+  }
+  if (kind === "opencode") {
+    return [cap("Isolated config directory", "detected", "The engine supplies a per-run config directory"), cap("Guard plugin", "detected", "The engine verifies the guard plugin before running")];
   }
   return [];
 }

@@ -1,6 +1,9 @@
 import { dashboardFields, dashboardView, dashboardEvents } from "./view-model.js";
 import { createTaskDisclosure } from "./task-disclosure.js";
 import {createPhaseProgress} from './phase-progress.js';
+import {createAuthenticatedFetch} from './dashboard-auth.js';
+
+const fetch=createAuthenticatedFetch(window);
 
 const $ = (selector) => document.querySelector(selector);
 const set = (selector, value) => { const element = $(selector); if (element) element.textContent = value; };
@@ -166,7 +169,7 @@ $("#toggle-details").addEventListener("click", () => { $("#details").classList.a
 $("#view-task").addEventListener("click", () => { $("#details").classList.add("open"); $("#details").scrollIntoView({ block: "nearest" }); });
 $("#close-details").addEventListener("click", () => $("#details").classList.remove("open"));
 $("#activity-filter").addEventListener("change", renderEvents); $("#clear-log").addEventListener("click", async () => {
-  const response = await fetch("/api/activity/clear", { method: "POST" }).catch(() => null);
+  const response = await fetch("/api/activity/clear", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => null);
   if (response?.ok) await refresh();
   else set("#control-note", "Activity can be cleared only at an idle safe point.");
 });

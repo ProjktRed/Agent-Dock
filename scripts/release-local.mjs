@@ -9,17 +9,20 @@
 //
 // The source can be a local repository path today and a GitHub URL later; both work with git.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { logoPng } from "./logo.mjs";
+import { swap, swapStage } from "./swap.mjs";
+export { swap };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL = process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local");
 // Installed app and its update workspace live side by side, outside the source repository:
-//   E:Agent DockApp      the installed app (AgentDock.exe)
-//   E:Agent DockUpdates  clean clone of the committed source + build output
-const ROOT = process.env.AGENT_DOCK_HOME ?? "E:\\Agent Dock";
+//   <root>\App      the installed app (AgentDock.exe)
+//   <root>\Updates  clean clone of the committed source + build output
+// <root> is %LOCALAPPDATA%\Programs\Agent Dock, or AGENT_DOCK_HOME when set.
+const ROOT = process.env.AGENT_DOCK_HOME ?? path.join(LOCAL, "Programs", "Agent Dock");
 export const DEFAULTS = {
   staging: path.join(ROOT, "Updates"),
   installDir: path.join(ROOT, "App"),
@@ -86,21 +89,11 @@ function prepareWinCodeSign(repo) {
 
 /** npm ci → electron-vite build → electron-builder --dir, inside the staging copy. */
 export function buildStaging({ repo, source, branch, staging }) {
-  const commit = git(["rev-parse", "HEAD"], repo);
-  const info = {
-    commit,
-    shortCommit: commit.slice(0, 7),
-    subject: git(["log", "-1", "--format=%s"], repo),
-    committedAt: git(["log", "-1", "--format=%cI"], repo),
-    branch,
-    source,
-    builtAt: new Date().toISOString(),
-  };
-  writeFileSync(path.join(repo, "build-info.json"), `${JSON.stringify(info, null, 2)}\n`);
   mkdirSync(path.join(repo, "build"), { recursive: true });
   writeFileSync(path.join(repo, "build", "icon.png"), logoPng(256));
   run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: repo, shell: true });
-  run("npx", ["electron-vite", "build"], { cwd: repo, shell: true });
+  run("npx", ["electron-vite", "build"], { cwd: repo, shell: true, env: { AGENT_DOCK_BUILD_SOURCE: source, AGENT_DOCK_BUILD_BRANCH: branch } });
+  const info = JSON.parse(readFileSync(path.join(repo, "build-info.json"), "utf8"));
   const out = path.join(staging, "dist");
   const builder = () => run("npx", ["electron-builder", "--win", "--dir", `--config.directories.output="${out}"`], { cwd: repo, shell: true, env: { CSC_IDENTITY_AUTO_DISCOVERY: "false" } });
   try {
@@ -117,71 +110,6 @@ export function buildStaging({ repo, source, branch, staging }) {
   return { unpacked, info };
 }
 
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function shortcut(target, linkPath) {
-  const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${linkPath.replaceAll("'", "''")}');$s.TargetPath='${target.replaceAll("'", "''")}';$s.WorkingDirectory='${path.dirname(target).replaceAll("'", "''")}';$s.Save()`;
-  run("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { allowFail: true });
-}
-
-/** Replace the installed files with a fresh build (robocopy /MIR), add shortcuts, optionally relaunch. */
-export async function swap({ from, installDir, waitPid, relaunch, shortcuts = true }) {
-  if (waitPid) {
-    log(`waiting for app process ${waitPid} to exit…`);
-    for (let i = 0; i < 600 && pidAlive(Number(waitPid)); i++) await new Promise((r) => setTimeout(r, 500));
-    if (pidAlive(Number(waitPid))) throw new Error("The app did not exit; update not applied.");
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  // All-or-nothing: copy beside the install, then swap folders by rename. Windows refuses to
-  // rename a folder while any file in it is in use (another Agent Dock window, an engine whose
-  // working directory is inside it), so a busy install is left untouched instead of half-copied.
-  const fresh = `${installDir}.new`;
-  const old = `${installDir}.old`;
-  for (const stale of [fresh, old]) if (existsSync(stale)) rmSync(stale, { recursive: true, force: true });
-  const r = run("robocopy", [from, fresh, "/MIR", "/R:2", "/W:1", "/NFL", "/NDL", "/NJH", "/NP"], { allowFail: true });
-  // robocopy: 0–7 are success codes, 8+ are failures.
-  if (r.status >= 8) throw new Error(`robocopy into ${fresh} failed with exit code ${r.status}`);
-  if (existsSync(installDir)) {
-    let moved = false;
-    for (let i = 0; i < 20 && !moved; i++) {
-      try {
-        renameSync(installDir, old);
-        moved = true;
-      } catch {
-        await new Promise((res) => setTimeout(res, 1500));
-      }
-    }
-    if (!moved) {
-      rmSync(fresh, { recursive: true, force: true });
-      throw new Error(`${installDir} is in use (close every Agent Dock window and stop running automation). The installed version was left unchanged.`);
-    }
-  }
-  try {
-    renameSync(fresh, installDir);
-  } catch (error) {
-    if (existsSync(old)) renameSync(old, installDir);
-    throw error;
-  }
-  if (existsSync(old)) rmSync(old, { recursive: true, force: true });
-  const exe = path.join(installDir, DEFAULTS.exeName);
-  if (shortcuts) {
-    const startMenu = path.join(process.env.APPDATA ?? "", "Microsoft", "Windows", "Start Menu", "Programs", `${DEFAULTS.shortcutName}.lnk`);
-    const desktop = path.join(process.env.USERPROFILE ?? "", "Desktop", `${DEFAULTS.shortcutName}.lnk`);
-    // Only create missing shortcuts: updates keep the same install path, so existing ones stay valid.
-    if (!existsSync(startMenu)) shortcut(exe, startMenu);
-    if (!existsSync(desktop)) shortcut(exe, desktop);
-  }
-  log(`installed to ${installDir}`);
-  if (relaunch) spawn(exe, [], { detached: true, stdio: "ignore" }).unref();
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const stage = args.stage ?? "all";
@@ -195,18 +123,7 @@ async function main() {
     const { unpacked } = buildStaging({ repo: prepared.repo, source, branch, staging });
     if (stage === "all") await swap({ from: unpacked, installDir, relaunch: Boolean(args.launch) });
   } else if (stage === "swap") {
-    // Record the outcome for the app to show on its next launch, and always relaunch it, so a
-    // failed swap never leaves the user with no app and no explanation.
-    const resultFile = path.join(path.dirname(installDir), "Updates", "last-swap.json");
-    try {
-      await swap({ from: args.from ?? path.join(staging, "dist", "win-unpacked"), installDir, waitPid: args["wait-pid"], relaunch: Boolean(args.relaunch) });
-      writeFileSync(resultFile, JSON.stringify({ ok: true, at: new Date().toISOString() }));
-    } catch (error) {
-      writeFileSync(resultFile, JSON.stringify({ ok: false, error: error.message, at: new Date().toISOString() }));
-      const exe = path.join(installDir, DEFAULTS.exeName);
-      if (args.relaunch && existsSync(exe)) spawn(exe, [], { detached: true, stdio: "ignore" }).unref();
-      throw error;
-    }
+    await swapStage({ from: args.from ?? path.join(staging, "dist", "win-unpacked"), installDir, waitPid: args["wait-pid"], relaunch: Boolean(args.relaunch), result: path.join(path.dirname(installDir), "Updates", "last-swap.json") });
   } else throw new Error(`Unknown --stage ${stage}`);
 }
 

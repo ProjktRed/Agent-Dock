@@ -1,15 +1,18 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { atomicWriteJson } from "./dashboard-state.mjs";
+import { createProviderDescriptor } from "./runtime/provider.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
-const DEFAULT_LLAMACPP_LAUNCHER = "E:\\llama-cpp-local\\scripts\\Cline-Server.cmd";
+// Script that starts llama.cpp when it is unreachable: --llamacpp-launcher, or the LLAMACPP_LAUNCHER variable.
+const DEFAULT_LLAMACPP_LAUNCHER = process.env.LLAMACPP_LAUNCHER || null;
 
 /** Per-slot context of a running llama-server, or null when /props does not report it. */
-export async function readLlamaCppSlotContext(fetchImpl, baseUrl) {
+export async function readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel = null) {
   try {
-    const response = await fetchImpl(`${baseUrl.replace(/\/v1$/, "")}/props`);
+    const response = await fetchImpl(`${baseUrl.replace(/\/v1$/, "")}/props${modelQuery(routerModel)}`);
     if (!response?.ok) return null;
     const props = await response.json();
     const value = Number(props?.default_generation_settings?.n_ctx ?? props?.n_ctx);
@@ -21,9 +24,26 @@ export async function readLlamaCppSlotContext(fetchImpl, baseUrl) {
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function startLlamaCppServer(launcher) {
+/** Router mode (llama-server --models-dir) serves /props and /metrics per model: `?model=<id>`. */
+const modelQuery = (routerModel) => (routerModel ? `?model=${encodeURIComponent(routerModel)}` : "");
+
+/**
+ * Launcher arguments: router mode over a models folder, and the server reasoning switch for the
+ * worker's thinking level (the launcher's own settings apply when neither is given).
+ */
+export function llamaCppLauncherArgs({ modelsDir = null, thinking = "none" } = {}) {
+  const args = [];
+  if (modelsDir) args.push("-ModelsDir", modelsDir);
+  if (thinking && thinking !== "none") args.push("-Reasoning", "on", "-ReasoningEffort", thinking);
+  return args;
+}
+
+function startLlamaCppServer(launcher, launcherArgs = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn("cmd.exe", ["/d", "/c", launcher], {
+    const child = spawn("cmd.exe", ["/d", "/c", launcher, ...launcherArgs], {
+      // The server outlives the engine: start it in the launcher's own folder, never the engine's
+      // working directory (which may sit inside an app install that then cannot be updated).
+      cwd: path.dirname(launcher),
       detached: true,
       windowsHide: true,
       stdio: "ignore",
@@ -82,8 +102,8 @@ function parsePrometheus(text) {
   };
 }
 
-async function readLlamaCppMetrics(fetchImpl, baseUrl) {
-  const response = await fetchImpl(`${llamaRoot(baseUrl)}/metrics`);
+async function readLlamaCppMetrics(fetchImpl, baseUrl, routerModel = null) {
+  const response = await fetchImpl(`${llamaRoot(baseUrl)}/metrics${modelQuery(routerModel)}`);
   if (!response?.ok) throw new Error(`llama.cpp metrics failed: HTTP ${response?.status ?? "unknown"}`);
   return parsePrometheus(await response.text());
 }
@@ -110,16 +130,22 @@ export async function prepareClineRuntime({
   sleepImpl = sleep,
   startupAttempts = 240,
   startupPollMs = 500,
+  llamaCppModelsDir = null,
+  thinking = "none",
+  providerBaseUrl,
+  providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY",
 }) {
   if (provider === "llamacpp") {
     const baseUrl = llamaCppUrl.replace(/\/$/, "");
+    const routerModel = llamaCppModelsDir ? model : null;
     let startedServer = false;
     const ensureReady = async () => {
       try {
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
-        await startServerImpl(llamaCppLauncher);
+        if (!llamaCppLauncher) throw new Error(`${error.message}. Start llama.cpp, or set a launcher script (--llamacpp-launcher) so the engine can start it.`);
+        await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
         startedServer = true;
         let lastError = error;
         for (let attempt = 0; attempt < startupAttempts; attempt++) {
@@ -138,9 +164,9 @@ export async function prepareClineRuntime({
         }
       }
       // Cline is told contextWindow=contextTokens; a smaller server slot would overflow silently.
-      const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl);
+      const serverContext = await readLlamaCppSlotContext(fetchImpl, baseUrl, routerModel);
       if (serverContext !== null && contextTokens && serverContext < contextTokens) {
-        throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Set ContextSize in E:\\llama-cpp-local\\config\\settings.psd1 (and restart the server) or lower --cline-context-tokens.`);
+        throw new Error(`llama.cpp slot context is ${serverContext} tokens, below the requested ${contextTokens}. Raise the server's context size (llama-server -c) and restart it, or lower --cline-context-tokens.`);
       }
       return { requestedProvider: "llamacpp", provider: "openai-compatible", baseUrl, port: Number(new URL(baseUrl).port || 80), model };
     };
@@ -182,7 +208,74 @@ export async function prepareClineRuntime({
       port: Number(new URL(baseUrl).port || 80),
       startedServer,
       ensureReady,
-      readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl),
+      readMetrics: () => readLlamaCppMetrics(fetchImpl, baseUrl, routerModel),
+    };
+  }
+  if (provider === "openrouter" || provider === "opencode" || provider === "openai") {
+    const descriptor = createProviderDescriptor({
+      provider, model, contextTokens, maxOutputTokens, timeoutSeconds,
+      providerBaseUrl, providerApiKeyEnv, fetchImpl,
+    });
+    const remoteModel = descriptor.model;
+    const dataDir = path.join(path.resolve(stateDir), "cline-data");
+    const settingsDir = path.join(dataDir, "settings");
+    const providersPath = path.join(settingsDir, "providers.json");
+    const key = process.env[descriptor.apiKeyEnv];
+    const clineProvider = provider === "openrouter" ? "openrouter" : "openai-compatible";
+    const writeBackendConfig = async () => {
+      await mkdir(settingsDir, { recursive: true, mode: 0o700 });
+      await chmod(dataDir, 0o700);
+      await chmod(settingsDir, 0o700);
+      const settings = {
+        provider: clineProvider,
+        model: remoteModel,
+        ...(provider === "openai" || provider === "opencode" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
+        contextWindow: contextTokens,
+        maxTokens: maxOutputTokens,
+        timeout: timeoutSeconds * 1000,
+        capabilities: ["tools", "streaming"],
+      };
+      const document = {
+        version: 1,
+        lastUsedProvider: clineProvider,
+        modes: {},
+        providers: {
+          [clineProvider]: {
+            settings,
+            updatedAt: new Date().toISOString(),
+            tokenSource: "manual",
+          },
+        },
+      };
+      await rm(providersPath, { force: true });
+      const handle = await open(providersPath, "wx", 0o600);
+      try { await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`); }
+      finally { await handle.close(); }
+      await chmod(providersPath, 0o600);
+    };
+    const ensureReady = async () => {
+      try {
+        const identity = await descriptor.preflight();
+        await writeBackendConfig();
+        return identity;
+      } catch (error) {
+        await rm(providersPath, { force: true });
+        throw error;
+      }
+    };
+    const cleanupAfterRun = async () => {
+      await rm(providersPath, { force: true });
+    };
+    await descriptor.preflight();
+    return {
+      dataDir, contextTokens, maxOutputTokens, declaredContextTokens: null,
+      requestedProvider: provider, provider: clineProvider, model: remoteModel,
+      baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
+      ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
+      // opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY (not OPENCODE_API_KEY).
+      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || ((provider === "openai" || provider === "opencode") && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+        ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
+        : {}),
     };
   }
   if (provider !== "ollama") {

@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import { withoutSecrets } from "./secret-env.mjs";
+
+/** Runs the task's (already validated) check command, without secrets in the environment. */
+export const runCheckCommand = (command, cwd) => runCommand(command, cwd);
 
 function runCommand(command, cwd) {
   return new Promise((resolve, reject) => {
@@ -8,7 +12,7 @@ function runCommand(command, cwd) {
       : ["-c", command];
     const child = spawn(shell, args, {
       cwd,
-      env: { ...process.env, CODEX_QA: "1" },
+      env: { ...withoutSecrets(), CODEX_QA: "1" },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

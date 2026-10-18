@@ -34,6 +34,6 @@ BLOCKERS: unresolved issues and incomplete acceptance criteria, or none. Do not 
 
 Compare CHANGES and TESTS against the scoped diff and Node's deterministic evidence. A self-report or skill-use claim is not proof of correctness. Investigate only missing/conflicting/inconclusive evidence; never invent missing results. QA reports findings and remaining criteria; Assessment owns correction drafting. PASS remains subject to normal QA and safe-commit rules.
 
-Astra revises strategy; the local worker implements its bounded instructions, then independent QA judges the resulting evidence. Recoverable problems receive User Attention and continue through Assessment. Unsafe Git, scope, state, permission or policy conditions are BLOCKED.
+Elevation revises strategy; the local worker implements its bounded instructions, then independent QA judges the resulting evidence. Recoverable problems receive User Attention and continue through Assessment. Unsafe Git, scope, state, permission or policy conditions are BLOCKED.
 
 Assessment corrections use PRESERVE, FIX, DO NOT, EVIDENCE, RECOMMENDED APPROACH, and ACCEPTANCE STILL REQUIRED. Preserve correct existing work and original scope. Missing evidence calls for bounded executable diagnosis, not a speculative repair.

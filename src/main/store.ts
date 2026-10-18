@@ -1,7 +1,7 @@
 import path from "node:path";
 import { safeStorage } from "electron";
 import type { Agent, CliConnection, Project, Settings } from "@shared/types";
-import { DEFAULT_CLIS, DEFAULT_SETTINGS } from "./defaults";
+import { DEFAULT_CLIS, DEFAULT_SETTINGS, DEV_SOURCE, FORMER_SOURCE } from "./defaults";
 import { readJson, writeJson } from "./lib/json-file";
 
 interface Persisted {
@@ -24,7 +24,9 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     usage: { ...DEFAULT_SETTINGS.usage, ...(s.usage ?? {}) },
     advanced: { ...DEFAULT_SETTINGS.advanced, ...(s.advanced ?? {}) },
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },
-    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}) },
+    // The source repository was renamed to Agent-Dock-Dev and its old name now holds the public releases.
+    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}), ...(FORMER_SOURCE.test(s.updates?.source ?? "") ? { source: DEV_SOURCE } : {}) },
+    tuning: { ...DEFAULT_SETTINGS.tuning, ...(s.tuning ?? {}) },
   };
 }
 
@@ -88,6 +90,11 @@ export class AppStore {
     } catch {
       return null;
     }
+  }
+
+  /** Every stored secret, decrypted: what a diagnostics export must never contain. */
+  secretValues(): string[] {
+    return Object.keys(this.secrets).map((id) => this.getSecret(id)).filter((v): v is string => Boolean(v));
   }
 
   hasSecret(id: string): boolean {

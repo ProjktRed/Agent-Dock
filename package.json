@@ -1,9 +1,11 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.1.2",
+  "version": "0.30.0",
   "description": "Agent Dock: Windows command center for the Codex ↔ Cline automation loop",
   "private": true,
+  "license": "MIT",
+  "author": "ProjktRed",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -12,15 +14,18 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:engine": "npm --prefix engine test",
-    "package": "electron-vite build && electron-builder --win --dir",
+    "package": "electron-vite build && electron-builder --win --dir --publish never",
+    "package:installer": "electron-vite build && electron-builder --win nsis --publish never",
+    "package:linux": "electron-vite build && electron-builder --linux --dir",
     "release:local": "node scripts/release-local.mjs --launch"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "@types/node": "22.10.2",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",
-    "electron": "33.4.11",
+    "electron": "44.5.0",
     "electron-builder": "25.1.8",
     "electron-vite": "2.3.0",
     "react": "18.3.1",
@@ -33,9 +38,12 @@
     "appId": "local.agent-dock",
     "productName": "Agent Dock",
     "executableName": "AgentDock",
+    "afterPack": "scripts/harden-electron.cjs",
     "directories": { "buildResources": "build" },
     "files": ["out/**", "package.json", "build-info.json"],
-    "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }],
-    "win": { "target": "dir", "icon": "build/icon.png" }
+    "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }, { "from": "scripts", "to": "scripts", "filter": ["swap.mjs"] }],
+    "win": { "target": "dir", "icon": "build/icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "include": "scripts/installer.nsh", "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}", "shortcutName": "Agent Dock", "uninstallDisplayName": "Agent Dock", "deleteAppDataOnUninstall": false },
+    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" }
   }
 }

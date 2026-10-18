@@ -23,7 +23,7 @@ test('recoverable QA failures use Assessment and elevate after three attempted c
     worker:{withExclusive:fn=>fn(),run:async(prompt,hooks)=>{assert.equal(active,false);prompts.push(prompt);runs++;await hooks.onStart({pid:100+runs});return{exitCode:0};}},
     baseline:async()=>({head:'base'}),verify:async()=>{},prepareQa:async input=>packet(input),
     review:async()=>++qa===6?{status:'pass',output:'verified',commit:'new'}:{status:'fail',output:'ownership still wrong',correction:'QA MUST NOT AUTHOR CORRECTIONS'},
-    assessCorrection:async input=>{active=true;assert.equal(input.qaPacket.diff.text,'scoped diff');assert.equal(input.task.id,'R'); assessments++;active=false;return correction(assessments);},
+    assessCorrection:async input=>{active=true;assert.equal(input.currentDiff.text,'scoped diff');assert.equal(input.qaPacket.diff,undefined,'the diff is sent once');assert.equal(input.task.id,'R'); assessments++;active=false;return correction(assessments);},
     elevate:async input=>{active=true;elevations.push(input);active=false;return{...correction(9),status:'strategy-revised'};},
     readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1});
   assert.equal(result.status,'passed');assert.equal(runs,6);assert.equal(assessments,4);assert.equal(elevations.length,1);

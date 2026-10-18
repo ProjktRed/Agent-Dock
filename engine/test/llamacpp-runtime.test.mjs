@@ -76,10 +76,11 @@ test("unavailable llama.cpp starts the approved launcher and waits for model dis
         }
         return okJson({ data: [{ id: "glm-4.7-flash-ud-q3-k-xl" }] });
       },
+      llamaCppLauncher: "C:\\llama\\start-server.cmd",
       startServerImpl: async (launcher) => { starts.push(launcher); },
     });
 
-    assert.deepEqual(starts, ["E:\\llama-cpp-local\\scripts\\Cline-Server.cmd"]);
+    assert.deepEqual(starts, ["C:\\llama\\start-server.cmd"]);
     assert.equal(healthAttempts, 3);
     assert.equal(runtime.startedServer, true);
   } finally { await rm(stateDir, { recursive: true, force: true }); }

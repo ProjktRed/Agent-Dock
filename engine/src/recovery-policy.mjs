@@ -30,3 +30,51 @@ export function correctionText(result, packet) {
     'Completing this correction does not waive remaining original acceptance criteria.',
     `Validation: ${packet.task?.qaCommand ?? packet.qaEvidence?.command?.command ?? ''}`].join('\n');
 }
+
+/**
+ * Whether QA may review the blocked attempt again (after the user fixed what stopped QA, such as
+ * a tool or permission problem): the attempt must be finished, clean and inside its approved paths.
+ * The loop still reconciles HEAD and scope before QA runs.
+ */
+export function qaRetryAvailability(r) {
+  if (!r) return { available: false, reason: 'No task in progress' };
+  if (r.phase !== 'blocked') return { available: false, reason: 'The task is not blocked' };
+  if (!r.qaPacket || !r.workerResult) return { available: false, reason: 'No finished attempt to review' };
+  if (r.qaPacket.attempt !== r.attempt) return { available: false, reason: 'The last attempt has no evidence yet' };
+  if (r.workerResult.exitCode !== 0) return { available: false, reason: 'The worker did not finish cleanly' };
+  if (r.qaPacket.qaEvidence?.scope?.status !== 'PASS') return { available: false, reason: 'The change is outside its approved paths' };
+  return { available: true, reason: null };
+}
+
+// QA that could not run its tools at all: a sandbox or launcher failure, not a verdict on the code.
+const QA_ENVIRONMENT_FAILURE = /helper_unknown_error|setup refresh had errors|failed before execution|is not recognized as an internal or external command|\bsandbox\b[^.\n]{0,80}\b(?:error|errors|denied|failed|refused)\b|\bspawn\b[^\n]{0,80}\bE(?:NOENT|PERM|ACCES)\b/i;
+
+/**
+ * Whether a non-pass QA decision came from QA being unable to run commands while the engine's own
+ * check run passed. Such a result is retried once instead of becoming a correction for the worker.
+ */
+export function qaEnvironmentFailure(decision, qaPacket) {
+  return Boolean(decision && decision.status !== 'pass' && qaPacket?.qaEvidence?.command?.exitCode === 0 &&
+    QA_ENVIRONMENT_FAILURE.test(String(decision.output ?? '')));
+}
+
+// Prompt size: a stored correction prompt repeats the whole task; only its correction part is new.
+const CORRECTION_PART = /Next bounded correction:\s*([\s\S]*?)\s*Original task and acceptance criteria/;
+
+/** The correction instructions of one stored worker prompt (the whole prompt, bounded, if it has no such part). */
+export function correctionInstructions(prompt) {
+  const text = String(prompt ?? '');
+  return (CORRECTION_PART.exec(text)?.[1] ?? text).slice(0, 6000);
+}
+
+/** Correction history for a reasoning prompt: each entry's instructions instead of the full worker prompt. */
+export function compactCorrections(history = []) {
+  return history.map(({ prompt, ...entry }) => ({ ...entry, instructions: correctionInstructions(prompt) }));
+}
+
+/** The QA packet for a reasoning prompt whose input already carries the task and the current diff. */
+export function packetForPrompt(packet) {
+  if (!packet) return packet;
+  const { task, diff, ...rest } = packet;
+  return { ...rest, note: 'The task and the current diff are given once, at the top level of this input.' };
+}

@@ -1,8 +1,16 @@
 node_modules/
 out/
 dist/
+# Alternate output used by security packaging smoke tests
+dist-security/
 *.log
 engine/node_modules/
 .devtest/
 build-info.json
 build/
+
+# Agent working notes (not part of the app)
+docs/superpowers/
+
+# Release signing keys never belong in the repository
+*.pem

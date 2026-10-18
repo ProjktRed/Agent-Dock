@@ -1,4 +1,5 @@
 import {execFile} from 'node:child_process';
+import {TUNING} from './engine-tuning.mjs';
 import {promisify} from 'node:util';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,lstat,mkdir,copyFile,unlink} from 'node:fs/promises';
@@ -6,16 +7,18 @@ import {constants} from 'node:fs';
 import path from 'node:path';
 import {atomicWriteJson} from './dashboard-state.mjs';
 import {collectGitEvidence} from './qa-packet.mjs';
-import {recoveryFingerprint,unsafeCauses} from './recovery-policy.mjs';
+import {compactCorrections,packetForPrompt,recoveryFingerprint,unsafeCauses} from './recovery-policy.mjs';
 import {readPendingCodex,runRecoverableCodex} from './node-loop.mjs';
 import {parseRecoveryResult} from './codex-worker.mjs';
-import {readWorkerCapabilities} from './cline-tool-guard.mjs';
+import {readWorkerCapabilities} from './guard/state.mjs';
+import {OPERATIONALLY_RECOVERABLE_PREFIXES} from './guard/reasons.mjs';
 
 const exec=promisify(execFile);
 const git=async(workspace,...args)=>(await exec('git',args,{cwd:workspace,windowsHide:true})).stdout.trim();
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const scratchName=p=>typeof p==='string'&&/^(?:fix[\w-]*\.ps1|temp[\w-]*\.(?:txt|ps1)|[\w-]+\.tmp)$/i.test(p);
 const hash=data=>createHash('sha256').update(data).digest('hex');
+const escapeRegExp=value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const isUntracked=async(workspace,p)=>(await git(workspace,'ls-files','--others','--exclude-standard','--',p)).split(/\r?\n/).includes(p);
 async function fileHash(workspace,p){
  if(!scratchName(p))return null;
@@ -64,16 +67,21 @@ export async function loadResolverCase(stateDir){
   if(!await isUntracked(workspace,p))continue;
   if(await fileHash(workspace,p)===proof.sha256)verifiedScratch.push(proof);
  }
- const workerCapabilities=await readWorkerCapabilities(stateDir);
+ const workerCapabilities=await readWorkerCapabilities(stateDir,/^OpenCode editing guard stopped attempt: /.test(r.blockedReason??live?.blockedReason??'')?'opencode-guard':'cline-guard');
  const input={task,qaPacket:r.qaPacket,latestQaVerdict:r.failure??null,currentDiff:evidence.diff,failure:{reason:r.blockedReason??live?.blockedReason,cause:r.failure?.manualReviewCause??null},baselineSha:r.baselineSha,headMatches,unexpectedPaths:evidence.scope.unexpectedPaths,verifiedScratch,correctionHistory:r.correctionHistory,
   workerCapabilities,
   previousResolverStrategies:r.resolverRecoveries??[]};
  input.fingerprint=recoveryFingerprint(input);
+ // Compacted for the prompt after fingerprinting, so "already resolved" still matches earlier cases.
+ input.qaPacket=packetForPrompt(input.qaPacket);
+ input.correctionHistory=compactCorrections(input.correctionHistory);
  return input;
 }
 export function canRecoverOperational(input){
+ const labelAlternation=['Cline','OpenCode'];
+ const labelPattern=labelAlternation.length===1?escapeRegExp(labelAlternation[0]):`(?:${labelAlternation.map(escapeRegExp).join('|')})`;
  return input.headMatches===true&&input.unexpectedPaths?.length===0&&input.currentDiff?.truncated!==true&&!unsafeCauses.has(input.failure?.cause)&&
-  /^Cline editing guard stopped attempt: (?:command is not approved|unknown or unapproved tool:|two consecutive native edit failures)/.test(input.failure?.reason??'');
+  new RegExp(`^${labelPattern} editing guard stopped attempt: (?:${OPERATIONALLY_RECOVERABLE_PREFIXES.map(escapeRegExp).join('|')})`).test(input.failure?.reason??'');
 }
 export function resolverAvailability({live,input}){
  if(live?.stage!=='BLOCKED'||!input?.task||!input?.qaPacket)return{available:false,reason:'No complete blocked case'};
@@ -93,7 +101,7 @@ export async function runBlockedResolver({workspace,stateDir,codex,readControl,o
  const control=await readControl();
  if(control.stopAfterSafePoint)return{status:'stopped'};
  if(automatic&&control.pauseAfterCurrent)return{status:'paused'};
- if(journal?.status!=='applying'&&(r.resolverRecoveries?.length??0)>=3){await onEvent({type:'resolver-limit',message:'Three Resolver recovery strategies exhausted; human review required.'});return{status:'blocked'};}
+ if(journal?.status!=='applying'&&(r.resolverRecoveries?.length??0)>=TUNING.resolverMaxStrategies){await onEvent({type:'resolver-limit',message:TUNING.resolverMaxStrategies===3?'Three Resolver recovery strategies exhausted; human review required.':`Resolver recovery limit (${TUNING.resolverMaxStrategies}) exhausted; human review required.`});return{status:'blocked'};}
  const save=()=>atomicWriteJson(path.join(stateDir,'current-task.json'),current);
  let op;
  try{
@@ -109,7 +117,7 @@ export async function runBlockedResolver({workspace,stateDir,codex,readControl,o
   const strategy=recoveryFingerprint({strategy:decision.newStrategy.trim().toLowerCase().replace(/\s+/g,' '),instructions:decision.nextWorkerInstructions.trim().toLowerCase().replace(/\s+/g,' ')});
   const duplicate=(r.resolverRecoveries??[]).some(entry=>entry.strategy===strategy);
   if(canRecoverOperational(input)&&['correction','strategy-revised'].includes(decision.status)&&!duplicate){
-   // Model advice never grants scope/permission. Recheck independent evidence after Sol exits.
+   // Model advice never grants scope/permission. Recheck independent evidence after the Resolver exits.
    const evidence=await collectGitEvidence({workspace,task:input.task,baselineSha:r.baselineSha});
    if(evidence.scope.status!=='PASS'||evidence.diff.truncated||await git(workspace,'rev-parse','HEAD')!==r.baselineSha||evidence.diff.text!==input.currentDiff.text)throw Error('Scope/HEAD/diff changed during Resolver');
    r.qaPacket={...r.qaPacket,diff:evidence.diff,changedFiles:evidence.changedFiles,qaEvidence:{...r.qaPacket.qaEvidence,scope:evidence.scope,categories:{...r.qaPacket.qaEvidence.categories,scopeCheck:'PASS'}}};

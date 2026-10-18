@@ -61,7 +61,7 @@ export const roleLabel: Record<string, string> = {
   assessment: "Assessment",
   elevation: "Elevation",
   resolver: "Resolver",
-  custom: "Custom",
+  custom: "Workflow role",
 };
 
 export function uid(prefix: string) {

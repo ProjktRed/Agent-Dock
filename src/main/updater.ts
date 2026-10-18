@@ -2,12 +2,25 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_RELEASE_REPO, DEV_SOURCE, FORMER_SOURCE, updateChannel } from "@shared/defaults";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
-import { parseLog, parseLsRemote } from "./updater-parse";
+import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
+import { checkRelease, downloadRelease, extractRelease, launchSwap, type ReleaseInfo } from "./release-channel";
+import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
-const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
+/**
+ * Update workspace. release:local installs to <root>\App, with <root>\Updates beside it. The per-user
+ * installer puts the app in %LOCALAPPDATA%\Programs\AgentDock, so its updates live under
+ * %LOCALAPPDATA%\Agent Dock\Updates instead of next to every other program.
+ */
+export function stagingDir(execPath = process.execPath, localAppData = process.env.LOCALAPPDATA) {
+  const installDir = path.dirname(execPath);
+  if (path.basename(installDir).toLowerCase() === "app" || !localAppData) return path.join(path.dirname(installDir), "Updates");
+  return path.join(localAppData, "Agent Dock", "Updates");
+}
+export const STAGING = stagingDir();
 const REPO = path.join(STAGING, "repo");
 const MAX_LOG = 400;
 
@@ -19,14 +32,21 @@ const MAX_LOG = 400;
 export class Updater {
   status: UpdateStatus;
   private building = false;
+  private muted = false;
+  private release: ReleaseInfo | null = null;
 
   constructor(
     private readonly packaged: boolean,
     private readonly installed: BuildInfo | null,
     private readonly emit: (status: UpdateStatus) => void,
     private readonly resolveNode: () => Promise<string | null>,
+    /** A portable copy (portable.json) with updates off: never checks, builds or swaps. */
+    private readonly portableNoUpdates = false,
+    /** The installed version (package.json); the signed release channel only installs newer ones. */
+    private readonly appVersion = "0.0.0",
+    private readonly releaseKey = RELEASE_PUBLIC_KEY,
   ) {
-    this.status = { state: installed && packaged ? "idle" : "dev", installed, source: installed?.source ?? "", branch: installed?.branch ?? "", latest: null, commits: [], checkedAt: null, error: null, log: [] };
+    this.status = { state: portableNoUpdates ? "portable" : installed && packaged ? "idle" : "dev", installed, source: installed?.source ?? "", branch: installed?.branch ?? "", latest: null, commits: [], checkedAt: null, error: null, log: [] };
   }
 
   static async readBuildInfo(appPath: string): Promise<BuildInfo | null> {
@@ -50,7 +70,7 @@ export class Updater {
 
   private set(patch: Partial<UpdateStatus>) {
     this.status = { ...this.status, ...patch };
-    this.emit(this.status);
+    if (!this.muted) this.emit(this.status);
   }
 
   private append(text: string) {
@@ -61,22 +81,50 @@ export class Updater {
 
   private target(settings: Settings) {
     return {
-      source: settings.updates.source.trim() || this.installed?.source || "",
+      // Builds made before the rename still record the old source address, which is now the public releases repository.
+      source: [settings.updates.source.trim() || this.installed?.source || ""].map((x) => (FORMER_SOURCE.test(x) ? DEV_SOURCE : x))[0],
       branch: settings.updates.branch.trim() || this.installed?.branch || "master",
     };
   }
 
-  async check(settings: Settings): Promise<UpdateStatus> {
+  /** True while a build or swap is in progress; background checks are skipped then. */
+  get busy(): boolean {
+    return this.building || this.status.state === "checking" || this.status.state === "building" || this.status.state === "ready";
+  }
+
+  /**
+   * Quiet checks (timer, window focus) never replace the shown status with an error: when the
+   * source cannot be reached (offline), the previous status stays and the next check tries again.
+   */
+  async check(settings: Settings, { quiet = false } = {}): Promise<UpdateStatus> {
+    if (!quiet) return this.probe(settings, false);
+    // Quiet: intermediate states are not shown; only the outcome is, and an error keeps the previous status.
+    const previous = this.status;
+    this.muted = true;
+    try {
+      await this.probe(settings, true);
+    } finally {
+      this.muted = false;
+    }
+    if (this.status.state === "error") this.status = previous;
+    this.emit(this.status);
+    return this.status;
+  }
+
+  private async probe(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
     const { source, branch } = this.target(settings);
+    if (this.portableNoUpdates) return this.status;
     if (!this.packaged || !this.installed) {
       this.set({ state: "dev", source, branch, error: null });
       return this.status;
     }
+    if (updateChannel(settings, this.installed.branch) === "release") return this.probeRelease(settings, quiet);
     if (!source) {
       this.set({ state: "error", error: "No update source configured." });
       return this.status;
     }
-    this.set({ state: "checking", source, branch, error: null });
+    // A quiet check keeps the current status (and any update notice) visible while it runs.
+    if (!quiet) this.set({ state: "checking", source, branch, error: null });
     const remote = await run("git", ["ls-remote", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
     const latest = remote.code === 0 ? parseLsRemote(remote.stdout, branch) : null;
     if (!latest) {
@@ -89,7 +137,8 @@ export class Updater {
     }
     // Fetch into the staging clone to list what changed (cheap for a local source).
     const commits = await this.listCommits(source, branch, latest);
-    this.set({ state: "available", latest: { commit: latest, subject: commits[0]?.subject ?? "" }, commits, checkedAt: new Date().toISOString() });
+    const version = await this.versionAt(latest);
+    this.set({ state: "available", latest: { commit: latest, subject: commits[0]?.subject ?? "", version }, commits, checkedAt: new Date().toISOString() });
     return this.status;
   }
 
@@ -104,8 +153,64 @@ export class Updater {
     await run("git", ["fetch", "--force", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: REPO, timeoutMs: 10 * 60_000 });
     const known = await run("git", ["cat-file", "-e", `${this.installed!.commit}^{commit}`], { cwd: REPO });
     const range = known.code === 0 ? `${this.installed!.commit}..${latest}` : `-20 ${latest}`;
-    const logResult = await run("git", ["log", "--format=%H%x09%cI%x09%s", ...range.split(" ")], { cwd: REPO });
+    const logResult = await run("git", ["log", LOG_FORMAT, ...range.split(" ")], { cwd: REPO });
     return logResult.code === 0 ? parseLog(logResult.stdout) : [];
+  }
+
+  /** Signed release channel: the newest GitHub Release, verified against the built-in release key. */
+  private async probeRelease(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
+    const repo = settings.updates.releaseRepo?.trim() || DEFAULT_RELEASE_REPO;
+    if (!quiet) this.set({ state: "checking", source: `github.com/${repo} (signed releases)`, branch: "", error: null });
+    try {
+      this.release = await checkRelease(repo, this.appVersion, this.releaseKey);
+    } catch (error) {
+      this.release = null;
+      this.set({ state: "error", checkedAt: new Date().toISOString(), error: (error as Error).message });
+      return this.status;
+    }
+    if (!this.release) {
+      this.set({ state: "up-to-date", latest: { commit: this.installed!.commit, subject: this.installed!.subject }, commits: [], checkedAt: new Date().toISOString() });
+      return this.status;
+    }
+    const m = this.release.manifest;
+    this.set({ state: "available", latest: { commit: m.commit, subject: `Signed release ${m.version}`, version: m.version }, commits: [{ hash: m.commit, subject: this.release.notes.split(/\r?\n/).find((l) => l.trim())?.slice(0, 200) ?? `Release ${m.version}`, date: m.builtAt, body: this.release.notes.slice(0, 4000) }], checkedAt: new Date().toISOString() });
+    return this.status;
+  }
+
+  /** Download, verify, extract and hand off to the new app's swap; no Node.js or git needed. */
+  private async applyRelease(onReadyToQuit: () => void): Promise<void> {
+    const info = this.release!;
+    this.building = true;
+    this.set({ state: "building", log: [], error: null });
+    try {
+      const dir = path.join(STAGING, "release");
+      this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
+      const zip = await downloadRelease(info, dir);
+      this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      const unpacked = await extractRelease(zip, path.join(dir, info.manifest.version));
+      this.append(`Extracted to ${unpacked}.`);
+      this.set({ state: "ready" });
+      const fd = openSync(path.join(STAGING, "swap.log"), "a");
+      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd }); }
+      finally { closeSync(fd); }
+      onReadyToQuit();
+    } catch (error) {
+      this.set({ state: "error", error: (error as Error).message });
+      throw error;
+    } finally {
+      this.building = false;
+    }
+  }
+
+  /** package.json version at a commit already fetched into the staging clone. */
+  private async versionAt(commit: string): Promise<string | null> {
+    const shown = await run("git", ["show", `${commit}:package.json`], { cwd: REPO });
+    if (shown.code !== 0) return null;
+    try {
+      return JSON.parse(shown.stdout).version ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -116,6 +221,10 @@ export class Updater {
     if (!this.packaged || !this.installed) throw new Error("Updates apply to the installed app only.");
     if (this.building) throw new Error("An update is already being built.");
     if (this.status.state !== "available" || !this.status.latest) throw new Error("No update available. Check for updates first.");
+    if (updateChannel(settings, this.installed.branch) === "release") {
+      if (!this.release) throw new Error("No verified release. Check for updates first.");
+      return this.applyRelease(onReadyToQuit);
+    }
     const node = await this.resolveNode();
     if (!node) throw new Error("Building an update needs Node.js and npm on PATH.");
     const { source, branch } = this.target(settings);

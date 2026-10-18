@@ -1,13 +1,21 @@
 import type { UpdateStatus } from "@shared/types";
 
-/** Parse `git log --format=%H%x09%cI%x09%s` output. */
+/** `git log` format read by parseLog: fields split by US (0x1f), commits by RS (0x1e). */
+export const LOG_FORMAT = "--format=%H%x1f%cI%x1f%s%x1f%b%x1e";
+
+/** Commit trailers (Co-Authored-By, Signed-off-by…) are not changelog text. */
+const TRAILER = /^[A-Za-z][\w-]*-[Bb]y: /;
+
+/** Parse `git log` output in LOG_FORMAT. */
 export function parseLog(stdout: string): UpdateStatus["commits"] {
   return stdout
-    .split(/\r?\n/)
+    .split("\x1e")
+    .map((record) => record.replace(/^\s+/, ""))
     .filter(Boolean)
-    .map((line) => {
-      const [hash, date, ...subject] = line.split("\t");
-      return { hash, date, subject: subject.join("\t") };
+    .map((record) => {
+      const [hash, date, subject = "", body = ""] = record.split("\x1f");
+      const lines = body.replace(/\r/g, "").split("\n").filter((line) => !TRAILER.test(line.trim()));
+      return { hash, date, subject, body: lines.join("\n").trim() };
     });
 }
 

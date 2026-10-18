@@ -8,10 +8,10 @@ when it is selected explicitly.
 
 ## Start dashboard and loop
 
-From `E:\BG3C\codex-cline-loop`:
+From the `engine/` folder:
 
 ```powershell
-npm run dashboard -- --workspace ..\BG3C_Qwen --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
+npm run dashboard -- --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
 ```
 
 The command automatically opens http://127.0.0.1:4180 in the default browser.
@@ -28,10 +28,17 @@ By default Cline uses llama.cpp at `http://127.0.0.1:8081/v1` with model
 `glm-4.7-flash-ud-q3-k-xl`. The automation maps `--provider llamacpp` to Cline's
 `openai-compatible` provider and defaults to a 98,304-token context and 8,192-token
 maximum output. Before every Cline attempt, Node checks `/health` and `/v1/models`
-and requires the exact model identifier. If the endpoint is unavailable, it starts
-`E:\llama-cpp-local\scripts\Cline-Server.cmd` and waits up to 120 seconds. A
+and requires the exact model identifier. If the endpoint is unavailable and a launcher script
+is set (`--llamacpp-launcher <script>` or the `LLAMACPP_LAUNCHER` variable), it starts that
+script and waits up to 120 seconds; without one it stops with an explanation. A
 startup timeout or model mismatch is logged and stops the attempt. It never causes
 an automatic Ollama fallback.
+
+Remote OpenAI-compatible providers include OpenRouter and OpenCode Console (Zen).
+For OpenCode Console, use `--provider opencode` and model `deepseek-v4.1-flash-free`
+by default; its model preflight reads `https://opencode.ai/inference/v1/models`,
+while chat requests use `https://opencode.ai/inference/openai/v1`. Supply the API
+key through `AGENT_DOCK_PROVIDER_KEY` (or `--provider-api-key-env`).
 
 Select the preserved Ollama path explicitly with `--provider ollama`. Unless
 overridden, this continues to use `glm-4.7-flash:q4_K_M` and 98,304 context tokens.
@@ -71,8 +78,67 @@ Launch from PowerShell with `node` directly, because `npm run` through cmd.exe s
 objectives that contain double quotes:
 
 ```powershell
-node src/dashboard-cli.mjs --workspace ..\BG3C_Qwen --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
+node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
 ```
+
+## Implementation through Codex or Claude Code (`--implementation-cli`)
+
+Default is `--implementation-cli cline` (Cline + local model, unchanged). With `codex` or
+`claude` the implementation worker is `src/cloud-impl-worker.mjs`:
+
+Codex and Claude enforcement are adapters of the shared `src/guard/` layer;
+Codex keeps its per-call hook and Claude keeps its argv-only permission lists.
+
+- `--implementation-model`, `--implementation-effort`, `--implementation-fast` and
+  `--timeout-seconds` apply; the Cline runtime (llama.cpp start, provider checks) is skipped.
+- Claude Code: `claude -p --permission-mode dontAsk`; `Edit`/`Write` are allowed only for the
+  task's `allowedPaths`. With `--tool-guard true` the shell is limited to its `qaCommand`,
+  lint/typecheck and read-only git. Git write commands (commit, add, reset, checkout, stash…) are
+  always denied.
+- Codex: `codex exec --approve-for-me` (the workspace-write sandbox QA uses) plus a `PreToolUse`
+  hook passed with `-c hooks.PreToolUse=…` and `--dangerously-bypass-hook-trust` (the engine writes
+  the hook itself for every run). `src/codex-scope-hook.mjs` runs the `src/guard/adapters/codex.mjs` adapter:
+  patches may only add, update, delete or move the task's `allowedPaths` (also with the tool guard
+  off); with `--tool-guard true` shell commands are limited to the task's check, lint/typecheck and
+  read-only commands, and MCP tools are denied. Decisions go to `<state>/codex/<id>/scope-hook.ndjson`
+  (`implementation-scope-blocked` events); if Codex used tools but the hook logged nothing, the
+  attempt is refused (fail closed).
+- Same lock file as Cline (`cline.busy.lock`), same never-replay rule after an interruption, same
+  scope/HEAD verification and independent QA. The prompt and output go to `<state>/codex/<id>/`
+  so token usage is recorded.
+
+## Workflow roles (`--roles-file`)
+
+A JSON array of read-only roles (`src/workflow-roles.mjs`):
+`{ id, name, stage, gate, cli, model?, effort?, fast?, instructions, enabled? }`, where `stage` is
+`before-implementation`, `before-qa` or `after-pass` and `cli` is `codex` or `claude`. Each role
+returns `{ verdict: pass|changes-needed, summary, findings[], guidance }`.
+
+- `before-implementation`: once per task; `guidance` is appended to every worker prompt.
+- `before-qa`: a new recovery phase `review` between evidence and QA, once per attempt. Results
+  are added to the QA packet as `roleReviews`. A `gate` role returning `changes-needed` turns the
+  attempt into a recoverable failure (HEAD verified unchanged) that goes to correction Assessment
+  without calling QA. A gate that fails to run blocks; an advisory role that fails is recorded
+  (`role-error`) and skipped.
+- `after-pass`: after the commit; reports are appended to `<state>/role-reports.ndjson`.
+
+Roles run through `runRecoverableCodex` (`role:<id>` operations: usage-limit wait, pending
+receipts) and each result is checkpointed in `current-task.json`, so a resumed run never repeats
+a finished role. Events: `role-started`, `role-finished`, `role-result`, `role-error`,
+`role-gate-failed`.
+
+## Loop limits
+
+Defaults reproduce the original fixed behaviour (`src/engine-tuning.mjs`):
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--elevation-after` | 3 | Attempted Assessment corrections before automatic Elevation |
+| `--max-corrections` | 0 (none) | Corrections per task before stopping for user attention (`correction-limit`); Resume grants another round |
+| `--resolver-max-strategies` | 3 | Distinct Resolver recovery strategies per task |
+| `--task-max-files` | 1 | Task sizing in the Assessment prompt |
+| `--task-max-new-lines` | 200 | New-file size in the Assessment prompt |
+| `--task-max-read-files` | 3 | Files the worker may be told to read |
 
 ## Process lifecycle
 
@@ -201,12 +267,14 @@ Phase expansion is client-side and survives polling.
 
 ## Verification commands
 
-### Cline editing guard
+### Worker tool guard
 
 Normal and Elevate-driven Cline attempts install automation-owned `PreToolUse`
 and `PostToolUse` hooks under `<state-dir>/cline-guard/config/hooks`. The CLI
 receives that isolated `--config` directory and retains its existing provider
-`--data-dir`; no global Cline installation/settings are changed.
+`--data-dir`; no global Cline installation/settings are changed. Guard policy,
+state, decisions and edit discipline live in the backend-agnostic `src/guard/`
+layer, with a Cline adapter translating its tools and hook controls.
 
 Each guarded attempt also generates a small SDK plugin in that isolated config.
 `disabledTools` hides unrelated tools; before every model request the plugin
@@ -259,8 +327,8 @@ Fake Codex writes its JSON, then stays alive briefly. During each fake Cline run
 the child repeatedly probes every recorded Codex PID and fails if any is alive.
 The test covers assessment → FAIL → correction → PASS → next assessment.
 
-`npm test` and the lifecycle test do not invoke a live model or perform BG3
-development. `scripts/live-integration.mjs` is an explicitly invoked end-to-end
+`npm test` and the lifecycle test do not invoke a live model or perform real
+project work. `scripts/live-integration.mjs` is an explicitly invoked end-to-end
 proof: it creates an isolated temporary Git repository with a failing JavaScript
 test, has Cline inspect/edit/test it through llama.cpp, then passes the scoped diff
 to the existing Codex QA and commit workflow.
@@ -269,4 +337,4 @@ No vision model is configured by this integration. A later vision addition needs
 a separate llama.cpp-compatible multimodal GGUF plus its matching projector file,
 a dedicated server/port and launcher, and a Cline provider/model entry with image
 capability. It should be benchmarked independently rather than sharing the coding
-model's 16 GB VRAM budget.
+model's VRAM budget.
