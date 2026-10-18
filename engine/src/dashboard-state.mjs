@@ -6,6 +6,8 @@ import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
 import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } from './recovery-policy.mjs';
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
 import { selectedAutoSkills } from './task-handoff-skill.mjs';
+import { appendAction, flushActionLog } from './action-log.mjs';
+export { flushActionLog };
 
 async function readJson(file, fallback) {
   try {
@@ -248,6 +250,8 @@ export class DashboardState {
     const currentTaskId = (await this.readLive())?.task?.id;
     const entry = { timestamp: new Date().toISOString(), taskId: currentTaskId, ...event };
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
+    // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.
+    await appendAction(this.stateDir, entry).catch((error) => diagnostic("ACTION_LOG_WRITE_FAILED", { message: error.message }));
   }
 
   async readLive() {
@@ -264,13 +268,14 @@ export class DashboardState {
     };
   }
 
-  setControl(action) {
+  /** source names who asked (app, dashboard, cli, run-limit); it is kept in the action log. */
+  setControl(action, { source } = {}) {
     const previous=this.controlQueue??Promise.resolve();
-    const request=previous.catch(()=>{}).then(()=>this.applyControl(action));
+    const request=previous.catch(()=>{}).then(()=>this.applyControl(action, source));
     this.controlQueue=request;return request;
   }
 
-  async applyControl(action) {
+  async applyControl(action, source) {
     const current = await this.readControl();
     const next = { ...current };
     if (action === "pause") next.pauseAfterCurrent = true;
@@ -325,7 +330,7 @@ export class DashboardState {
         await atomicWriteJson(this.livePath, this.live);
       }
     }
-    await this.appendEvent({ type: `control-${action}` });
+    await this.appendEvent({ type: `control-${action}`, ...(source ? { source } : {}) });
     return next;
   }
 

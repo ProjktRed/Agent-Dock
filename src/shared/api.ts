@@ -96,6 +96,10 @@ export interface DesktopApi {
   status(projectId: string): Promise<ProjectStatus>;
   launchCheck(projectId: string): Promise<LaunchCheck>;
   control(projectId: string, action: ControlAction): Promise<void>;
+  /** Stops every running project: at its next safe point, or at once with now. */
+  stopAll(now: boolean): Promise<{ project: string; result: string }[]>;
+  /** Checks each project's hash-chained action log. */
+  verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;

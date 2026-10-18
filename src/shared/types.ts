@@ -480,7 +480,7 @@ export interface AppSnapshot {
   settings: Settings;
   engine: EngineInfo;
   roles: WorkflowRole[];
-  paths: { config: string; projectState: string };
+  paths: { config: string; projectState: string; stopAll: string };
   /** package.json version of the running app, e.g. 0.13.0 */
   version: string;
 }

@@ -461,6 +461,7 @@ function Safety() {
           </div>
         )}
       </section>
+      <StopAllCard />
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Always enforced by the engine</h2>
         <ul className="list">
@@ -492,6 +493,59 @@ function Safety() {
         <SetRow title="Crash recovery" desc="Interrupted orchestrator operations are saved and replayed with identical inputs on Resume" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
       </section>
     </div>
+  );
+}
+
+/** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
+function StopAllCard() {
+  const { snap, toast } = useApp();
+  const [confirmNow, setConfirmNow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [logs, setLogs] = useState<Awaited<ReturnType<typeof window.api.verifyActionLogs>> | null>(null);
+  const stop = async (now: boolean) => {
+    setBusy(true);
+    try {
+      const results = await window.api.stopAll(now);
+      toast("success", results.length ? results.map((r) => `${r.project}: ${r.result}`).join(" · ") : "No project was running.");
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); setConfirmNow(false); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Stop all and action log</h2>
+      <SetRow title="Stop every running project" desc="At the next safe point, or at once (kills engines and their workers mid-task; unfinished work stays in the working tree). Also in the tray menu." support="app">
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn sm" disabled={busy} onClick={() => void stop(false)}>Stop all</button>
+          <button className="btn sm danger" disabled={busy} onClick={() => setConfirmNow(true)}>Stop all now…</button>
+        </div>
+      </SetRow>
+      <SetRow title="From a terminal" desc={snap.paths.stopAll ? <span>Works without the app; add <span className="mono">--now</span> to stop at once or <span className="mono">--project "Name"</span> for one project: <span className="mono">{snap.paths.stopAll}</span></span> : "The launcher could not be written to the config folder."} support="app">
+        {snap.paths.stopAll ? <button className="btn sm" onClick={() => void navigator.clipboard.writeText(`"${snap.paths.stopAll}"`).then(() => toast("success", "Command copied"))}>Copy command</button> : null}
+      </SetRow>
+      <SetRow title="Action log" desc="Every activity event and control request (with who asked: app, dashboard, terminal or a run limit), chained by SHA-256 in action-log.ndjson in each project's state folder. Clearing activity history never touches it; an edited or deleted entry breaks the chain." support="engine">
+        <button className="btn sm" onClick={() => void window.api.verifyActionLogs().then(setLogs, (error) => toast("error", (error as Error).message))}>Verify logs</button>
+      </SetRow>
+      {logs && (
+        <ul className="list">
+          {logs.length ? logs.map((l) => (
+            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${l.entries} entries${l.lastAt ? `, last ${new Date(l.lastAt).toLocaleString()}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
+          )) : <li><span>No projects.</span></li>}
+        </ul>
+      )}
+      {confirmNow && (
+        <Modal label="Stop all now" onClose={() => setConfirmNow(false)}>
+          <div>
+            <h2 className="h2">Stop every running project now?</h2>
+            <p className="sub" style={{ margin: "6px 0 0" }}>Engines and their workers are killed mid-task. Unfinished work stays in the working tree for you to inspect; nothing is committed or reset.</p>
+          </div>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="grow" />
+            <button className="btn ghost" onClick={() => setConfirmNow(false)}>Cancel</button>
+            <button className="btn primary" disabled={busy} onClick={() => void stop(true)}>Stop all now</button>
+          </div>
+        </Modal>
+      )}
+    </section>
   );
 }
 

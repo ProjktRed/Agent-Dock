@@ -175,7 +175,7 @@ export async function startDashboardServer({ stateDir, workspace, port = 4173, o
       }
       if (request.method === "POST" && url.pathname === "/api/control") {
         const body = await readBody(request);
-        const control = await state.setControl(body.action);
+        const control = await state.setControl(body.action, { source: "dashboard" });
         await onControl(body.action, control);
         return sendJson(response, 200, control);
       }

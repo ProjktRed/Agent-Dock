@@ -34,6 +34,8 @@ const api: DesktopApi = {
   status: invoke("engine:status") as DesktopApi["status"],
   launchCheck: invoke("engine:check") as DesktopApi["launchCheck"],
   control: invoke("engine:control") as DesktopApi["control"],
+  stopAll: invoke("engine:stopAll") as DesktopApi["stopAll"],
+  verifyActionLogs: invoke("engine:verifyLogs") as DesktopApi["verifyActionLogs"],
   usage: invoke("usage") as DesktopApi["usage"],
   localContext: invoke("usage:localContext") as DesktopApi["localContext"],
   history: invoke("project:history") as DesktopApi["history"],

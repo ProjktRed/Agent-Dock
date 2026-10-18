@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
+import { flushActionLog, verifyActionLog } from "./action-log.mjs";
 
 // Unattended mode: run-wide limits the engine enforces itself. A limit asks for Stop, so the loop ends at
 // its next safe point (never mid-task), and the end-of-run report says which limit ended it.
@@ -121,7 +122,7 @@ export function elevationAllowed() {
 async function reachLimit(state, limit, detail) {
   if (RUN.limit) return;
   RUN.limit = { limit, detail, at: new Date().toISOString() };
-  await state.setControl("stop");
+  await state.setControl("stop", { source: "run-limit" });
   await state.record({ type: "run-limit", limit, message: detail });
 }
 
@@ -153,6 +154,8 @@ export async function writeRunReport(stateDir, result) {
     tasksApproved: RUN.tasksPassed, qaFailures: RUN.failures, corrections: RUN.corrections, elevations: RUN.elevations, needsAttention: RUN.attention,
     usage: { tokens: runTokens(), input: RUN.usage.input, cached: RUN.usage.cached, output: RUN.usage.output, costUsd: Math.round(RUN.usage.costUsd * 10000) / 10000, calls: RUN.usage.calls },
     limits: { maxTasks: RUN.maxTasks, maxHours: RUN.maxHours, maxElevations: RUN.maxElevations, maxTokens: RUN.maxTokens, maxCost: RUN.maxCost, maxTokensDay: RUN.maxTokensDay, maxCostDay: RUN.maxCostDay },
+    // The chain head at the end of the run: a log later cut short no longer reaches this entry.
+    actionLog: await flushActionLog().then(() => verifyActionLog(stateDir)).catch((error) => ({ ok: false, reason: error.message })),
   };
   await atomicWriteJson(path.join(stateDir, "run-report.json"), report);
   const line = (label, value) => `- ${label}: ${value}`;
@@ -163,6 +166,7 @@ export async function writeRunReport(stateDir, result) {
     line("Tasks approved", report.tasksApproved), line("QA failures", report.qaFailures), line("Corrections", report.corrections), line("Elevations", report.elevations), line("Stops for attention", report.needsAttention), "",
     line("Tokens", `${n(report.usage.tokens)} (input ${n(report.usage.input)}, of which cached ${n(report.usage.cached)}; output ${n(report.usage.output)}) over ${report.usage.calls} call(s)`),
     line("Reported spend", `${money(report.usage.costUsd)} (only CLIs that report cost count: Claude Code, OpenCode)`), "",
+    line("Action log", report.actionLog.ok ? `verified, ${report.actionLog.entries} entries, head ${report.actionLog.head}` : `NOT VERIFIED (entry ${report.actionLog.brokenAt ?? "?"}: ${report.actionLog.reason})`),
     line("Limits", `tasks ${report.limits.maxTasks || "none"}, hours ${report.limits.maxHours || "none"}, Elevations ${report.limits.maxElevations || "none"}, tokens ${report.limits.maxTokens ? n(report.limits.maxTokens) : "none"}, spend ${report.limits.maxCost ? money(report.limits.maxCost) : "none"}, tokens/day ${report.limits.maxTokensDay ? n(report.limits.maxTokensDay) : "none"}, spend/day ${report.limits.maxCostDay ? money(report.limits.maxCostDay) : "none"}`), "",
   ].join("\n"));
   return report;

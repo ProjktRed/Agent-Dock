@@ -25,6 +25,7 @@ import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
+import { stopLauncher } from "./lib/stop-launcher";
 
 try {
   assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
@@ -370,6 +371,9 @@ function createTray() {
     Menu.buildFromTemplate([
       { label: "Open", click: showWindow },
       { type: "separator" },
+      { label: "Stop all at next safe point", click: () => void stopAll(false) },
+      { label: "Stop all now…", click: () => void confirmStopAllNow() },
+      { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
   );
@@ -377,10 +381,40 @@ function createTray() {
   updateTray();
 }
 
+/** Stops every project whose engine is running; the action log records each stop with source "app". */
+async function stopAll(now: boolean) {
+  const results: { project: string; result: string }[] = [];
+  for (const p of store.data.projects) {
+    if (!(await engine.refreshAlive(p))) continue;
+    try {
+      await engine.control(p, now ? "stop-now" : "stop", []);
+      results.push({ project: p.name, result: now ? "stopped now" : "stopping at the next safe point" });
+    } catch (error) {
+      results.push({ project: p.name, result: `failed: ${(error as Error).message}` });
+    }
+  }
+  void pollOnce();
+  osNotify("Stop all", results.length ? results.map((r) => `${r.project}: ${r.result}`).join("\n") : "No project was running.");
+  return results;
+}
+
+async function confirmStopAllNow() {
+  const { response } = await dialog.showMessageBox({ type: "warning", buttons: ["Stop all now", "Cancel"], defaultId: 1, cancelId: 1, title: "Stop all now", message: "Stop every running project at once?", detail: "Engines and their workers are killed mid-task. Unfinished work stays in the working tree for you to inspect." });
+  if (response === 0) await stopAll(true);
+}
+
+/** Keeps the terminal stop-all launcher in the config folder current with this install. */
+async function writeStopLauncher() {
+  const launcher = stopLauncher({ platform: process.platform, execPath: process.execPath, script: path.join(engineDir, "src", "stop-all.mjs"), configDir: store.dir });
+  await writeFile(launcher.file, launcher.content, { mode: 0o755 });
+  return launcher.file;
+}
+let stopAllPath = "";
+
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot }, version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, version: app.getVersion() };
 }
 
 /** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
@@ -566,6 +600,11 @@ function registerIpc() {
     void pollOnce();
   });
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
+  handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
+  handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
+    try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason }; }
+    catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
+  })));
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });
   handle("skills:list", () => listSkills(engineDir, store.data.settings.skills.importedDirs));
@@ -698,6 +737,7 @@ app.whenReady().then(async () => {
     store.data.agents = defaultAgents({ qa: m.qa ?? "", assessment: m.assessment ?? "", elevate: m.elevate ?? "", reasoning: m.reasoning ?? "" });
     await store.saveAgents();
   }
+  stopAllPath = await writeStopLauncher().catch((error) => { console.error("Stop-all launcher not written", error); return ""; });
   registerIpc();
   createWindow();
   createTray();

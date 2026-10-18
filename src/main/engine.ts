@@ -165,16 +165,16 @@ export class EngineManager {
       }
       this.alive.delete(project.id);
       // The killed engine writes nothing; record the stop so it is not taken for an interruption.
-      await (await this.state(project)).record({ type: "stopped", reason: "stop-now" }).catch(() => undefined);
+      await (await this.state(project)).record({ type: "stopped", reason: "stop-now", source: "app" }).catch(() => undefined);
       return;
     }
     if (action === "stop-after-task") {
       this.stopAfterTask.add(project.id);
-      await (await this.state(project)).setControl("pause");
+      await (await this.state(project)).setControl("pause", { source: "app" });
       return;
     }
     const state = await this.state(project);
-    await state.setControl(action);
+    await state.setControl(action, { source: "app" });
     if (action === "resume") this.stopAfterTask.delete(project.id);
     if ((action === "resume" || action === "resolve" || action === "retry-qa") && !running) await this.start(project, args, action === "resolve", envDelta);
     if (action === "elevate" && !running) await this.spawnEngine(project, "elevate-cli.mjs", args, envDelta);
@@ -184,8 +184,13 @@ export class EngineManager {
   async afterPoll(project: Project, status: ProjectStatus): Promise<void> {
     if (this.stopAfterTask.has(project.id) && status.stage === "paused") {
       this.stopAfterTask.delete(project.id);
-      await (await this.state(project)).setControl("stop");
+      await (await this.state(project)).setControl("stop", { source: "app" });
     }
+  }
+
+  /** The project's tamper-evident action log, checked entry by entry (engine/src/action-log.mjs). */
+  async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string }> {
+    return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }
 
   isStoppingAfterTask(projectId: string) {

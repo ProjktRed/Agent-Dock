@@ -6,7 +6,7 @@ import { CodexWorker, ROLE_EFFORT, ROLE_FAST, roleModel, useOrchestratorModels, 
 import { CLAUDE_MODELS, ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { buildMixedOrchestrator, isMixed, roleClis, useMixedDefaults } from "./mixed-orchestrator.mjs";
 import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
-import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
+import { DashboardState, atomicWriteJson, flushActionLog } from "./dashboard-state.mjs";
 import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
@@ -139,4 +139,5 @@ try {
   process.exitCode = 1;
 } finally {
   if (deadline) clearTimeout(deadline);
+  await flushActionLog();
 }
