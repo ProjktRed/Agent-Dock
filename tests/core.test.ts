@@ -1,5 +1,4 @@
 import path from "node:path";
-import { checkChannelUrl } from "../src/main/lib/notify-channels";
 import { describe, expect, it } from "vitest";
 import type { Agent, CliConnection, EngineEvent, Project, Settings, WorkflowRole } from "@shared/types";
 import { parseLlamaSlots } from "../src/main/local-models";
@@ -112,13 +111,6 @@ describe("engine launch args", () => {
     expect(noModel.problems).toContain("The local Supervisor reviewer needs a model name.");
     expect(plan.args[plan.args.indexOf("--supervisor-review") + 1]).toBe("off");
     expect(plan.args).not.toContain("--supervisor-reviewer");
-  });
-  it("accepts only https webhook URLs (http to this machine) and real Discord webhook URLs", () => {
-    expect(checkChannelUrl("webhook", " https://hooks.example.com/a ")).toBe("https://hooks.example.com/a");
-    expect(checkChannelUrl("webhook", "http://localhost:8080/x")).toBe("http://localhost:8080/x");
-    expect(() => checkChannelUrl("webhook", "http://hooks.example.com")).toThrow(/https/);
-    expect(checkChannelUrl("discord", "https://discord.com/api/webhooks/1/abc")).toBe("https://discord.com/api/webhooks/1/abc");
-    expect(() => checkChannelUrl("discord", "https://discord.com.evil.io/api/webhooks/1")).toThrow(/Discord webhook URL/);
   });
   it("maps the default agents onto engine flags", () => {
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });

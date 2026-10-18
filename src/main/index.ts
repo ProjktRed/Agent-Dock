@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
-import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
+import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
@@ -26,7 +26,6 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
-import { channelBody, checkChannelUrl } from "./lib/notify-channels";
 
 try {
   assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
@@ -232,10 +231,21 @@ async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames:
 }
 
 /** Remote notification channels for the engine, in the environment (webhook URLs carry their own secret). */
+const NOTIFY_CHANNELS: NotifyChannel[] = ["webhook", "discord", "slack", "telegram", "email"];
+/** A saved channel: URL channels are stored as the URL, Telegram and email as JSON (all encrypted). */
+function notifyChannel(kind: NotifyChannel): unknown {
+  const raw = store.getSecret(`notify:${kind}`);
+  if (!raw || !["telegram", "email"].includes(kind)) return raw ?? null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
 function notifyEnv(p: Project): NodeJS.ProcessEnv {
-  const webhook = store.getSecret("notify:webhook"), discord = store.getSecret("notify:discord");
-  if (!webhook && !discord) return {};
-  return { AGENT_DOCK_NOTIFY: JSON.stringify({ project: p.name, webhook, discord, digests: store.data.settings.general.notifyDigests !== false }) };
+  const channels = Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, notifyChannel(k)]));
+  if (!Object.values(channels).some(Boolean)) return {};
+  return { AGENT_DOCK_NOTIFY: JSON.stringify({ project: p.name, ...channels, digests: store.data.settings.general.notifyDigests !== false }) };
+}
+function notifyDetails(): Partial<Record<NotifyChannel, string>> {
+  const telegram = notifyChannel("telegram") as { chatId?: string } | null, email = notifyChannel("email") as { inbox?: string; to?: string[] } | null;
+  return { ...(telegram?.chatId ? { telegram: `chat ${telegram.chatId}` } : {}), ...(email?.inbox ? { email: `${email.inbox} → ${(email.to ?? []).join(", ")}` } : {}) };
 }
 
 function providerEnv(p: Project): NodeJS.ProcessEnv {
@@ -424,7 +434,7 @@ let stopAllPath = "";
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, notifyChannels: { webhook: store.hasSecret("notify:webhook"), discord: store.hasSecret("notify:discord") }, version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, notifyChannels: Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, store.hasSecret(`notify:${k}`)])) as Record<NotifyChannel, boolean>, notifyDetails: notifyDetails(), version: app.getVersion() };
 }
 
 /** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
@@ -610,16 +620,16 @@ function registerIpc() {
     void pollOnce();
   });
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
-  handle("notify:setChannel", async (kind: "webhook" | "discord", url: string | null) => {
-    if (kind !== "webhook" && kind !== "discord") throw new Error("Unknown channel");
-    await store.setSecret(`notify:${kind}`, url ? checkChannelUrl(kind, String(url)) : null);
+  handle("notify:setChannel", async (kind: NotifyChannel, value: string | Record<string, string> | null) => {
+    if (!NOTIFY_CHANNELS.includes(kind)) throw new Error("Unknown channel");
+    const checked = value ? (await engine.notifyModule()).checkChannel(kind, value) : null;
+    await store.setSecret(`notify:${kind}`, checked === null ? null : typeof checked === "string" ? checked : JSON.stringify(checked));
     return snapshot();
   });
-  handle("notify:test", async (kind: "webhook" | "discord") => {
-    const url = store.getSecret(`notify:${kind}`);
-    if (!url) throw new Error("No URL saved for this channel");
-    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(channelBody(kind, "", "test", "Agent Dock test", "Notifications from Agent Dock will arrive here.")), signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) throw new Error(`The ${kind} answered HTTP ${response.status}`);
+  handle("notify:test", async (kind: NotifyChannel) => {
+    const value = NOTIFY_CHANNELS.includes(kind) ? notifyChannel(kind) : null;
+    if (!value) throw new Error("Nothing saved for this channel");
+    await (await engine.notifyModule()).sendChannel(kind, value, { type: "test", title: "Agent Dock test", message: "Notifications from Agent Dock will arrive here." }, fetch);
   });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {

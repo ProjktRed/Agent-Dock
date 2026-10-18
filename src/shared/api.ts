@@ -16,6 +16,7 @@ import type {
   UpdateStatus,
   UsageSummary,
   LocalContext,
+  NotifyChannel,
   PlanProposal,
   WorkflowRole,
 } from "./types";
@@ -100,8 +101,8 @@ export interface DesktopApi {
   /** Stops every running project: at its next safe point, or at once with now. */
   stopAll(now: boolean): Promise<{ project: string; result: string }[]>;
   /** Saves (encrypted) or clears a remote notification channel URL; returns the new snapshot. */
-  setNotifyChannel(kind: "webhook" | "discord", url: string | null): Promise<AppSnapshot>;
-  testNotifyChannel(kind: "webhook" | "discord"): Promise<void>;
+  setNotifyChannel(kind: NotifyChannel, value: string | Record<string, string> | null): Promise<AppSnapshot>;
+  testNotifyChannel(kind: NotifyChannel): Promise<void>;
   /** Checks each project's hash-chained action log. */
   /** Supervisor plan proposals for a project, newest last. */
   planProposals(projectId: string): Promise<PlanProposal[]>;

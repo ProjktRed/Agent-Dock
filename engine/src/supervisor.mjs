@@ -68,7 +68,7 @@ async function alert(monitor, message, { act = false } = {}) {
   S.alerts.push(entry);
   if (action) await S.state.setControl(action, { source: "supervisor" });
   await S.state.record({ type: "supervisor-alert", monitor, message, ...(action ? { action } : {}) });
-  notify({ type: "supervisor-alert", title: `Supervisor: ${monitor}`, message: action ? `${message} Asked to ${action} at the next safe point.` : message });
+  notify({ type: "supervisor-alert", title: `Supervisor: ${monitor}`, message: action ? `${message} Asked to ${action} at the next safe point.` : message, urgent: Boolean(action) });
   queueReview(entry);
 }
 

@@ -193,6 +193,11 @@ export class EngineManager {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }
 
+  /** The engine's notification module: one set of channel rules and message shapes for app and engine. */
+  notifyModule() {
+    return this.load("notify.mjs");
+  }
+
   /** Supervisor plan proposals (engine/src/plan-stewardship.mjs), checked against today's plan. */
   async planProposals(project: Project): Promise<PlanProposal[]> {
     return (await this.load("plan-stewardship.mjs")).listPlanProposals({ stateDir: project.stateDir, workspace: project.path });

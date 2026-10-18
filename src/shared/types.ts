@@ -339,6 +339,9 @@ export interface PlanTask {
 }
 
 /** A Supervisor-proposed IMPLEMENTATION_PLAN.md change (engine/src/plan-stewardship.mjs). */
+/** Remote notification channels the engine sends to (engine/src/notify.mjs). */
+export type NotifyChannel = "webhook" | "discord" | "slack" | "telegram" | "email";
+
 export interface PlanProposal {
   id: string;
   at: string;
@@ -524,7 +527,9 @@ export interface AppSnapshot {
   engine: EngineInfo;
   roles: WorkflowRole[];
   paths: { config: string; projectState: string; stopAll: string };
-  notifyChannels: { webhook: boolean; discord: boolean };
+  notifyChannels: Record<NotifyChannel, boolean>;
+  /** Non-secret description of saved channels (Telegram chat, email inbox and recipients). */
+  notifyDetails: Partial<Record<NotifyChannel, string>>;
   /** package.json version of the running app, e.g. 0.13.0 */
   version: string;
 }

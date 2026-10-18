@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Agent, EngineTuning, LibraryPreview, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, LibraryPreview, NotifyChannel, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -497,6 +497,15 @@ function Safety() {
   );
 }
 
+/** Remote channels; secrets are typed here once, stored encrypted, and never shown again. */
+const NOTIFY_ROWS: { kind: NotifyChannel; title: string; help: string; fields: { key: string; label: string; placeholder: string; secret?: boolean }[] }[] = [
+  { kind: "webhook", title: "Webhook", help: "POSTs JSON {source, project, type, title, message, at}. https only.", fields: [{ key: "url", label: "URL", placeholder: "https://…", secret: true }] },
+  { kind: "discord", title: "Discord", help: "A Discord channel webhook URL (Channel settings › Integrations › Webhooks).", fields: [{ key: "url", label: "URL", placeholder: "https://discord.com/api/webhooks/…", secret: true }] },
+  { kind: "slack", title: "Slack", help: "A Slack incoming webhook URL (Slack app › Incoming Webhooks).", fields: [{ key: "url", label: "URL", placeholder: "https://hooks.slack.com/services/…", secret: true }] },
+  { kind: "telegram", title: "Telegram", help: "A bot from @BotFather and the chat it writes to. Send your bot a message first, then use your numeric chat ID (for example from @userinfobot).", fields: [{ key: "token", label: "bot token", placeholder: "123456789:ABC…", secret: true }, { key: "chatId", label: "chat ID", placeholder: "chat ID" }] },
+  { kind: "email", title: "Email (AgentMail)", help: "Sent from your AgentMail inbox with its API key. Only what needs you, never routine alerts or digests.", fields: [{ key: "apiKey", label: "API key", placeholder: "AgentMail API key", secret: true }, { key: "inbox", label: "from inbox", placeholder: "you@agentmail.to" }, { key: "to", label: "send to", placeholder: "me@example.com" }] },
+];
+
 /** Supervisor v1 (monitors, what it may do) and the remote notification channels. */
 function SupervisorCard() {
   const { snap, toast, refresh } = useApp();
@@ -504,9 +513,12 @@ function SupervisorCard() {
   const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...snap.settings.workflow.supervisor };
   const g = snap.settings.general;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const saveChannel = async (kind: "webhook" | "discord", url: string | null) => {
-    try { await window.api.setNotifyChannel(kind, url); await refresh(); setDrafts((d) => ({ ...d, [kind]: "" })); toast("success", url ? "Saved (encrypted)" : "Removed"); }
-    catch (error) { toast("error", (error as Error).message); }
+  const saveChannel = async (kind: NotifyChannel, value: string | Record<string, string> | null) => {
+    try {
+      await window.api.setNotifyChannel(kind, value); await refresh();
+      setDrafts((d) => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${kind}.`))));
+      toast("success", value ? "Saved (encrypted)" : "Removed");
+    } catch (error) { toast("error", (error as Error).message); }
   };
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
@@ -588,11 +600,11 @@ function SupervisorCard() {
       <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
         <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
       </SetRow>
-      {(["webhook", "discord"] as const).map((kind) => (
-        <SetRow key={kind} title={kind === "webhook" ? "Webhook" : "Discord"}
+      {NOTIFY_ROWS.map(({ kind, title, help, fields }) => (
+        <SetRow key={kind} title={title}
           desc={snap.notifyChannels[kind]
-            ? "Saved (encrypted). The engine sends alerts, run limits, attention, blocked runs and digests here itself, even with the app closed."
-            : kind === "webhook" ? "POSTs JSON {source, project, type, title, message, at}. https only." : "A Discord channel webhook URL (Channel settings › Integrations › Webhooks)."}
+            ? `Saved (encrypted)${snap.notifyDetails[kind] ? ` · ${snap.notifyDetails[kind]}` : ""}. ${kind === "email" ? "Only what needs you: attention, blocked runs, run limits, plan proposals and alerts that paused or stopped a run." : "The engine sends alerts, run limits, attention, blocked runs and digests here itself, even with the app closed."}`
+            : help}
           support="engine">
           {snap.notifyChannels[kind] ? (
             <div className="row" style={{ gap: 8 }}>
@@ -600,9 +612,13 @@ function SupervisorCard() {
               <button className="btn sm danger" onClick={() => void saveChannel(kind, null)}>Remove</button>
             </div>
           ) : (
-            <div className="row" style={{ gap: 8 }}>
-              <input className="input mono" type="password" placeholder="https://…" value={drafts[kind] ?? ""} aria-label={`${kind} URL`} onChange={(e) => setDrafts((d) => ({ ...d, [kind]: e.target.value }))} />
-              <button className="btn sm" disabled={!drafts[kind]?.trim()} onClick={() => void saveChannel(kind, drafts[kind].trim())}>Save</button>
+            <div className="row wrap" style={{ gap: 8 }}>
+              {fields.map((f) => (
+                <input key={f.key} className="input mono" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [`${kind}.${f.key}`]: e.target.value }))} style={{ minWidth: 0, flex: "1 1 140px" }} />
+              ))}
+              <button className="btn sm" disabled={fields.some((f) => !drafts[`${kind}.${f.key}`]?.trim())}
+                onClick={() => void saveChannel(kind, fields.length === 1 ? drafts[`${kind}.url`].trim() : Object.fromEntries(fields.map((f) => [f.key, drafts[`${kind}.${f.key}`].trim()])))}>Save</button>
             </div>
           )}
         </SetRow>
