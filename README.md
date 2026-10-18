@@ -112,6 +112,7 @@ tests/           vitest unit tests for the main-process logic
 | Orchestrator agent: optional usage-limit backup agent | `--<role>-backup-cli`, `--<role>-backup-model`, `--<role>-backup-effort`, `--<role>-backup-fast` (Resolver follows Assessment) |
 | Automatic elevation (and Elevation agent enabled) | `--sol-reassessment` |
 | Worker tool guard | `--tool-guard` |
+| Agents: assigned skills and custom instructions (up to 4,000 characters, added after the skills) | `--skills-file <state>\assigned-skills.json` (written at start) |
 | Attached task file | `--task` (validated with the engine's own `validateTask`, used once) |
 
 Controls write the engine's `control.json` through its own `DashboardState`, with the same
@@ -273,8 +274,6 @@ debugging switches. It does not replace live-provider integration testing or an 
 - The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
   whichever model runs the role.
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
-- Agent custom instructions and extra skills are saved only; the engine does not
-  read them yet.
 - A usage limit hit during a Codex or Claude Code implementation stops that attempt. Because an
   interrupted implementation is never replayed, the task then needs Resolve or your decision.
 - llama.cpp is only started automatically when a launcher script is set (Settings › Advanced ›

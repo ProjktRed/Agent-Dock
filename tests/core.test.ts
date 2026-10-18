@@ -138,6 +138,15 @@ describe("engine launch args", () => {
     expect(none.autoAllImported).toBe(false);
     expect(none.args).not.toContain("--skills-file");
   });
+  it("passes each role agent's custom instructions through the skills file, and refuses over-long ones", () => {
+    const list = agents().map((agent) => agent.role === "implementation" ? { ...agent, autoAllImported: false, instructions: "  Use tabs.  " }
+      : agent.role === "qa" ? { ...agent, instructions: "Check the changelog." } : { ...agent, autoAllImported: false });
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    expect(plan.notes).toMatchObject({ implementation: "Use tabs.", qa: "Check the changelog." });
+    expect(plan.args).toContain("--skills-file");
+    const long = buildEngineArgs({ project: project(), agents: list.map((a) => a.role === "qa" ? { ...a, instructions: "x".repeat(4_001) } : a), clis: clis(), settings: settings() });
+    expect(long.problems.join(" ")).toMatch(/Custom instructions for .* longer than 4,000/);
+  });
   it("passes 'when relevant' implementation skills, without repeating always-assigned ones", () => {
     const list = agents().map((agent) => agent.role === "implementation" ? { ...agent, skills: ["tdd"], autoSkills: ["tdd", "css", "css", "sql"] } : agent);
     const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });

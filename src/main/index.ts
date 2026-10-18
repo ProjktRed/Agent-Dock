@@ -192,9 +192,9 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
     await mkdir(p.stateDir, { recursive: true });
     await writeFile(path.join(p.stateDir, "workflow-roles.json"), JSON.stringify(check.roles, null, 2));
   }
-  if (Object.keys(check.skills).length || check.autoSkills.length || check.autoAllImported) {
+  if (Object.keys(check.skills).length || Object.keys(check.notes).length || check.autoSkills.length || check.autoAllImported) {
     await mkdir(p.stateDir, { recursive: true });
-    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify(await assignedSkillsFile(check.skills, check.autoSkills, check.autoAllImported), null, 2));
+    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify({ ...(await assignedSkillsFile(check.skills, check.autoSkills, check.autoAllImported)), ...(Object.keys(check.notes).length ? { notes: check.notes } : {}) }, null, 2));
   }
   return check.args;
 }

@@ -278,7 +278,7 @@ function Skills() {
           {sel.warnings.map((w) => <div className="banner warnb" key={w}><Icon name="warn" className="warn" /><span>{w}</span></div>)}
           <p className="sub" style={{ margin: 0 }}>{sel.description}</p>
           <div className="field">
-            <span className="row" style={{ gap: 8 }}>Assign to agents<Support kind="saved" /></span>
+            <span className="row" style={{ gap: 8 }}>Assign to agents<Support kind="engine" /></span>
             <div className="row wrap" style={{ gap: 8 }}>
               {snap.agents.map((a) => {
                 const on = a.skills.includes(sel.name);

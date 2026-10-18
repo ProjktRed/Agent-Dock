@@ -23,6 +23,22 @@ test('the skills file is validated before any role sees it',()=>{
  assert.deepEqual(parseAssignedSkills(file({'role:review-1':[skill('ok','do it')]}))['role:review-1'].map(s=>s.name),['ok']);
 });
 
+test('custom instructions reach their own role prompt only, after the skills, and are validated',async t=>{
+ t.after(()=>useAssignedSkills({}));
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},notes:{worker:'x'}}),/notes for unknown role/);
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},notes:{qa:'x'.repeat(4_001)}}),/over 4000/);
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},notes:['x']}),/notes must be/);
+ useAssignedSkills(parseAssignedSkills({version:1,roles:{implementation:[skill('tdd','Write the test first.')]},notes:{implementation:' NOTE_IMPL ',qa:'NOTE_QA','role:r-1':'NOTE_ROLE',assessment:'  '}}));
+ const impl=buildInitialPrompt(task);
+ assert.ok(impl.includes('NOTE_IMPL')&&!impl.includes('NOTE_QA'));
+ assert.ok(impl.indexOf('SKILL_BODY_tdd')<impl.indexOf('NOTE_IMPL'),'notes follow the skills');
+ assert.match(impl,/Custom instructions \(written by the user/);
+ const qa=buildQaPrompt({task});
+ assert.ok(qa.includes('NOTE_QA')&&!qa.includes('NOTE_IMPL'));
+ assert.equal(managerHandoffSkill('assessment').includes('Custom instructions'),false,'blank notes are dropped');
+ assert.ok(managerHandoffSkill('role:r-1').includes('NOTE_ROLE'));
+});
+
 test('each role prompt carries only its own assigned skills, after the engine guidance',async t=>{
  t.after(()=>useAssignedSkills({}));
  useAssignedSkills(parseAssignedSkills(file({

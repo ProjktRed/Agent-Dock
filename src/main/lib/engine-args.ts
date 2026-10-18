@@ -30,6 +30,9 @@ export function wrongProviderModel(orchestrator: "codex" | "claude", model: stri
   return /^(gpt-|o\d|codex-)/i.test(model) && !["gpt-6.1-sol", "gpt-6-astra"].includes(model);
 }
 
+/** Longest custom instructions per agent (engine/src/task-handoff-skill.mjs NOTE_CHARS). */
+export const AGENT_NOTES_MAX_CHARS = 4_000;
+
 /** Cline CLI --thinking levels (engine --cline-thinking). */
 export const CLINE_THINKING = ["none", "low", "medium", "high", "xhigh"];
 
@@ -67,6 +70,8 @@ export interface EngineLaunchPlan {
   skills: Record<string, string[]>;
   autoSkills: string[];
   autoAllImported: boolean;
+  /** Each role agent's custom instructions, keyed like skills; written to the same --skills-file. */
+  notes: Record<string, string>;
   /** Block the start. */
   problems: string[];
   /** Shown, but the start goes ahead (engine guardrails off). */
@@ -263,9 +268,15 @@ export function buildEngineArgs(input: {
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
   // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.
   const skills: Record<string, string[]> = {};
+  const notes: Record<string, string> = {};
   const assign = (key: string, agent: Agent | null | undefined) => {
     const names = (agent?.skills ?? []).filter((name) => name !== "bounded-task-handoff");
     if (names.length) skills[key] = [...new Set(names)];
+    const text = agent?.instructions?.trim();
+    if (text) {
+      if (text.length > AGENT_NOTES_MAX_CHARS) problems.push(`Custom instructions for ${agent!.name} are longer than ${AGENT_NOTES_MAX_CHARS.toLocaleString()} characters; shorten them.`);
+      else notes[key] = text;
+    }
   };
   assign("implementation", impl);
   assign("qa", qa);
@@ -276,7 +287,7 @@ export function buildEngineArgs(input: {
   // "When relevant" skills: Assessment sees their descriptions and picks per task; always-assigned ones are not repeated.
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
-  if (Object.keys(skills).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
   // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
   if (!guarded) {
     for (const [key, flag] of TUNING_FLAGS) {
@@ -331,6 +342,7 @@ export function buildEngineArgs(input: {
     skills,
     autoSkills,
     autoAllImported,
+    notes,
     problems,
     warnings,
     summary: {

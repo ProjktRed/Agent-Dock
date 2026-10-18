@@ -290,8 +290,8 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         )}
       </div>
       <label className="field">
-        <span className="row" style={{ gap: 8 }}>Custom instructions<Support kind="saved" /></span>
-        <textarea className="ta" style={{ minHeight: 70 }} value={draft.instructions} onChange={(e) => set("instructions", e.target.value)} placeholder="The engine writes its own role prompts; these notes are stored for when it accepts additions." />
+        <span className="row" style={{ gap: 8 }}>Custom instructions<Support kind="engine" /><span className={`sub${draft.instructions.length > 4000 ? " err" : ""}`}>{draft.instructions.length.toLocaleString()} / 4,000</span></span>
+        <textarea className="ta" style={{ minHeight: 70 }} value={draft.instructions} onChange={(e) => set("instructions", e.target.value)} placeholder="Added to this agent’s role prompt, after its skills. The task scope, allowed paths, guard rules and output format still take precedence." />
       </label>
       <div className="field">
         <span className="row" style={{ gap: 8 }}>Skills<Support kind="engine" /></span>

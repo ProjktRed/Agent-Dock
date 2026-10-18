@@ -38,6 +38,8 @@ export interface LaunchCheck {
   autoSkills: string[];
   /** Assessment may pick from every imported, enabled skill (the Implementer's toggle). */
   autoAllImported: boolean;
+  /** Each role agent's custom instructions (written to the same file). */
+  notes: Record<string, string>;
 }
 
 /** One entry of the engine's --roles-file. */

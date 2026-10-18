@@ -18,7 +18,8 @@ export function taskSkillMode(task, correction = "", { required = false } = {}) 
 // resolver, qa, elevate, and role:<id> for workflow roles. Only SKILL.md instructions are delivered.
 // "auto:implementation" holds the implementation skills used only when relevant: Assessment sees their
 // names and descriptions and picks them per task with a "Skills:" line in the task prompt.
-const SKILL_CHARS = 16_000, ROLE_CHARS = 40_000, AUTO_SKILLS = 150, AUTO_PICK = 3, DESCRIPTION_CHARS = 250;
+// "notes" holds each role agent's custom instructions from the app (same role keys), kept as "notes:<role>".
+const NOTE_CHARS = 4_000, SKILL_CHARS = 16_000, ROLE_CHARS = 40_000, AUTO_SKILLS = 150, AUTO_PICK = 3, DESCRIPTION_CHARS = 250;
 let assigned = {};
 
 export function parseAssignedSkills(value) {
@@ -36,6 +37,15 @@ export function parseAssignedSkills(value) {
       if (total > ROLE_CHARS) throw new Error(`Skills file: skills for ${key} are over ${ROLE_CHARS} characters in total`);
       return { name: skill.name, instructions: skill.instructions.trim() };
     });
+  }
+  if (value.notes !== undefined) {
+    if (!value.notes || typeof value.notes !== "object" || Array.isArray(value.notes)) throw new Error("Skills file: notes must be {role: text}");
+    for (const [key, text] of Object.entries(value.notes)) {
+      if (!/^(?:implementation|assessment|resolver|qa|elevate|role:[\w-]{1,64})$/.test(key)) throw new Error(`Skills file: notes for unknown role ${key}`);
+      if (typeof text !== "string") throw new Error(`Skills file: notes for ${key} must be text`);
+      if (text.length > NOTE_CHARS) throw new Error(`Skills file: notes for ${key} are over ${NOTE_CHARS} characters`);
+      if (text.trim()) roles[`notes:${key}`] = text.trim();
+    }
   }
   if (value.auto !== undefined) {
     const pool = value.auto?.implementation ?? [];
@@ -63,7 +73,12 @@ export function readAssignedSkills(file) {
 }
 
 export function assignedSkillsText(role) {
-  return skillsBlock(assigned[role] ?? []);
+  return skillsBlock(assigned[role] ?? []) + notesBlock(assigned[`notes:${role}`]);
+}
+
+function notesBlock(text) {
+  if (!text) return "";
+  return ["", "Custom instructions (written by the user for this role's agent). Follow them where they apply; the task scope, allowed paths, guard rules and required output format above take precedence.", text].join("\n");
 }
 
 /** Assessment's view of the automatic skills: names and descriptions only. */
@@ -141,5 +156,5 @@ export function managerHandoffSkill(role) {
 export function clineHandoffSkill(task, correction = "") {
   const mode = taskSkillMode(task, correction);
   const reference = readFileSync(new URL(`references/${mode}.md`, root), "utf8");
-  return `${shared}\n\nSelected task skill: ${mode}\n${reference}${skillsBlock(implementationSkills(task))}`;
+  return `${shared}\n\nSelected task skill: ${mode}\n${reference}${skillsBlock(implementationSkills(task))}${notesBlock(assigned["notes:implementation"])}`;
 }
