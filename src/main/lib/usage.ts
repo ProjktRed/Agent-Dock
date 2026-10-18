@@ -10,6 +10,7 @@ export function classifyPrompt(prompt: string): TokenRecord["role"] {
   if (/^You are the implementation worker/i.test(head)) return "implementation";
   if (/^You are .{1,120}?, a custom workflow role/i.test(head)) return "custom";
   if (/^You are Resolver/i.test(head)) return "resolver";
+  if (/^You are Assessment\b/i.test(head)) return "assessment";
   if (/reassessment|^You are Sol\b|Elevation|Astra/i.test(head)) return "elevation";
   if (/\bQA\b/.test(head)) return "qa";
   return "assessment";

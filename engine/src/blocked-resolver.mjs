@@ -117,7 +117,7 @@ export async function runBlockedResolver({workspace,stateDir,codex,readControl,o
   const strategy=recoveryFingerprint({strategy:decision.newStrategy.trim().toLowerCase().replace(/\s+/g,' '),instructions:decision.nextWorkerInstructions.trim().toLowerCase().replace(/\s+/g,' ')});
   const duplicate=(r.resolverRecoveries??[]).some(entry=>entry.strategy===strategy);
   if(canRecoverOperational(input)&&['correction','strategy-revised'].includes(decision.status)&&!duplicate){
-   // Model advice never grants scope/permission. Recheck independent evidence after Sol exits.
+   // Model advice never grants scope/permission. Recheck independent evidence after the Resolver exits.
    const evidence=await collectGitEvidence({workspace,task:input.task,baselineSha:r.baselineSha});
    if(evidence.scope.status!=='PASS'||evidence.diff.truncated||await git(workspace,'rev-parse','HEAD')!==r.baselineSha||evidence.diff.text!==input.currentDiff.text)throw Error('Scope/HEAD/diff changed during Resolver');
    r.qaPacket={...r.qaPacket,diff:evidence.diff,changedFiles:evidence.changedFiles,qaEvidence:{...r.qaPacket.qaEvidence,scope:evidence.scope,categories:{...r.qaPacket.qaEvidence.categories,scopeCheck:'PASS'}}};

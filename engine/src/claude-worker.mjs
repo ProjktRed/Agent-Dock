@@ -12,12 +12,6 @@ import { claudeUsage, noteUsage } from "./run-budget.mjs";
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
 const CODEX_DEFAULT_LABELS = new Set(["gpt-6.1-sol", "gpt-6-astra"]);
-const ROLE_LABELS = new Map([
-  ["GPT-6.1 Sol Medium", "Claude Sonnet (medium effort)"],
-  ["GPT-6.1 Sol", "Claude Sonnet"],
-  ["GPT-6 Astra", "Claude Opus"],
-  ["You are Codex performing", "You are Claude performing"],
-]);
 // No role gets a free shell or file editing. Only exact command prefixes are allowed;
 // Node's independent scope/HEAD verification still gates every QA commit.
 const shell = (prefixes) => prefixes.flatMap((p) => [`Bash(${p}:*)`, `PowerShell(${p}:*)`]);
@@ -33,12 +27,6 @@ const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]
 /** Child sessions must not inherit the launching Claude session's host/session wiring. */
 export function claudeChildEnv(env = process.env) {
   return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
-}
-
-export function relabelPrompt(prompt) {
-  let text = prompt;
-  for (const [from, to] of ROLE_LABELS) text = text.split(from).join(to);
-  return text;
 }
 
 export function extractClaudeResult(stdout) {
@@ -68,7 +56,7 @@ export class ClaudeWorker extends CodexWorker {
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
-    const text = relabelPrompt(prompt);
+    const text = prompt;
     await writeFile(path.join(invocation, "schema.json"), JSON.stringify(schema));
     await writeFile(path.join(invocation, "prompt.txt"), text);
     const writable = sandbox !== "read-only";

@@ -319,6 +319,11 @@ describe("usage telemetry", () => {
     expect(classifyPrompt("You are Codex performing one assessment operation.")).toBe("assessment");
     expect(classifyPrompt("You are Sol performing one short-lived, read-only reassessment")).toBe("elevation");
     expect(classifyPrompt("You are Resolver: Claude Sonnet")).toBe("resolver");
+    // Current openings name the role only.
+    expect(classifyPrompt("You are QA, performing one bounded independent acceptance operation.")).toBe("qa");
+    expect(classifyPrompt("You are Assessment, performing one assessment operation. Inspect the QA packet.")).toBe("assessment");
+    expect(classifyPrompt("You are Elevation. Reassess the strategy")).toBe("elevation");
+    expect(classifyPrompt("You are Resolver. Analyze one blocked task")).toBe("resolver");
   });
   it("turns llama.cpp metric events into implementation records and counts compactions", () => {
     const events = [

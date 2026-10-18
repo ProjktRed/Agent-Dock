@@ -271,8 +271,6 @@ debugging switches. It does not replace live-provider integration testing or an 
 
 ## Known limitations
 
-- The engine's role prompts still name its default models (for example "Elevation: GPT-6 Astra")
-  whichever model runs the role.
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
 - A usage limit hit during a Codex or Claude Code implementation stops that attempt. Because an
   interrupted implementation is never replayed, the task then needs Resolve or your decision.
