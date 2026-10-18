@@ -10,8 +10,8 @@ import {cancelPrefix,HANDSHAKE_MISSING,MALFORMED_PATCH,MISSING_TOOL_IDENTITY,UNA
 
 export const PLUGIN_ID='agent-dock.guard';
 export const SENTINEL_BASE_URL='https://127.0.0.1:1/agent-dock-guard-not-loaded/v1';
-export const allowedTools=['shell','bash','read','edit','write','patch','glob','grep','question','skill'];
-const refusedTools=['execute','subagent','webfetch','websearch'];
+export const allowedTools=['shell','bash','read','edit','write','patch','glob','grep','question'];
+const refusedTools=['skill','execute','subagent','webfetch','websearch'];
 
 export function providerId(provider){return provider.id==='openrouter'?'openrouter':provider.id==='opencode'?'opencode':'agent-dock';}
 export function modelId(provider,model=provider.model){return provider.id==='openrouter'?model.replace(/^openrouter\//,''):provider.id==='opencode'?model.replace(/^opencode\//,''):model;}
@@ -135,6 +135,9 @@ export async function install({policy,policyPath,guardDir,providerDescriptor,mod
   }},
   experimental:{policies:[{action:'provider.use',resource:'*',effect:'deny'},{action:'provider.use',resource:providerID,effect:'allow'},{action:'tool.use',resource:'*',effect:'deny'},...allowedTools.map(tool=>({action:'tool.use',resource:`${tool}:*`,effect:'allow'}))]}};
  const env={OPENCODE_CONFIG_DIR:configDir,OPENCODE_CONFIG_CONTENT:JSON.stringify(config),OPENCODE_DISABLE_PROJECT_CONFIG:'1',OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FILEWATCHER:'1',XDG_CONFIG_HOME:path.join(guardDir,'xdg-config'),XDG_DATA_HOME:path.join(guardDir,'data'),XDG_STATE_HOME:path.join(guardDir,'state'),XDG_CACHE_HOME:path.join(guardDir,'cache'),HOME:path.join(guardDir,'home'),PWD:policy.workspace};
+ // Compatibility discovery is separate from OpenCode config discovery. On
+ // Windows os.homedir() uses USERPROFILE, not HOME.
+ Object.assign(env,{OPENCODE_DISABLE_EXTERNAL_SKILLS:'1',OPENCODE_DISABLE_CLAUDE_CODE_SKILLS:'1',USERPROFILE:env.HOME});
  return {configDir,pluginPath,policyPath,handshake,providerID,model:nativeModel,env,instructions:instructions(policy)};
 }
 

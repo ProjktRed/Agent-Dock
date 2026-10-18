@@ -9,6 +9,7 @@ import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {installProtection} from './guard/install-protection.mjs';
+import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // Cline worker: one exclusive lock, never replayed after an interruption, and every change still
@@ -37,18 +38,19 @@ export function codexUsedTools(stdout) {
   return /"type"\s*:\s*"(?:file_change|command_execution|mcp_tool_call|patch_apply|exec_command)/.test(stdout);
 }
 
-export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [] }) {
+export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env }) {
   if (cli === "codex") {
     return [...prefixArgs, "exec", "--ephemeral", "--json", "--color", "never",
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
       ...(fast ? ["-c", `service_tier="priority"`] : []),
       ...hookArgs,
+      ...codexSkillArgs({workspace, env}),
       // Same sandbox as Codex QA (workspace writes, approvals reviewed automatically); the scope hook limits changes to the task.
       "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
-  return [...prefixArgs, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", ...hookArgs, ...launchArgs];
+  return [...prefixArgs, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, ...hookArgs, ...launchArgs];
 }
 
 function killTree(child) {
@@ -118,7 +120,7 @@ export class CloudImplementationWorker {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
     hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast});
-    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs });
+    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {

@@ -22,7 +22,7 @@ async function plugin(p){return (await import(pathToFileURL(p.pluginPath).href))
 
 test('model sees only native allowed tools and enumerated Windows-safe task commands',async t=>{
  const p=await setup(t),extension=await plugin(p),result=await extension.hooks.beforeModel({request});
- assert.deepEqual(result.tools.map(x=>x.name),['read_files','search_codebase','run_commands','editor','apply_patch','skills','ask_question','submit_and_exit']);
+ assert.deepEqual(result.tools.map(x=>x.name),['read_files','search_codebase','run_commands','editor','apply_patch','ask_question','submit_and_exit']);
  const schema=result.tools.find(x=>x.name==='run_commands').inputSchema;
  assert.deepEqual(schema.required,['commands']);assert.equal(schema.additionalProperties,false);
  const commands=schema.properties.commands.items.enum;
@@ -30,6 +30,7 @@ test('model sees only native allowed tools and enumerated Windows-safe task comm
  assert.ok(!commands.includes('Get-Content example.ts'));assert.ok(!commands.includes('npm exec node writer.js'));
  const settings=JSON.parse(await readFile(path.join(p.configDir,'data/settings/global-settings.json'),'utf8'));
  assert.ok(settings.disabledTools.includes('fetch_web_content'));
+ assert.ok(settings.disabledTools.includes('skills'));
  assert.equal((await readFile(path.join(p.workspace,'example.ts'),'utf8')),'unchanged');
 });
 

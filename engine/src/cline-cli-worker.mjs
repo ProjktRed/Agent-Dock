@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import {clineSkillEnv} from './skill-isolation.mjs';
 import { constants } from "node:fs";
 import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -497,7 +498,10 @@ export async function launchCline({
   // OPENAI_API_KEY is inherited), never the orchestrator CLIs' keys or the app's own variable.
   const env = { ...withoutSecrets(process.env, { keep: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"] }), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
-  const result = await collectClineProcess(process.execPath, args, { cwd: workspace, env, onStart, onEvent, redactValues, stallMs: STALL_SILENCE_MS, repeatLimit: REPEAT_LIMIT });
+  const isolation = await clineSkillEnv(env, {dataDir, configDir});
+  let result;
+  try { result = await collectClineProcess(process.execPath, args, { cwd: workspace, env:isolation.env, onStart, onEvent, redactValues, stallMs: STALL_SILENCE_MS, repeatLimit: REPEAT_LIMIT }); }
+  finally { await isolation.cleanup(); }
   if (guardPolicyPath && !(await readGuardOutcome(guardPolicyPath)).runtimeReady) {
     throw new Error(RUNTIME_NOT_READY);
   }

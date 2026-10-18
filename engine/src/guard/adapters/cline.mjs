@@ -11,7 +11,7 @@ import {cancelPrefix,MALFORMED_HOOK_INPUT,MISSING_TOOL_IDENTITY,MALFORMED_PATCH}
 import {createRestrictedToolsPlugin,verifyRestrictedTools} from './cline-plugin.mjs';
 
 export {createRestrictedToolsPlugin,verifyRestrictedTools,readGuardOutcome,readWorkerCapabilities};
-export const allowedTools=['read_files','search_codebase','run_commands','editor','apply_patch','skills','ask_question','submit_and_exit'];
+export const allowedTools=['read_files','search_codebase','run_commands','editor','apply_patch','ask_question','submit_and_exit'];
 
 export function instructions(policy){return '\n\nEnforced editing guard: edit only '+policy.allowedPaths.join(', ')+' using the editing tool actually present in your tool schema. A mentioned tool is not necessarily registered. Source-writing shell commands and helper files are prohibited. Read the intended range with read_files immediately before editing. Existing files require a unique exact old_text/new_text replacement (at most 2000 characters each), or a verified insert_line; whole-file rewrites are prohibited. Do not reconstruct backslashes from escaped output. Two consecutive failed native edits stop this attempt. Select run_commands.commands from its exact enum; do not invent commands. Three invalid tool requests stop this attempt. Approved command choices (prefer npm.cmd/npx.cmd on Windows):\n'+policy.commandChoices.join('\n')+'\nDo not wrap commands in PowerShell/cmd or redirect output.';}
 
@@ -35,7 +35,7 @@ export async function install({policy,policyPath,guardDir}){
  await atomicWriteJson(path.join(configDir,'package.json'),{private:true,type:'module'});
  const temporary=pluginPath+'.'+randomUUID()+'.tmp';
  await writeFile(temporary,`import {createRestrictedToolsPlugin} from ${JSON.stringify(new URL('./cline-plugin.mjs',import.meta.url).href)};\nexport default createRestrictedToolsPlugin(${JSON.stringify(policyPath)});\n`);await rename(temporary,pluginPath);
- await atomicWriteJson(path.join(configDir,'data/settings/global-settings.json'),{disabledTools:['fetch_web_content','web_search','spawn_agent','spawn_subagent','browser_action','execute_command','write_to_file','replace_in_file'],tools:{web_search:{enabled:false}}});
+ await atomicWriteJson(path.join(configDir,'data/settings/global-settings.json'),{disabledTools:['skills','fetch_web_content','web_search','spawn_agent','spawn_subagent','browser_action','execute_command','write_to_file','replace_in_file'],tools:{web_search:{enabled:false}}});
  return {configDir,hooksDir,policyPath,pluginPath,...launchConfiguration({configDir,hooksDir,dataDir:path.join(configDir,'data'),pluginPath})};
 }
 

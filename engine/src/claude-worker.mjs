@@ -5,6 +5,7 @@ import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {installProtection} from './guard/install-protection.mjs';
+import {claudeSkillArgs} from './skill-isolation.mjs';
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -74,7 +75,7 @@ export class ClaudeWorker extends CodexWorker {
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
     const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
     const args = [...this.prefixArgs, "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
-      "--no-session-persistence", "--strict-mcp-config", "--permission-mode", "dontAsk",
+      "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
       ...protectionArgs,

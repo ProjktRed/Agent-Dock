@@ -7,6 +7,7 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 import { managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, taskSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import {codexSkillArgs} from './skill-isolation.mjs';
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -192,7 +193,7 @@ export function buildQaPrompt(qaPacket) {
 export class CodexWorker {
   constructor({
     workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox, roleOverrides = {},
-    spawnProcess = spawn,
+    spawnProcess = spawn, env = process.env,
     writeProcessState = atomicWriteJson,
     clearProcessState = (file) => rm(file, { force: true }),
     isProcessAlive = async (pid) => {
@@ -201,6 +202,7 @@ export class CodexWorker {
     },
   }) {
     this.workspace = workspace;
+    this.env = env;
     this.roleOverrides = roleOverrides;
     this.stateDir = stateDir;
     this.command = launcher?.command ?? command;
@@ -249,6 +251,7 @@ export class CodexWorker {
     ];
     const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
+      ...codexSkillArgs({workspace:this.workspace, env:this.env}),
       ...(sandbox === "workspace-write" ? ["--approve-for-me"] : ["--sandbox", sandbox]),
       "--cd", this.workspace, "--output-schema", schemaFile,
       "--output-last-message", outputFile, "-"];
@@ -258,7 +261,7 @@ export class CodexWorker {
     let output = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: withoutSecrets(process.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
         let registered = false;
         let closed = false;
         let closeCode = 1;
