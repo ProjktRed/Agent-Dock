@@ -309,8 +309,12 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         </div>
         {implementation && (
           <>
-            <span className="sub" style={{ marginTop: 6 }}>When relevant: Assessment reads each skill's description and adds up to 3 to a task that needs them.</span>
-            <div className="row wrap" style={{ gap: 10 }}>
+            <span className="sub" style={{ marginTop: 6 }}>When relevant: Assessment reads each skill's name and description and adds up to 3 to a task that needs them. Only picked skills' text is sent to the worker.</span>
+            <div className="row" style={{ gap: 10 }}>
+              <Toggle on={draft.autoAllImported !== false} onChange={(v) => set("autoAllImported", v)} label="Let Assessment choose from all imported skills" />
+              <span>Choose from all imported skills{draft.autoAllImported !== false ? ` (${library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false).length} enabled; turn skills off in Settings › Skills to leave them out)` : ""}</span>
+            </div>
+            {draft.autoAllImported === false && <div className="row wrap" style={{ gap: 10 }}>
               {(draft.autoSkills ?? []).map((k) => (
                 <span className="chip raised" key={k}>{k}<button className="x" onClick={() => set("autoSkills", (draft.autoSkills ?? []).filter((x) => x !== k))} aria-label={`Remove ${k}`}><Icon name="close" size="sm" /></button></span>
               ))}
@@ -319,7 +323,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
                 <option value="">{addable.length ? "Add skill…" : library.some((sk) => sk.source === "imported") ? "All skills added" : "No imported skills"}</option>
                 {addable.map((sk) => <option key={sk.id} value={sk.name} title={sk.description}>{sk.name}{sk.description ? "" : " (no description)"}</option>)}
               </select>
-            </div>
+            </div>}
           </>
         )}
       </div>

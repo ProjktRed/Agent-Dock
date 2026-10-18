@@ -98,8 +98,12 @@ describe("engine launch args", () => {
     const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
     expect(plan.skills).toEqual({ implementation: ["tdd"], assessment: ["planning"], resolver: ["planning"] });
     expect(plan.args[plan.args.indexOf("--skills-file") + 1]).toBe(path.join(project().stateDir, "assigned-skills.json"));
-    const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
-    expect(none.skills).toEqual({});
+    // By default Assessment may choose from all imported skills, so the skills file is always passed.
+    const defaults = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
+    expect(defaults).toMatchObject({ skills: {}, autoAllImported: true });
+    expect(defaults.args).toContain("--skills-file");
+    const none = buildEngineArgs({ project: project(), agents: agents().map((a) => a.role === "implementation" ? { ...a, autoAllImported: false } : a), clis: clis(), settings: settings() });
+    expect(none.autoAllImported).toBe(false);
     expect(none.args).not.toContain("--skills-file");
   });
   it("passes 'when relevant' implementation skills, without repeating always-assigned ones", () => {
@@ -301,6 +305,8 @@ describe("parsers", () => {
   });
   it("reads skill frontmatter", () => {
     expect(parseSkillFile("---\nname: bounded-task-handoff\ndescription: Prepare tasks\n---\n# Body\n")).toEqual({ name: "bounded-task-handoff", description: "Prepare tasks", body: "# Body\n" });
+    expect(parseSkillFile('---\nname: "automate-me"\ndescription: "Use for \\"automate me\\" and C:\\\\path"\n---\nx').description).toBe('Use for "automate me" and C:\\path');
+    expect(parseSkillFile("---\ndescription: 'It''s quoted'\n---\nx").description).toBe("It's quoted");
   });
   it("summarises task history from activity, latest outcome per task", () => {
     const history = taskHistory([

@@ -55,6 +55,8 @@ export interface Agent {
   skills: string[];
   /** Implementation agents: skills Assessment may pick per task by their descriptions ("when relevant"). */
   autoSkills?: string[];
+  /** Implementation agents: Assessment may pick from every imported, enabled skill (default on). */
+  autoAllImported?: boolean;
   enabled: boolean;
 }
 

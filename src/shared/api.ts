@@ -33,6 +33,8 @@ export interface LaunchCheck {
   skills: Record<string, string[]>;
   /** Implementation skills Assessment may pick per task (written to the same file with their descriptions). */
   autoSkills: string[];
+  /** Assessment may pick from every imported, enabled skill (the Implementer's toggle). */
+  autoAllImported: boolean;
 }
 
 /** One entry of the engine's --roles-file. */

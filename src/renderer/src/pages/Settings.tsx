@@ -199,6 +199,7 @@ function Skills() {
   const [skills, setSkills] = useState<SkillInfo[] | null>(null);
   const [selId, setSelId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   useEffect(() => {
     void window.api.skills().then((s) => {
       setSkills(s);
@@ -208,8 +209,15 @@ function Skills() {
   if (!skills) return <div className="skel" style={{ width: "50%" }} />;
   const sel = skills.find((s) => s.id === selId) ?? null;
   const enabled = (s: SkillInfo) => snap.settings.skills.enabled[s.id] ?? true;
-  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name) || (a.autoSkills ?? []).includes(s.name));
+  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name) || (a.autoSkills ?? []).includes(s.name) || (a.role === "implementation" && a.autoAllImported !== false && s.source === "imported" && enabled(s)));
   const assignedLabel = (s: SkillInfo) => assigned(s).map((a) => (a.skills.includes(s.name) ? a.name : `${a.name} (when relevant)`)).join(", ");
+  // Grouped by source: the engine's own skill, each GitHub library, and folder imports. Large groups start collapsed.
+  const groupOf = (s: SkillInfo) => (s.source === "engine" ? "Engine" : s.origin ? s.origin.split("@")[0] : "Imported from folder");
+  const groups = [...new Set(skills.map(groupOf))].map((name) => ({ name, items: skills.filter((s) => groupOf(s) === name) }));
+  const isCollapsed = (g: { name: string; items: SkillInfo[] }) => collapsed[g.name] ?? g.items.length > 8;
+  const setAll = (value: boolean) => setCollapsed(Object.fromEntries(groups.map((g) => [g.name, value])));
+  const setGroupEnabled = (items: SkillInfo[], value: boolean) =>
+    saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, ...Object.fromEntries(items.map((s) => [s.id, value])) } } });
   const toggleAgent = async (agent: Agent, skill: SkillInfo) => {
     const has = agent.skills.includes(skill.name);
     setAgents(await window.api.saveAgent({ ...agent, skills: has ? agent.skills.filter((x) => x !== skill.name) : [...agent.skills, skill.name] }));
@@ -219,6 +227,10 @@ function Skills() {
       <div className="banner"><Icon name="warn" className="info" /><span>The engine always includes its bundled <span className="mono">bounded-task-handoff</span> skill. Skills you assign to an agent are added to that role's prompt (SKILL.md plus its other Markdown files when they fit 16,000 characters); task scope and guard rules still take precedence.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
         <span className="sub grow">{skills.length} skills · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
+        {groups.length > 1 && <>
+          <button className="btn ghost sm" onClick={() => setAll(false)}><Icon name="chevronDown" size="sm" />Expand all</button>
+          <button className="btn ghost sm" onClick={() => setAll(true)}><Icon name="chevronRight" size="sm" />Collapse all</button>
+        </>}
         <button className="btn" onClick={() => setImporting(true)}><Icon name="download" size="sm" />Import from GitHub</button>
         <button className="btn" onClick={async () => setSkills(await window.api.importSkillFolder())}><Icon name="download" size="sm" />Import from folder</button>
       </div>
@@ -226,8 +238,23 @@ function Skills() {
         <section className="well scroll-x" style={{ padding: 6 }}>
           <table className="tbl" style={{ minWidth: 720 }}>
             <thead><tr><th>Skill</th><th>Source</th><th>Assigned to</th><th>Compatibility</th><th>Enabled</th></tr></thead>
-            <tbody>
-              {skills.map((s) => (
+            {groups.map((g) => {
+              const shut = isCollapsed(g);
+              const imported = g.items.filter((s) => s.source !== "engine");
+              const on = imported.filter(enabled).length;
+              return (
+            <tbody key={g.name}>
+              <tr className="click" onClick={() => setCollapsed({ ...collapsed, [g.name]: !shut })} aria-expanded={!shut}>
+                <td colSpan={4}>
+                  <span className="row" style={{ gap: 8, fontWeight: 600 }}>
+                    <Icon name={shut ? "chevronRight" : "chevronDown"} size="sm" />
+                    <span className={g.name === "Engine" || g.name === "Imported from folder" ? "" : "mono"}>{g.name}</span>
+                    <span className="sub" style={{ fontWeight: 400 }}>{g.items.length} skill{g.items.length === 1 ? "" : "s"}{imported.length ? ` · ${on} enabled` : ""}</span>
+                  </span>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>{imported.length > 1 && <button className="btn ghost sm" onClick={() => setGroupEnabled(imported, on < imported.length)}>{on < imported.length ? "Enable all" : "Disable all"}</button>}</td>
+              </tr>
+              {!shut && g.items.map((s) => (
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
                   <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
@@ -237,6 +264,8 @@ function Skills() {
                 </tr>
               ))}
             </tbody>
+              );
+            })}
           </table>
         </section>
       )}

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {parseAssignedSkills,useAssignedSkills,managerHandoffSkill} from '../src/task-handoff-skill.mjs';
+import {parseAssignedSkills,useAssignedSkills,managerHandoffSkill,autoSkillCatalogText} from '../src/task-handoff-skill.mjs';
 import {parseLoopOptions} from '../src/loop-options.mjs';
 import {buildInitialPrompt} from '../src/workflow.mjs';
 import {buildRolePrompt} from '../src/workflow-roles.mjs';
@@ -79,4 +79,24 @@ test('automatic skills: Assessment sees only the catalog, the worker gets the on
  assert.ok(!prompt.includes('AUTO_BODY_docs'),'at most 3 are used');
  assert.equal(prompt.split('## Skill: tdd').length,2,'always-assigned tdd appears once');
  assert.ok(!buildInitialPrompt(task).includes('AUTO_BODY_'),'no Skills line, no automatic skills');
+});
+
+test('automatic skills from the index: only a picked skill is read from disk, frontmatter removed, references included',async t=>{
+ t.after(()=>useAssignedSkills({}));
+ const root=await mkdtemp(path.join(os.tmpdir(),'auto-index-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const make=async(name,body,refs={})=>{const dir=path.join(root,name);await mkdir(path.join(dir,'references'),{recursive:true});
+  await writeFile(path.join(dir,'SKILL.md'),`---\nname: ${name}\ndescription: ${name} work\n---\n${body}\n`);
+  for(const [f,text] of Object.entries(refs))await writeFile(path.join(dir,'references',f),text);return dir;};
+ const css=await make('css','CSS_BODY',{'grid.md':'GRID_REF'}),sql=await make('sql','SQL_BODY');
+ useAssignedSkills(parseAssignedSkills({version:1,roles:{},auto:{implementation:[
+  {name:'css',description:'Styling and layout.',dir:css},{name:'sql',description:'Database queries.',dir:sql},{name:'gone',description:'Deleted skill.',dir:path.join(root,'missing')}]}}));
+ const catalog=autoSkillCatalogText();
+ assert.match(catalog,/- css: Styling and layout\./);
+ assert.ok(!catalog.includes('CSS_BODY'),'the catalog never holds skill text');
+ const prompt=buildInitialPrompt({...task,prompt:'Task skill: implement\nSkills: css, gone\nFix x'});
+ assert.ok(prompt.includes('CSS_BODY')&&prompt.includes('### File: references/grid.md\nGRID_REF'));
+ assert.ok(!prompt.includes('name: css'),'frontmatter is removed');
+ assert.ok(!prompt.includes('SQL_BODY'),'unpicked skills are not read into the prompt');
+ assert.ok(!prompt.includes('## Skill: gone'),'a missing folder is skipped');
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},auto:{implementation:[{name:'x',description:'d',dir:'relative/path'}]}}),/folder or instructions/);
 });
