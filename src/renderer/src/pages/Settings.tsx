@@ -730,7 +730,7 @@ export function EngineGuardrails() {
 }
 
 function Advanced() {
-  const { snap, saveSettings, toast } = useApp();
+  const { snap, saveSettings, toast, refresh } = useApp();
   const ad = snap.settings.advanced;
   const patch = useSettingsPatch();
   const [resetOpen, setResetOpen] = useState(false);
@@ -762,7 +762,12 @@ function Advanced() {
         <SetRow title="Export diagnostics" desc="A zip for bug reports: versions, settings, each project’s engine state, recent Activity, engine log and run reports. Secrets, project code and model prompts are left out; look through it before sharing." support="app">
           <button className="btn sm" disabled={exporting} onClick={async () => { setExporting(true); try { const file = await window.api.exportDiagnostics(); if (file) toast("success", "Diagnostics saved"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setExporting(false); } }}>{exporting ? "Exporting…" : "Export…"}</button>
         </SetRow>
-        <SetRow title="Backup" desc="Copy the configuration folder to back up projects, agents, connections and settings. Credentials are encrypted for this Windows account only." support="app"><span className="chip mut">Manual</span></SetRow>
+        <SetRow title="Export and import settings" desc="A file with your agents, workflow roles, connections and settings, to move to another computer or share a setup. API keys, secret values and projects are not included. To back up everything, copy the configuration folder (credentials only open on this Windows account)." support="app">
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn sm" onClick={async () => { try { if (await window.api.exportSettings()) toast("success", "Settings exported"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Export…</button>
+            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${r.agents} agent(s), ${r.roles} role(s) and ${r.clis} connection(s)`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
+          </div>
+        </SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>
       </section>
       {resetOpen && (

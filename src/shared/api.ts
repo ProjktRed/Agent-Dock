@@ -109,6 +109,10 @@ export interface DesktopApi {
   /** Checks each project's hash-chained action log. */
   /** Sets the stopped project's current task aside: its work goes into a named git stash, the next Run starts a fresh Assessment. */
   setAside(projectId: string): Promise<{ id: string; stash: { message: string } | null }>;
+  /** Saves agents, roles, connections and settings (no secrets, no projects) where the user picks; null when cancelled. */
+  exportSettings(): Promise<string | null>;
+  /** Imports a settings export after a confirmation; null when cancelled. */
+  importSettings(): Promise<{ agents: number; clis: number; roles: number } | null>;
   /** Saves a diagnostics zip (secrets removed) where the user picks; null when cancelled. */
   exportDiagnostics(): Promise<string | null>;
   /** Finished runs of a project, newest first. */

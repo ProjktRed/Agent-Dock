@@ -25,6 +25,7 @@ import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { interruptedWork } from "./lib/status";
 import { STAGING, Updater } from "./updater";
 import { collectDiagnostics } from "./diagnostics";
+import { exportSettings, mergeImport, parseSettingsFile } from "./settings-transfer";
 import { zipFiles } from "./lib/zip";
 import { LimitsService } from "./limits";
 import { ModelsService } from "./models";
@@ -555,6 +556,38 @@ async function usage(projectId: string | null): Promise<UsageSummary> {
   return { records: records.sort((a, b) => a.timestamp.localeCompare(b.timestamp)), compactions, sessionStartedAt: alive?.startedAt ?? null, limit };
 }
 
+/** Settings › Advanced › Export settings: agents, roles, connections and settings, without secrets or projects. */
+async function exportSettingsFile(): Promise<string | null> {
+  const result = await dialog.showSaveDialog(win!, { title: "Export settings", defaultPath: path.join(app.getPath("documents"), `agent-dock-settings-${new Date().toISOString().slice(0, 10)}.json`), filters: [{ name: "Agent Dock settings", extensions: ["json"] }] });
+  if (result.canceled || !result.filePath) return null;
+  const file = exportSettings({ settings: store.data.settings, agents: agents(), clis: store.data.clis, roles: roles.roles, appVersion: app.getVersion() });
+  await writeFile(result.filePath, JSON.stringify(file, null, 2) + "\n");
+  return result.filePath;
+}
+
+/** Settings › Advanced › Import settings: replaces settings, adds or replaces agents, roles and connections by id. */
+async function importSettingsFile(): Promise<{ agents: number; clis: number; roles: number } | null> {
+  const picked = await dialog.showOpenDialog(win!, { title: "Import settings", properties: ["openFile"], filters: [{ name: "Agent Dock settings", extensions: ["json"] }] });
+  if (picked.canceled || !picked.filePaths[0]) return null;
+  const file = parseSettingsFile(await readFile(picked.filePaths[0], "utf8"));
+  if ([...lastStatus.values()].some((s) => s.processAlive)) throw new Error("Stop every running project before importing settings.");
+  const merged = mergeImport({ settings: store.data.settings, agents: agents(), clis: store.data.clis }, file);
+  const { response } = await dialog.showMessageBox(win!, {
+    type: "question", buttons: ["Import", "Cancel"], defaultId: 0, cancelId: 1, title: "Import settings",
+    message: `Import settings from ${path.basename(picked.filePaths[0])}?`,
+    detail: `Exported from Agent Dock ${file.appVersion} on ${file.exportedAt.slice(0, 10)}. Your settings are replaced; ${merged.summary.agents} agent(s), ${merged.summary.roles} workflow role(s) and ${merged.summary.clis} connection(s) are added or replace the ones with the same id. Projects, API keys and secret values stay as they are on this computer; enter any missing keys in CLIs.`,
+  });
+  if (response !== 0) return null;
+  store.data.settings = merged.settings;
+  store.data.agents = merged.agents;
+  store.data.clis = merged.clis;
+  await Promise.all([store.saveSettings(), store.saveAgents(), store.saveClis()]);
+  for (const role of merged.roles) await roles.save(role);
+  limits.schedule(store.data.settings);
+  scheduleUpdateChecks();
+  return merged.summary;
+}
+
 /** Settings › Advanced › Export diagnostics: a zip for bug reports, with every secret removed. */
 async function exportDiagnostics(): Promise<string | null> {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
@@ -724,6 +757,8 @@ function registerIpc() {
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
   handle("project:runs", (id: string) => engine.runs(project(id)));
   handle("diagnostics:export", exportDiagnostics);
+  handle("settings:export", exportSettingsFile);
+  handle("settings:import", importSettingsFile);
   handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });

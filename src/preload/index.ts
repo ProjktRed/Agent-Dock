@@ -41,6 +41,8 @@ const api: DesktopApi = {
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
   exportDiagnostics: invoke("diagnostics:export") as DesktopApi["exportDiagnostics"],
+  exportSettings: invoke("settings:export") as DesktopApi["exportSettings"],
+  importSettings: invoke("settings:import") as DesktopApi["importSettings"],
   setAside: invoke("engine:setAside") as DesktopApi["setAside"],
   decidePlanProposal: invoke("plan:decide") as DesktopApi["decidePlanProposal"],
   usage: invoke("usage") as DesktopApi["usage"],
