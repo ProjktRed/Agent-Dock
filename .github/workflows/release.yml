@@ -3,7 +3,8 @@
 # publishes a GitHub Release in the public releases repository (repository variable RELEASE_REPO,
 # default ProjktRed/Agent-Dock; the source is the private ProjktRed/Agent-Dock-Dev), using the RELEASES_TOKEN secret: a fine-grained token with
 # Contents read/write on that repository only. Installed apps verify the signature before updating.
-# Run it by hand (Actions › Release › Run workflow) for a dry run: the same checks and build, with the
+# Run it by hand (Actions › Release › Run workflow, once this file is on the default branch) or push a
+# tag ending in -dry (v0.24.2-dry) for a dry run: the same checks and build, with the
 # installer and zip attached to the run as an artifact; nothing is signed or published.
 name: Release
 
@@ -14,6 +15,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-dry') }}
 
 concurrency:
   group: release
@@ -37,7 +41,7 @@ jobs:
         shell: bash
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
       - name: Signing key, release key and tag
-        if: github.event_name == 'push'
+        if: env.DRY_RUN != 'true'
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -74,7 +78,7 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath "AgentDock-$env:VERSION-win-x64.zip"
       - name: Dry run artifact
-        if: github.event_name != 'push'
+        if: env.DRY_RUN == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: AgentDock-${{ env.VERSION }}-dry-run
@@ -83,13 +87,13 @@ jobs:
             AgentDock-${{ env.VERSION }}-win-x64.zip
           retention-days: 7
       - name: Sign
-        if: github.event_name == 'push'
+        if: env.DRY_RUN != 'true'
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out .
       - name: Release notes
-        if: github.event_name == 'push'
+        if: env.DRY_RUN != 'true'
         shell: bash
         run: |
           previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
@@ -105,7 +109,7 @@ jobs:
             git log --no-merges --format='- %s' ${previous:+"$previous..$GITHUB_REF_NAME"} | head -100
           } > notes.md
       - name: Publish
-        if: github.event_name == 'push'
+        if: env.DRY_RUN != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
