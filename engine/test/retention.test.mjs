@@ -15,7 +15,7 @@ test('old call folders and Cline sessions go; the newest always stay; 0 days kee
  for(let i=0;i<5;i++)await folder(path.join(state,'codex'),`old-${i}`,40+i);
  for(let i=0;i<3;i++)await folder(path.join(state,'codex'),`new-${i}`,1);
  for(let i=0;i<4;i++)await folder(path.join(state,'cline-data','sessions'),`s-${i}`,60);
- assert.deepEqual(await applyRetention(state,{days:0}),{calls:0,sessions:0,setAside:0,activityTrimmed:false,actionLogRotated:false,actionLogPruned:0});
+ assert.deepEqual(await applyRetention(state,{days:0}),{calls:0,sessions:0,runs:0,setAside:0,activityTrimmed:false,actionLogRotated:false,actionLogPruned:0});
  const r=await applyRetention(state,{days:30,keepCalls:4,keepSessions:2});
  assert.equal(r.calls,4,'5 old minus the one kept among the newest 4');assert.equal(r.sessions,2);
  assert.deepEqual((await readdir(path.join(state,'codex'))).sort(),['new-0','new-1','new-2','old-0']);

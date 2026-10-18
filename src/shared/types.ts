@@ -347,6 +347,26 @@ export interface PlanTask {
 }
 
 /** A Supervisor-proposed IMPLEMENTATION_PLAN.md change (engine/src/plan-stewardship.mjs). */
+/** One finished run (engine/src/run-budget.mjs writeRunReport). */
+export interface RunReport {
+  unattended: boolean;
+  startedAt: string;
+  endedAt: string;
+  hours: number;
+  status: string;
+  reason: string | null;
+  limit: string | null;
+  tasksApproved: number;
+  qaFailures: number;
+  corrections: number;
+  elevations: number;
+  needsAttention: number;
+  supervisorAlerts: number;
+  approved?: { taskId: string | null; name: string | null; at: string }[];
+  usage: { tokens: number; input: number; cached: number; output: number; costUsd: number; calls: number };
+  actionLog: { ok: boolean; entries?: number; reason?: string };
+}
+
 /** Remote notification channels the engine sends to (engine/src/notify.mjs). */
 export type NotifyChannel = "webhook" | "discord" | "slack" | "telegram" | "email";
 

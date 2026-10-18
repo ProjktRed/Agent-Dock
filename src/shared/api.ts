@@ -18,6 +18,7 @@ import type {
   LocalContext,
   NotifyChannel,
   PlanProposal,
+  RunReport,
   WorkflowRole,
 } from "./types";
 
@@ -106,6 +107,8 @@ export interface DesktopApi {
   /** Checks each project's hash-chained action log. */
   /** Sets the stopped project's current task aside: its work goes into a named git stash, the next Run starts a fresh Assessment. */
   setAside(projectId: string): Promise<{ id: string; stash: { message: string } | null }>;
+  /** Finished runs of a project, newest first. */
+  runs(projectId: string): Promise<RunReport[]>;
   /** Supervisor plan proposals for a project, newest last. */
   planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */

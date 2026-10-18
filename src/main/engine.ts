@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, GitInfo, PlanProposal, Project, ProjectStatus } from "@shared/types";
+import type { EngineInfo, GitInfo, PlanProposal, Project, ProjectStatus, RunReport } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
@@ -219,6 +219,11 @@ export class EngineManager {
   /** The engine's notification module: one set of channel rules and message shapes for app and engine. */
   notifyModule() {
     return this.load("notify.mjs");
+  }
+
+  /** Finished runs, newest first. */
+  async runs(project: Project): Promise<RunReport[]> {
+    return (await this.load("run-budget.mjs")).listRuns(project.stateDir);
   }
 
   /** Supervisor plan proposals (engine/src/plan-stewardship.mjs), checked against today's plan. */

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {RUN,parseRunLimits,useRunLimits,elevationAllowed,trackRunEvent,startDeadline,writeRunReport,watchUsage,recordUsage,claudeUsage,codexUsage,openCodeUsage} from '../src/run-budget.mjs';
+import {RUN,parseRunLimits,useRunLimits,elevationAllowed,trackRunEvent,startDeadline,writeRunReport,listRuns,watchUsage,recordUsage,claudeUsage,codexUsage,openCodeUsage} from '../src/run-budget.mjs';
 
 const fakeState=()=>{const s={controls:[],events:[],setControl:async a=>{s.controls.push(a);},record:async e=>{s.events.push(e);}};return s;};
 
@@ -95,4 +95,19 @@ test('token and spend budgets ask for Stop, and the day total carries over betwe
  await recordUsage({input:10,costUsd:0.6});await recordUsage({input:10,costUsd:0.5});
  assert.deepEqual(next.events.map(e=>e.limit),['cost-day']);
  assert.match(next.events[0].message,/\$1\.10 of \$1\.00 today/);
+});
+
+test('every run keeps its own report, listed newest first with the tasks it approved',async t=>{
+ t.after(()=>useRunLimits());
+ const dir=await mkdtemp(path.join(os.tmpdir(),'run-history-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ assert.deepEqual(await listRuns(dir),[]);
+ useRunLimits({unattended:true});RUN.startedAt=Date.parse('2026-10-18T08:00:00.000Z');
+ const state={...fakeState(),live:{task:{id:'T1',name:'First'}}};
+ await trackRunEvent(state,{type:'qa-pass'});
+ await writeRunReport(dir,{status:'stopped',output:'Task limit reached'});
+ useRunLimits();RUN.startedAt=Date.parse('2026-10-18T09:00:00.000Z');
+ await writeRunReport(dir,{status:'done'});
+ const runs=await listRuns(dir);
+ assert.deepEqual(runs.map(r=>[r.startedAt,r.status,r.tasksApproved]),[['2026-10-18T09:00:00.000Z','done',0],['2026-10-18T08:00:00.000Z','stopped',1]]);
+ assert.deepEqual(runs[1].approved.map(a=>[a.taskId,a.name]),[['T1','First']]);
 });

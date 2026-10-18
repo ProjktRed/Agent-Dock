@@ -7,8 +7,9 @@ import { Empty, Tabs } from "../../components/ui";
 import { ProgressTab } from "./ProgressTab";
 import { UsageTab } from "./UsageTab";
 import { TokensTab } from "./TokensTab";
+import { RunsTab } from "./RunsTab";
 
-type Tab = "progress" | "usage" | "tokens";
+type Tab = "progress" | "runs" | "usage" | "tokens";
 
 export function OverviewPage() {
   const { activeProject, activeStatus, snap, go } = useApp();
@@ -70,6 +71,7 @@ export function OverviewPage() {
         onChange={setTab}
         options={[
           { value: "progress", label: "Progress" },
+          { value: "runs", label: "Runs" },
           { value: "usage", label: "Usage limits" },
           { value: "tokens", label: "Token consumption" },
         ]}
@@ -78,6 +80,7 @@ export function OverviewPage() {
         {tab === "progress" && <ProgressTab />}
         {tab === "usage" && <UsageTab />}
         {tab === "tokens" && <TokensTab />}
+        {tab === "runs" && <RunsTab />}
       </div>
     </>
   );

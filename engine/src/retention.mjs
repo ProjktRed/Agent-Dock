@@ -6,7 +6,7 @@ import { ACTION_LOG, pruneActionLog, rotateActionLog } from "./action-log.mjs";
 // (prompt, events, result), Cline sessions, Activity and the action log. At each engine start,
 // anything older than the retention period goes, but the newest folders always stay (they are what
 // a crash or a question about the last run needs). 0 days keeps everything.
-export const RETENTION_DEFAULTS = { days: 30, keepCalls: 100, keepSessions: 20, maxActivityBytes: 20 * 1024 * 1024, keepActivityLines: 5000, maxActionLogBytes: 20 * 1024 * 1024 };
+export const RETENTION_DEFAULTS = { days: 30, keepCalls: 100, keepSessions: 20, keepRuns: 50, maxActivityBytes: 20 * 1024 * 1024, keepActivityLines: 5000, maxActionLogBytes: 20 * 1024 * 1024 };
 const CALL_DIRS = ["codex", path.join("supervisor-review", "codex")];
 
 async function pruneFolders(dir, { keep, cutoff }) {
@@ -27,6 +27,18 @@ async function pruneFolders(dir, { keep, cutoff }) {
   return removed;
 }
 
+/** Old run reports go, the newest `keep` always stay. */
+async function pruneFiles(dir, { keep, cutoff }) {
+  let names = [];
+  try { names = (await readdir(dir)).filter((n) => n.endsWith(".json")).sort().reverse(); } catch { return 0; }
+  let removed = 0;
+  for (const name of names.slice(keep)) {
+    const full = path.join(dir, name);
+    if ((await stat(full).then((s) => s.mtimeMs, () => Date.now())) < cutoff) await rm(full, { force: true }).then(() => removed++, () => {});
+  }
+  return removed;
+}
+
 /** Keeps the newest lines of a log that only the app reads (Activity); written in place of the old file. */
 async function trimLines(file, { maxBytes, keepLines }) {
   const size = await stat(file).then((s) => s.size, () => 0);
@@ -40,7 +52,7 @@ async function trimLines(file, { maxBytes, keepLines }) {
 
 export async function applyRetention(stateDir, options = {}) {
   const o = { ...RETENTION_DEFAULTS, ...options };
-  const summary = { calls: 0, sessions: 0, setAside: 0, activityTrimmed: false, actionLogRotated: false, actionLogPruned: 0 };
+  const summary = { calls: 0, sessions: 0, runs: 0, setAside: 0, activityTrimmed: false, actionLogRotated: false, actionLogPruned: 0 };
   if (!(o.days > 0)) return summary;
   const cutoff = (o.now ?? Date.now()) - o.days * 24 * 60 * 60 * 1000;
   for (const dir of CALL_DIRS) summary.calls += await pruneFolders(path.join(stateDir, dir), { keep: o.keepCalls, cutoff });
@@ -51,6 +63,7 @@ export async function applyRetention(stateDir, options = {}) {
       if ((await stat(full)).mtimeMs < cutoff) { await rm(full, { force: true }); summary.setAside++; }
     }
   } catch {}
+  summary.runs = await pruneFiles(path.join(stateDir, "runs"), { keep: o.keepRuns, cutoff });
   summary.activityTrimmed = await trimLines(path.join(stateDir, "activity.ndjson"), { maxBytes: o.maxActivityBytes, keepLines: o.keepActivityLines }).catch(() => false);
   summary.actionLogRotated = await rotateActionLog(stateDir, { maxBytes: o.maxActionLogBytes }).catch(() => false);
   summary.actionLogPruned = await pruneActionLog(stateDir, { before: cutoff }).catch(() => 0);

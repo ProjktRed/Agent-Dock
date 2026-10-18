@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { flushActionLog, verifyActionLog } from "./action-log.mjs";
@@ -8,7 +8,7 @@ import { redactText } from "./redact.mjs";
 // its next safe point (never mid-task), and the end-of-run report says which limit ended it.
 export const RUN = {
   unattended: false, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0,
-  startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null,
+  startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
   usage: { input: 0, cached: 0, output: 0, costUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 },
 };
 const NO_LIMITS = { unattended: false, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0 };
@@ -34,7 +34,7 @@ export function parseRunLimits(options) {
 }
 
 export function useRunLimits(limits = {}) {
-  Object.assign(RUN, { ...NO_LIMITS, ...limits, startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null,
+  Object.assign(RUN, { ...NO_LIMITS, ...limits, startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
     usage: { input: 0, cached: 0, output: 0, costUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 } });
   watched = null;
 }
@@ -133,7 +133,7 @@ async function reachLimit(state, limit, detail) {
 
 /** Counts the run's outcomes from loop events and stops the run once a limit is reached. */
 export async function trackRunEvent(state, event) {
-  if (event.type === "qa-pass") RUN.tasksPassed++;
+  if (event.type === "qa-pass") { RUN.tasksPassed++; RUN.approved.push({ taskId: event.taskId ?? state?.live?.task?.id ?? null, name: state?.live?.task?.name ?? null, at: new Date().toISOString() }); }
   else if (event.type === "qa-fail") RUN.failures++;
   else if (event.type === "retry") RUN.corrections++;
   else if (event.type === "sol-reassessment-started") RUN.elevations++;
@@ -158,6 +158,7 @@ export async function writeRunReport(stateDir, result) {
     status: result.status, reason: RUN.limit?.detail ?? result.output ?? null, limit: RUN.limit?.limit ?? null,
     tasksApproved: RUN.tasksPassed, qaFailures: RUN.failures, corrections: RUN.corrections, elevations: RUN.elevations, needsAttention: RUN.attention,
     supervisorAlerts: result.supervisorAlerts ?? 0,
+    approved: RUN.approved.slice(-200),
     usage: { tokens: runTokens(), input: RUN.usage.input, cached: RUN.usage.cached, output: RUN.usage.output, costUsd: Math.round(RUN.usage.costUsd * 10000) / 10000, calls: RUN.usage.calls },
     limits: { maxTasks: RUN.maxTasks, maxHours: RUN.maxHours, maxElevations: RUN.maxElevations, maxTokens: RUN.maxTokens, maxCost: RUN.maxCost, maxTokensDay: RUN.maxTokensDay, maxCostDay: RUN.maxCostDay },
     // The chain head at the end of the run: a log later cut short no longer reaches this entry.
@@ -165,6 +166,8 @@ export async function writeRunReport(stateDir, result) {
   };
   report.reason = redactText(String(report.reason ?? ""));
   await atomicWriteJson(path.join(stateDir, "run-report.json"), report);
+  // Run history: one copy per run (Overview › Runs); retention keeps the newest.
+  await atomicWriteJson(path.join(stateDir, "runs", `${report.startedAt.replace(/[:.]/g, "-")}.json`), report).catch(() => {});
   const line = (label, value) => `- ${label}: ${value}`;
   await writeFile(path.join(stateDir, "run-report.md"), [
     `# Run report`, "",
@@ -177,4 +180,14 @@ export async function writeRunReport(stateDir, result) {
     line("Limits", `tasks ${report.limits.maxTasks || "none"}, hours ${report.limits.maxHours || "none"}, Elevations ${report.limits.maxElevations || "none"}, tokens ${report.limits.maxTokens ? n(report.limits.maxTokens) : "none"}, spend ${report.limits.maxCost ? money(report.limits.maxCost) : "none"}, tokens/day ${report.limits.maxTokensDay ? n(report.limits.maxTokensDay) : "none"}, spend/day ${report.limits.maxCostDay ? money(report.limits.maxCostDay) : "none"}`), "",
   ].join("\n"));
   return report;
+}
+
+/** Past runs, newest first (one report per run in <state>/runs). */
+export async function listRuns(stateDir, limit = 100) {
+  const dir = path.join(stateDir, "runs");
+  let names = [];
+  try { names = (await readdir(dir)).filter((n) => n.endsWith(".json")).sort().reverse().slice(0, limit); } catch { return []; }
+  const runs = [];
+  for (const name of names) { try { runs.push(JSON.parse(await readFile(path.join(dir, name), "utf8"))); } catch {} }
+  return runs;
 }

@@ -700,6 +700,7 @@ function registerIpc() {
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
+  handle("project:runs", (id: string) => engine.runs(project(id)));
   handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });
