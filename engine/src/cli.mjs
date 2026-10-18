@@ -14,7 +14,8 @@ import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
-import { digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
+import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
+import { createReviewer } from "./supervisor-review.mjs";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 
 installTopLevelDiagnostics();
@@ -121,7 +122,12 @@ notifyFromEnv();
 const supervisorConfig = parseSupervisorOptions(options);
 await watchUsage(state, stateDir);
 const deadline = startDeadline(state);
-const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig });
+// A reviewer that cannot be set up turns the review off for this run instead of failing the run.
+const reviewer = supervisorConfig.mode !== "off" && supervisorConfig.review !== "off"
+  ? await createReviewer({ kind: options["supervisor-reviewer"] ?? (useClaude ? "claude" : "codex"), model: options["supervisor-model"], baseUrl: options["supervisor-base-url"], stateDir, workspace, codexLauncher, options })
+    .catch(async (error) => { await state.record({ type: "supervisor-review-failed", message: `Supervisor review is off for this run: ${error.message}` }); return null; })
+  : null;
+const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
 try {
   const result = await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
@@ -147,6 +153,7 @@ try {
 } finally {
   if (deadline) clearTimeout(deadline);
   stopSupervisor();
+  await awaitSupervisorReview();
   await flushNotifications();
   await flushActionLog();
 }

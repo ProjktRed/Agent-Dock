@@ -147,6 +147,15 @@ export interface SupervisorSettings {
   planDrift: number;
   scopePaths: number;
   digestHours: number;
+  /** v2: a model reviews each alert. propose: actions are suggestions; act: allowed actions are carried out. */
+  review?: "off" | "propose" | "act";
+  /** auto = the orchestrator's CLI (Codex or Claude Code). local = an OpenAI-compatible server at reviewerBaseUrl. */
+  reviewer?: "auto" | "codex" | "claude" | "local";
+  reviewerModel?: string;
+  reviewerBaseUrl?: string;
+  /** Owner's choice: the Supervisor may set a stuck task aside (its work stashed) and continue with another. */
+  mayDefer?: boolean;
+  reviewMax?: number;
 }
 
 export interface AttentionPolicy {

@@ -298,6 +298,18 @@ export function buildEngineArgs(input: {
     args.push("--sv-stall-minutes", String(count(sv.stallMinutes)), "--sv-repeat-failures", String(Math.floor(count(sv.repeatFailures))), "--sv-refusals", String(Math.floor(count(sv.refusals))),
       "--sv-tokens-per-task", String(Math.round(count(sv.millionTokensPerTask) * 1_000_000)), "--sv-plan-drift", String(Math.floor(count(sv.planDrift))),
       "--sv-scope-paths", String(Math.floor(count(sv.scopePaths))), "--sv-digest-hours", String(count(sv.digestHours)));
+    const review = sv.review === "propose" || sv.review === "act" ? sv.review : "off";
+    args.push("--supervisor-review", review);
+    if (review !== "off") {
+      if (sv.reviewer && sv.reviewer !== "auto") args.push("--supervisor-reviewer", sv.reviewer);
+      if (sv.reviewerModel?.trim()) args.push("--supervisor-model", sv.reviewerModel.trim());
+      if (sv.reviewer === "local") {
+        if (!sv.reviewerBaseUrl?.trim()) problems.push("The local Supervisor reviewer needs a server URL.");
+        else args.push("--supervisor-base-url", sv.reviewerBaseUrl.trim());
+        if (!sv.reviewerModel?.trim()) problems.push("The local Supervisor reviewer needs a model name.");
+      }
+      args.push("--supervisor-may-defer", String(sv.mayDefer === true), "--sv-review-max", String(Math.floor(count(sv.reviewMax ?? 6))));
+    }
   }
   if (unattended) {
     const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...workflow.unattendedLimits };

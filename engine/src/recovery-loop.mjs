@@ -13,6 +13,7 @@ import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
 import {TUNING} from './engine-tuning.mjs';
 import {elevationAllowed} from './run-budget.mjs';
+import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
 import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
@@ -168,7 +169,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           const sha=correctionResume?.baselineSha??pending?.inputs?.baselineSha??pending?.inputs?.baselineHead??pending?.context?.baselineHead??(await baseline()).head;
           let assessmentOperationId;
           if(!task) {
-            const op=await operation('assessment',{objective,previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
+            const op=await operation('assessment',{objective:await objectiveWithDeferred(stateDir,objective),previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
             if(op.result.status==='done'){await emit('loop-complete');return{status:'done'};}
             if(op.result.status!=='task'){await consumeAssessment();return block(op.result.output??'Assessment could not produce a safe task');}
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');
@@ -176,10 +177,10 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           }
           if(!await beforeNextTask())return{status:'stopped'};
           validateTask(task);
-          const resumeQa=pending?.operation==='qa';
+          const resumeQa=pending?.operation==='qa',deferBase=Number((await readControl()).deferGeneration??0);
           r={version:1,baselineSha:sha,attempt:correctionResume?.attempt??pending?.attempt??1,phase:resumeQa?'qa':'worker',
             prompt:correctionResume?.prompt??buildInitialPrompt(task,{workspace}),history:correctionResume?.history??pending?.context?.history??[],
-            correctionCount:0,correctionHistory:[],elevations:[],lastElevationCount:0,userAttention:false,lastAppliedOperationId:assessmentOperationId,stopAfterTask,
+            correctionCount:0,correctionHistory:[],elevations:[],lastElevationCount:0,userAttention:false,lastAppliedOperationId:assessmentOperationId,stopAfterTask,deferGeneration:deferBase,
             ...(resumeQa?{qaPacket:pending.inputs,workerResult:{exitCode:pending.inputs.clineSummary?.exitCode??pending.inputs.workerResult?.exitCode??0}}:{})};
           if(correctionResume){await reconcile(task,sha);r.currentCorrection=correctionResume.currentCorrection??{id:randomUUID(),source:'elevation',prompt:r.prompt,attempted:false};}
           if(!resumeQa&&!correctionResume)await onTask(task);
@@ -188,6 +189,16 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         for(;;) {
           if(await stopped())return{status:'stopped'};
           const boundaryControl=await readControl();
+          // Defer (Supervisor, when allowed): only between steps, with no worker or model call running.
+          if(r.deferGeneration===undefined)r.deferGeneration=Number(boundaryControl.deferGeneration??0);
+          else if(Number(boundaryControl.deferGeneration??0)>r.deferGeneration&&['worker','correction-assessment'].includes(r.phase)) {
+            r.deferGeneration=Number(boundaryControl.deferGeneration);
+            const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:boundaryControl.deferReason});
+            if(deferred.blocked)return block(deferred.blocked);
+            await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+            await emit('task-deferred',{taskId:task.id,reason:deferred.entry.reason,stash:deferred.entry.stash?.message??null});
+            return{status:'deferred'};
+          }
           if(r.userAttention && ['worker','correction-assessment'].includes(r.phase) && Number(boundaryControl.elevateGeneration??0)>Number(r.elevateGeneration??0)) {
             r.elevateGeneration=boundaryControl.elevateGeneration;
             r.elevationFingerprint=recoveryFingerprint({task,baseline:r.baselineSha,diff:r.qaPacket.diff,failure:r.failure,corrections:r.correctionHistory});
@@ -328,6 +339,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(!result){await emit('queued');await sleep(pollMs);continue;}
       if(result.status==='blocked')result=await block(result.output??r?.blockedReason??'Recovery is blocked');
       if(result.status==='resolver-ready')continue;
+      if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
       if(result.status!=='passed'||stopAfterTask)return result;
       previous={task,result:result.qa};task=null;r=null;saved=null;
     }

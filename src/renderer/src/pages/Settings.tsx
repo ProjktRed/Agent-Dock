@@ -538,6 +538,50 @@ function SupervisorCard() {
           ))}
         </div>
       )}
+      {sv.mode !== "off" && (
+        <>
+          <SetRow title="Model review" desc="On each alert (at most a few per run, 10 minutes apart) a model reviews the run read-only and chooses from pause, stop, defer, request Elevation or lower a limit. Propose: shown to you only. Act: the allowed actions are carried out; switching CLIs and retrying a worker stay suggestions." support="engine">
+            <select className="sel" value={sv.review ?? "off"} aria-label="Supervisor model review" onChange={(e) => void patch("workflow", { supervisor: { ...sv, review: e.target.value as "off" | "propose" | "act" } })}>
+              <option value="off">Off</option>
+              <option value="propose">Propose only</option>
+              <option value="act">Act</option>
+            </select>
+          </SetRow>
+          {(sv.review ?? "off") !== "off" && (
+            <div className="grid-4">
+              <label className="field"><span>Reviewer</span>
+                <select className="sel" value={sv.reviewer ?? "auto"} aria-label="Reviewer" onChange={(e) => void patch("workflow", { supervisor: { ...sv, reviewer: e.target.value as "auto" | "codex" | "claude" | "local" } })}>
+                  <option value="auto">Orchestrator's CLI</option>
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude Code</option>
+                  <option value="local">Local (OpenAI-compatible)</option>
+                </select>
+                <span className="hint">runs read-only</span>
+              </label>
+              <label className="field"><span>Model</span>
+                <input className="input mono" defaultValue={sv.reviewerModel ?? ""} placeholder={sv.reviewer === "local" ? "required" : "CLI default"} aria-label="Reviewer model"
+                  onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerModel ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerModel: e.target.value.trim() } }); }} />
+                <span className="hint">e.g. a small, cheap model</span>
+              </label>
+              {sv.reviewer === "local" && (
+                <label className="field"><span>Server URL</span>
+                  <input className="input mono" defaultValue={sv.reviewerBaseUrl ?? ""} aria-label="Reviewer server URL"
+                    onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerBaseUrl ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerBaseUrl: e.target.value.trim() } }); }} />
+                  <span className="hint">llama.cpp / Ollama …/v1</span>
+                </label>
+              )}
+              <label className="field"><span>Reviews per run</span>
+                <input className="input mono" inputMode="numeric" defaultValue={sv.reviewMax ?? 6} aria-label="Reviews per run"
+                  onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== sv.reviewMax) void patch("workflow", { supervisor: { ...sv, reviewMax: v } }); else e.target.value = String(sv.reviewMax ?? 6); }} />
+                <span className="hint">caps the review cost</span>
+              </label>
+            </div>
+          )}
+          <SetRow title="May defer stuck tasks" desc="Lets the Supervisor set a stuck task aside between steps and let Assessment choose another. The task's uncommitted work goes into a named git stash (nothing is reset or lost) and the task is listed in deferred-tasks.json." support="engine">
+            <Toggle on={sv.mayDefer === true} onChange={(v) => void patch("workflow", { supervisor: { ...sv, mayDefer: v } })} label="May defer stuck tasks" />
+          </SetRow>
+        </>
+      )}
       <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
         <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
       </SetRow>

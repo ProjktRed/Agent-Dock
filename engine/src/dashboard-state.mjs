@@ -269,13 +269,13 @@ export class DashboardState {
   }
 
   /** source names who asked (app, dashboard, cli, run-limit); it is kept in the action log. */
-  setControl(action, { source } = {}) {
+  setControl(action, { source, reason } = {}) {
     const previous=this.controlQueue??Promise.resolve();
-    const request=previous.catch(()=>{}).then(()=>this.applyControl(action, source));
+    const request=previous.catch(()=>{}).then(()=>this.applyControl(action, source, reason));
     this.controlQueue=request;return request;
   }
 
-  async applyControl(action, source) {
+  async applyControl(action, source, reason) {
     const current = await this.readControl();
     const next = { ...current };
     if (action === "pause") next.pauseAfterCurrent = true;
@@ -284,6 +284,10 @@ export class DashboardState {
       next.stopAfterSafePoint = false;
       next.resumeGeneration = Number(current.resumeGeneration ?? 0) + 1;
     } else if (action === "stop") next.stopAfterSafePoint = true;
+    // Picked up by the loop at its next boundary (no worker running): the task is set aside, its work stashed.
+    else if (action === "defer") { next.deferGeneration = Number(current.deferGeneration ?? 0) + 1; next.deferReason = String(reason ?? "Deferred").slice(0, 400); }
+    // Elevation for the failing task, taken up by the running loop when the task is waiting on a correction.
+    else if (action === "request-elevation") next.elevateGeneration = Number(current.elevateGeneration ?? 0) + 1;
     else if(action==='retry-qa') {
       let recovery=null;
       try{recovery=JSON.parse(await readFile(path.join(this.stateDir,'current-task.json'),'utf8'))?.automation?.recovery??null;}catch{}
@@ -330,7 +334,7 @@ export class DashboardState {
         await atomicWriteJson(this.livePath, this.live);
       }
     }
-    await this.appendEvent({ type: `control-${action}`, ...(source ? { source } : {}) });
+    await this.appendEvent({ type: `control-${action}`, ...(source ? { source } : {}), ...(reason ? { reason } : {}) });
     return next;
   }
 
