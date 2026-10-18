@@ -1,5 +1,8 @@
 import { CloudImplementationWorker } from "./cloud-impl-worker.mjs";
 import { trackRunEvent } from "./run-budget.mjs";
+import { superviseEvent } from "./supervisor.mjs";
+import { notifyEvent } from "./notify.mjs";
+import { diagnostic } from "./diagnostics.mjs";
 import { CodexWorker } from "./codex-worker.mjs";
 import { ClaudeWorker, preflightClaude } from "./claude-worker.mjs";
 import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
@@ -15,6 +18,9 @@ export async function recordLoopEvent(state,event,{autoContinue=true}={}) {
   if(event.type==='qa-pass'&&!autoContinue)await state.setControl('pause');
   await state.record(event);
   await trackRunEvent(state,event);
+  notifyEvent(event);
+  // The Supervisor watches; a monitor that fails must never stop the loop.
+  await superviseEvent(event).catch((error)=>diagnostic("SUPERVISOR_FAILED",{message:error.message}));
 }
 
 /** Codex or Claude Code as the implementation worker (--implementation-cli). Null for Cline. */

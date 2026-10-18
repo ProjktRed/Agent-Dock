@@ -1,4 +1,5 @@
 import path from "node:path";
+import { checkChannelUrl } from "../src/main/lib/notify-channels";
 import { describe, expect, it } from "vitest";
 import type { Agent, CliConnection, EngineEvent, Project, Settings, WorkflowRole } from "@shared/types";
 import { parseLlamaSlots } from "../src/main/local-models";
@@ -92,6 +93,22 @@ describe("engine launch args", () => {
     const noLimit = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...s, workflow: { ...s.workflow, unattendedLimits: { ...s.workflow.unattendedLimits, maxCorrections: 0 } } } });
     expect(noLimit.problems).toContain("Unattended mode needs a correction limit of at least 1.");
     expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--unattended");
+  });
+  it("passes the Supervisor's mode and thresholds, and only the mode when it is off", () => {
+    const base = settings();
+    const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, mode: "pause", millionTokensPerTask: 1.5, digestHours: 2 } } } });
+    const flag = (name: string) => plan.args[plan.args.indexOf(name) + 1];
+    expect([flag("--supervisor"), flag("--sv-tokens-per-task"), flag("--sv-digest-hours"), flag("--sv-repeat-failures")]).toEqual(["pause", "1500000", "2", "3"]);
+    const off = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, mode: "off" } } } });
+    expect(off.args[off.args.indexOf("--supervisor") + 1]).toBe("off");
+    expect(off.args).not.toContain("--sv-stall-minutes");
+  });
+  it("accepts only https webhook URLs (http to this machine) and real Discord webhook URLs", () => {
+    expect(checkChannelUrl("webhook", " https://hooks.example.com/a ")).toBe("https://hooks.example.com/a");
+    expect(checkChannelUrl("webhook", "http://localhost:8080/x")).toBe("http://localhost:8080/x");
+    expect(() => checkChannelUrl("webhook", "http://hooks.example.com")).toThrow(/https/);
+    expect(checkChannelUrl("discord", "https://discord.com/api/webhooks/1/abc")).toBe("https://discord.com/api/webhooks/1/abc");
+    expect(() => checkChannelUrl("discord", "https://discord.com.evil.io/api/webhooks/1")).toThrow(/Discord webhook URL/);
   });
   it("maps the default agents onto engine flags", () => {
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });

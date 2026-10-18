@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
     notifyCompleted: true,
     notifyErrors: true,
     notifyInfo: false,
+    notifyDigests: true,
     defaultProject: "last",
   },
   workflow: {
@@ -73,6 +74,7 @@ export const DEFAULT_SETTINGS: Settings = {
     stopAfterCurrentTask: false,
     unattended: false,
     unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },
+    supervisor: { mode: "alert", stallMinutes: 30, repeatFailures: 3, refusals: 5, millionTokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0 },
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },

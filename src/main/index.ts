@@ -26,6 +26,7 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
+import { channelBody, checkChannelUrl } from "./lib/notify-channels";
 
 try {
   assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
@@ -230,15 +231,22 @@ async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames:
   return { version: 1, roles, ...(auto.length ? { auto: { implementation: auto.slice(0, AUTO_INDEX_MAX) } } : {}) };
 }
 
+/** Remote notification channels for the engine, in the environment (webhook URLs carry their own secret). */
+function notifyEnv(p: Project): NodeJS.ProcessEnv {
+  const webhook = store.getSecret("notify:webhook"), discord = store.getSecret("notify:discord");
+  if (!webhook && !discord) return {};
+  return { AGENT_DOCK_NOTIFY: JSON.stringify({ project: p.name, webhook, discord, digests: store.data.settings.general.notifyDigests !== false }) };
+}
+
 function providerEnv(p: Project): NodeJS.ProcessEnv {
   const impl = agentForRole("implementation", p, agents());
-  if (!impl || impl.provider !== "openai") return {};
+  if (!impl || impl.provider !== "openai") return notifyEnv(p);
   const selected = impl.providerCliId ? store.data.clis.find((c) => c.id === impl.providerCliId) : undefined;
   const provider = selected
     ? selected.kind === "openai" ? selected : undefined
     : store.data.clis.find((c) => c.kind === "openai");
   const secret = provider ? store.getSecret(provider.id) : null;
-  return secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {};
+  return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}) };
 }
 
 // ---------- status polling, notifications and app-enforced workflow rules ----------
@@ -249,6 +257,8 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
   const fresh = prev ? next.events.filter((e) => e.timestamp > lastSeen) : [];
   for (const event of fresh) {
     if (event.type === "run-limit") osNotify(`Unattended run stopping · ${p.name}`, String(event.message ?? "A run limit was reached."));
+    if (event.type === "supervisor-alert" && settings.general.notifyErrors) osNotify(`Supervisor: ${event.monitor ?? "alert"} · ${p.name}`, String(event.message ?? ""));
+    if (event.type === "supervisor-digest" && settings.general.notifyInfo && settings.general.notifyDigests !== false) osNotify(`Supervisor digest · ${p.name}`, String(event.message ?? ""));
     if (event.type === "qa-pass") {
       if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA after ${event.attempt ?? "?"} attempt(s).`);
       // The engine records automatic Pause before QA PASS; polling must not race
@@ -414,7 +424,7 @@ let stopAllPath = "";
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, notifyChannels: { webhook: store.hasSecret("notify:webhook"), discord: store.hasSecret("notify:discord") }, version: app.getVersion() };
 }
 
 /** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
@@ -600,6 +610,17 @@ function registerIpc() {
     void pollOnce();
   });
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
+  handle("notify:setChannel", async (kind: "webhook" | "discord", url: string | null) => {
+    if (kind !== "webhook" && kind !== "discord") throw new Error("Unknown channel");
+    await store.setSecret(`notify:${kind}`, url ? checkChannelUrl(kind, String(url)) : null);
+    return snapshot();
+  });
+  handle("notify:test", async (kind: "webhook" | "discord") => {
+    const url = store.getSecret(`notify:${kind}`);
+    if (!url) throw new Error("No URL saved for this channel");
+    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(channelBody(kind, "", "test", "Agent Dock test", "Notifications from Agent Dock will arrive here.")), signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`The ${kind} answered HTTP ${response.status}`);
+  });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
     try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason }; }

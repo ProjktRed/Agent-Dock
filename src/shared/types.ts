@@ -132,6 +132,21 @@ export interface WorkflowSettings {
     maxTasks: number; maxHours: number; maxCorrections: number; maxElevations: number;
     maxMillionTokens?: number; maxCostUsd?: number; maxMillionTokensDay?: number; maxCostUsdDay?: number;
   };
+  /** Supervisor v1: deterministic monitors; may alert, and pause or stop when allowed. */
+  supervisor?: SupervisorSettings;
+}
+
+export interface SupervisorSettings {
+  /** off: no monitors · alert: alerts only · pause / stop: alerts, and serious ones pause or stop the run at the next safe point. */
+  mode: "off" | "alert" | "pause" | "stop";
+  /** Each threshold 0 = that monitor off. */
+  stallMinutes: number;
+  repeatFailures: number;
+  refusals: number;
+  millionTokensPerTask: number;
+  planDrift: number;
+  scopePaths: number;
+  digestHours: number;
 }
 
 export interface AttentionPolicy {
@@ -151,6 +166,8 @@ export interface Settings {
     notifyCompleted: boolean;
     notifyErrors: boolean;
     notifyInfo: boolean;
+    /** Remote channels (webhook / Discord URLs are stored encrypted as secrets); digests can be left out. */
+    notifyDigests?: boolean;
     defaultProject: string;
   };
   workflow: WorkflowSettings;
@@ -481,6 +498,7 @@ export interface AppSnapshot {
   engine: EngineInfo;
   roles: WorkflowRole[];
   paths: { config: string; projectState: string; stopAll: string };
+  notifyChannels: { webhook: boolean; discord: boolean };
   /** package.json version of the running app, e.g. 0.13.0 */
   version: string;
 }

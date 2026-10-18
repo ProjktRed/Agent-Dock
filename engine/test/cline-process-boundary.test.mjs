@@ -109,7 +109,8 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
   try {
     const before = await dashboardFetch(run.dashboard, "/api/status");
     assert.equal(before.status, 200);
-    const quick = await Promise.race([run.loop, timeout(400)]);
+    // The bug this guards against is an indefinite wait; 3 s detects it without failing on a loaded machine.
+    const quick = await Promise.race([run.loop, timeout(3000)]);
     assert.notEqual(quick.timedOut, true, "worker waited for descendant-held pipe close");
     assert.equal(run.getQaLaunches(), 1);
     assert.ok(run.events.some((event) => event.type === "codex-qa-started"));

@@ -291,6 +291,14 @@ export function buildEngineArgs(input: {
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
+  const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...workflow.supervisor };
+  const count = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
+  args.push("--supervisor", ["off", "alert", "pause", "stop"].includes(sv.mode) ? sv.mode : "alert");
+  if (sv.mode !== "off") {
+    args.push("--sv-stall-minutes", String(count(sv.stallMinutes)), "--sv-repeat-failures", String(Math.floor(count(sv.repeatFailures))), "--sv-refusals", String(Math.floor(count(sv.refusals))),
+      "--sv-tokens-per-task", String(Math.round(count(sv.millionTokensPerTask) * 1_000_000)), "--sv-plan-drift", String(Math.floor(count(sv.planDrift))),
+      "--sv-scope-paths", String(Math.floor(count(sv.scopePaths))), "--sv-digest-hours", String(count(sv.digestHours)));
+  }
   if (unattended) {
     const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...workflow.unattendedLimits };
     const whole = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);

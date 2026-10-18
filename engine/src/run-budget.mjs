@@ -39,7 +39,7 @@ export function useRunLimits(limits = {}) {
 }
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-const runTokens = () => RUN.usage.input + RUN.usage.output;
+export const runTokens = () => RUN.usage.input + RUN.usage.output;
 const money = (usd) => `$${usd.toFixed(2)}`;
 const n = (value) => value.toLocaleString("en-US");
 
@@ -152,6 +152,7 @@ export async function writeRunReport(stateDir, result) {
     hours: Math.round(((ended.getTime() - RUN.startedAt) / 3_600_000) * 100) / 100,
     status: result.status, reason: RUN.limit?.detail ?? result.output ?? null, limit: RUN.limit?.limit ?? null,
     tasksApproved: RUN.tasksPassed, qaFailures: RUN.failures, corrections: RUN.corrections, elevations: RUN.elevations, needsAttention: RUN.attention,
+    supervisorAlerts: result.supervisorAlerts ?? 0,
     usage: { tokens: runTokens(), input: RUN.usage.input, cached: RUN.usage.cached, output: RUN.usage.output, costUsd: Math.round(RUN.usage.costUsd * 10000) / 10000, calls: RUN.usage.calls },
     limits: { maxTasks: RUN.maxTasks, maxHours: RUN.maxHours, maxElevations: RUN.maxElevations, maxTokens: RUN.maxTokens, maxCost: RUN.maxCost, maxTokensDay: RUN.maxTokensDay, maxCostDay: RUN.maxCostDay },
     // The chain head at the end of the run: a log later cut short no longer reaches this entry.
@@ -163,7 +164,7 @@ export async function writeRunReport(stateDir, result) {
     `# Run report`, "",
     line("Mode", report.unattended ? "Unattended" : "Attended"), line("Started", report.startedAt), line("Ended", `${report.endedAt} (${report.hours} h)`),
     line("Result", report.status), line("Why it ended", String(report.reason ?? "").split(/\r?\n/)[0].slice(0, 300) || "finished"), "",
-    line("Tasks approved", report.tasksApproved), line("QA failures", report.qaFailures), line("Corrections", report.corrections), line("Elevations", report.elevations), line("Stops for attention", report.needsAttention), "",
+    line("Tasks approved", report.tasksApproved), line("QA failures", report.qaFailures), line("Corrections", report.corrections), line("Elevations", report.elevations), line("Stops for attention", report.needsAttention), line("Supervisor alerts", `${report.supervisorAlerts} (see supervisor-digest.md)`), "",
     line("Tokens", `${n(report.usage.tokens)} (input ${n(report.usage.input)}, of which cached ${n(report.usage.cached)}; output ${n(report.usage.output)}) over ${report.usage.calls} call(s)`),
     line("Reported spend", `${money(report.usage.costUsd)} (only CLIs that report cost count: Claude Code, OpenCode)`), "",
     line("Action log", report.actionLog.ok ? `verified, ${report.actionLog.entries} entries, head ${report.actionLog.head}` : `NOT VERIFIED (entry ${report.actionLog.brokenAt ?? "?"}: ${report.actionLog.reason})`),

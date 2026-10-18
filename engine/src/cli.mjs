@@ -14,6 +14,8 @@ import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
+import { digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
+import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 
 installTopLevelDiagnostics();
 
@@ -115,29 +117,36 @@ if (!(await state.readLive())) {
 }
 await state.configureRuntime({ contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider });
 useRunLimits(parseRunLimits(options));
+notifyFromEnv();
+const supervisorConfig = parseSupervisorOptions(options);
 await watchUsage(state, stateDir);
 const deadline = startDeadline(state);
+const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig });
 try {
   const result = await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
     solReassessmentEnabled: options.solReassessment,
     manualResolver: options['resolve-block']==='true',
-    onTask: (task) => state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }),
+    onTask: async (task) => { await state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }); await superviseTask(task).catch(() => {}); },
     onEvent: (event) => recordLoopEvent(state,event,options),
     readControl: () => state.readControl(), pendingCodex,
     roles, runRole,
   });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), result);
-  await writeRunReport(stateDir, result);
+  await writeRunReport(stateDir, { ...result, supervisorAlerts: supervisorAlerts().length });
+  if (supervisorConfig.mode !== "off") await digest("final").catch(() => {});
   console.log(JSON.stringify(result));
   process.exitCode = result.status === "blocked" ? 1 : 0;
 } catch (error) {
   await state.record({ type: "blocked", qa: error.stack ?? error.message });
+  notifyEvent({ type: "blocked", qa: error.message });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), { status: "blocked", output: error.message });
-  await writeRunReport(stateDir, { status: "blocked", output: error.message }).catch(() => {});
+  await writeRunReport(stateDir, { status: "blocked", output: error.message, supervisorAlerts: supervisorAlerts().length }).catch(() => {});
   console.error(error.message);
   process.exitCode = 1;
 } finally {
   if (deadline) clearTimeout(deadline);
+  stopSupervisor();
+  await flushNotifications();
   await flushActionLog();
 }

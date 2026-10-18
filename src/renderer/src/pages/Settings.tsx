@@ -461,6 +461,7 @@ function Safety() {
           </div>
         )}
       </section>
+      <SupervisorCard />
       <StopAllCard />
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Always enforced by the engine</h2>
@@ -493,6 +494,73 @@ function Safety() {
         <SetRow title="Crash recovery" desc="Interrupted orchestrator operations are saved and replayed with identical inputs on Resume" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
       </section>
     </div>
+  );
+}
+
+/** Supervisor v1 (monitors, what it may do) and the remote notification channels. */
+function SupervisorCard() {
+  const { snap, toast, refresh } = useApp();
+  const patch = useSettingsPatch();
+  const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...snap.settings.workflow.supervisor };
+  const g = snap.settings.general;
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const saveChannel = async (kind: "webhook" | "discord", url: string | null) => {
+    try { await window.api.setNotifyChannel(kind, url); await refresh(); setDrafts((d) => ({ ...d, [kind]: "" })); toast("success", url ? "Saved (encrypted)" : "Removed"); }
+    catch (error) { toast("error", (error as Error).message); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Supervisor</h2>
+      <SetRow title="What the Supervisor may do" desc="It watches every run for repeated failures, stalls, token burn, guard refusals, plan drift and scope creep. Pause or Stop act only on serious signs, at the next safe point. It never edits code, commits, approves QA or loosens a guard, limit or path." support="engine">
+        <select className="sel" value={sv.mode} aria-label="Supervisor mode" onChange={(e) => void patch("workflow", { supervisor: { ...sv, mode: e.target.value as typeof sv.mode } })}>
+          <option value="off">Off</option>
+          <option value="alert">Alert only</option>
+          <option value="pause">Alert and pause</option>
+          <option value="stop">Alert and stop</option>
+        </select>
+      </SetRow>
+      {sv.mode !== "off" && (
+        <div className="grid-4">
+          {([
+            ["repeatFailures", "Same QA failure in a row", "alert (and act) after this many"],
+            ["stallMinutes", "Stall after minutes", "no engine activity; alert only"],
+            ["refusals", "Guard refusals in 10 min", "alert; act at twice this"],
+            ["millionTokensPerTask", "Tokens per task (millions)", "alert; act at twice this; 0 = off"],
+            ["planDrift", "Approved tasks without plan progress", "IMPLEMENTATION_PLAN.md; alert only"],
+            ["scopePaths", "Allowed paths per task", "or broad paths like src/**; alert only"],
+            ["digestHours", "Digest every hours", "0 = only at the end of a run"],
+          ] as const).map(([key, label, hint]) => (
+            <label className="field" key={key}><span>{label}</span>
+              <input className="input mono" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
+                onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== sv[key]) void patch("workflow", { supervisor: { ...sv, [key]: ["stallMinutes", "millionTokensPerTask", "digestHours"].includes(key) ? v : Math.floor(v) } }); else e.target.value = String(sv[key]); }} />
+              <span className="hint">{hint}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
+        <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
+      </SetRow>
+      {(["webhook", "discord"] as const).map((kind) => (
+        <SetRow key={kind} title={kind === "webhook" ? "Webhook" : "Discord"}
+          desc={snap.notifyChannels[kind]
+            ? "Saved (encrypted). The engine sends alerts, run limits, attention, blocked runs and digests here itself, even with the app closed."
+            : kind === "webhook" ? "POSTs JSON {source, project, type, title, message, at}. https only." : "A Discord channel webhook URL (Channel settings › Integrations › Webhooks)."}
+          support="engine">
+          {snap.notifyChannels[kind] ? (
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn sm" onClick={() => void window.api.testNotifyChannel(kind).then(() => toast("success", "Test sent"), (error) => toast("error", (error as Error).message))}>Send test</button>
+              <button className="btn sm danger" onClick={() => void saveChannel(kind, null)}>Remove</button>
+            </div>
+          ) : (
+            <div className="row" style={{ gap: 8 }}>
+              <input className="input mono" type="password" placeholder="https://…" value={drafts[kind] ?? ""} aria-label={`${kind} URL`} onChange={(e) => setDrafts((d) => ({ ...d, [kind]: e.target.value }))} />
+              <button className="btn sm" disabled={!drafts[kind]?.trim()} onClick={() => void saveChannel(kind, drafts[kind].trim())}>Save</button>
+            </div>
+          )}
+        </SetRow>
+      ))}
+    </section>
   );
 }
 
