@@ -12,7 +12,7 @@ import {compactCorrections,correctionInstructions,correctionText,packetForPrompt
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
 import {TUNING} from './engine-tuning.mjs';
-import {elevationAllowed} from './run-budget.mjs';
+import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
 import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
@@ -23,6 +23,8 @@ const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReas
 
 // All recovery progress belongs to the existing current-task.json record. A model
 // result is checkpointed here before its completed-operation receipt is consumed.
+const LIMIT_CONTINUATION='Note: an earlier run of this attempt was stopped by a usage limit before it finished. Its partial changes are still in the working tree: review them, keep what is correct, and finish the task.';
+
 export async function runNodeLoop({workspace,stateDir,objective,initialTask,codex,worker,
   assess=input=>codex.assess(input),review=async(input,context)=>{await assertQaPacketFresh(workspace,input);return codex.review(input,context);},
   assessCorrection=input=>codex.assessCorrection(input),
@@ -142,7 +144,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       }
       if(r.phase==='blocked') return block(r.blockedReason??'Recovery is blocked');
       if(r.phase==='worker-launching'||r.phase==='worker-running') return block('Cannot reconcile interrupted local worker; implementation must not be replayed');
-      if(!['worker','evidence','review','qa','decision','correction-assessment','elevation','passed'].includes(r.phase))return block('Malformed recovery phase');
+      if(!['worker','worker-limit','evidence','review','qa','decision','correction-assessment','elevation','passed'].includes(r.phase))return block('Malformed recovery phase');
       let completedPass=(pending?.operation==='qa'&&pending.status==='completed'&&pending.result?.status==='pass')?pending.result:(r.phase==='decision'&&r.failure?.status==='pass'?r.failure:null);
       // QA was killed after committing but before reporting: accept the commit only if the engine's own checks pass.
       // Retry QA after such a block (HEAD moved by the unreported commit) uses the same check.
@@ -213,7 +215,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           const boundaryControl=await readControl();
           // Defer (Supervisor, when allowed): only between steps, with no worker or model call running.
           if(r.deferGeneration===undefined)r.deferGeneration=Number(boundaryControl.deferGeneration??0);
-          else if(Number(boundaryControl.deferGeneration??0)>r.deferGeneration&&['worker','correction-assessment'].includes(r.phase)) {
+          else if(Number(boundaryControl.deferGeneration??0)>r.deferGeneration&&['worker','worker-limit','correction-assessment'].includes(r.phase)) {
             r.deferGeneration=Number(boundaryControl.deferGeneration);
             const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:boundaryControl.deferReason});
             if(deferred.blocked)return block(deferred.blocked);
@@ -235,19 +237,33 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             }
             return{status:'passed',attempts:r.attempt,qa:r.failure,history:r.history};
           }
+          if(r.phase==='worker-limit') {
+            // The implementation CLI hit its usage limit and exited. Wait for Resume (or the automatic retry),
+            // then run a fresh attempt that continues from the partial changes; nothing is replayed blindly.
+            const limit=r.workerLimit;
+            await emit('waiting-for-codex',{operation:'implementation',attempt:r.attempt,message:limit.message,retryAt:limit.retryAt});
+            const outcome=await waitOutLimit({readControl,generation:limit.resumeGeneration,since:Date.parse(limit.at),pollMs});
+            if(outcome==='stopped'){await emit('stopped');return{status:'stopped'};}
+            if(!r.prompt.includes(LIMIT_CONTINUATION))r.prompt+='\n\n'+LIMIT_CONTINUATION;
+            r.workerLimit=null;r.phase='worker';await save();
+            await emit('implementation-limit-resumed',{attempt:r.attempt,automatic:outcome==='retry'});
+            continue;
+          }
           if(r.phase==='worker') {
             const guidance=await runStageRoles('before-implementation',{objective,task,fileStatus:describeAllowedPaths(task,workspace)});
             if(guidance.stopped)return{status:'stopped'};
             if(codex.activeCount!==0)throw new Error('Cannot launch local worker while Codex is alive');
             await codex.assertIdle?.();
-            r.scratchBaseline=await captureScratchBaseline(workspace);await save();
+            // Kept across a usage-limit retry, so files the stopped run created still count as the worker's own.
+            r.scratchBaseline??=await captureScratchBaseline(workspace);await save();
             const knowledge=await selectKnowledge(knowledgeFile,task.prompt+' '+(r.failure?.output??''));
             await emit('known-issues-selected',{knownIssues:[...knowledge.matchAll(/^## (.+)$/gm)].map(m=>m[1])});
             const roleText=roleGuidanceText(guidance.results);
             r.promptWithKnowledge=r.prompt+(roleText?'\n\n'+roleText:'')+(knowledge?'\n\n'+knowledge:'');
             r.phase='worker-launching';await save();
             const started=Date.now();await emit('cline-started',{attempt:r.attempt,startedAt:new Date(started).toISOString()});
-            r.workerResult=compactWorkerResult(await worker.run(r.promptWithKnowledge,{task,
+            let workerResult;
+            try{workerResult=await worker.run(r.promptWithKnowledge,{task,
               onStart:async({pid})=>{
                 // A correction counts only once the owned worker has actually started.
                 if(r.currentCorrection&&!r.currentCorrection.attempted){r.currentCorrection.attempted=true;r.currentCorrection.attempt=r.attempt;
@@ -255,7 +271,16 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
                   r.correctionHistory.push({...r.currentCorrection});}
                 r.phase='worker-running';await save();await emit('cline-process-started',{pid,attempt:r.attempt,startedAt:new Date(started).toISOString()});
               },onEvent:async({type,...event})=>{recordScratchEvent(r.scratchBaseline,{type,...event});await emit(type,{...event,attempt:r.attempt});},
-            }));
+            });}
+            catch(error){
+              if(error?.code!=='IMPLEMENTATION_USAGE_LIMIT')throw error;
+              r.workerLimit={attempt:r.attempt,message:error.message,retryAt:error.retryAt??null,at:new Date().toISOString(),resumeGeneration:Number((await readControl()).resumeGeneration??0)};
+              r.phase='worker-limit';await save();
+              await emit('cline-finished',{attempt:r.attempt,exitCode:75,durationMs:Date.now()-started});
+              await emit('implementation-usage-limit',{attempt:r.attempt,message:error.message,retryAt:r.workerLimit.retryAt});
+              continue;
+            }
+            r.workerResult=compactWorkerResult(workerResult);
             r.scratchOwnership=await finalizeScratchOwnership(workspace,r.scratchBaseline);delete r.scratchBaseline;
             r.phase='evidence';await save();await emit('cline-finished',{attempt:r.attempt,exitCode:r.workerResult.exitCode,durationMs:Date.now()-started});
           }

@@ -13,6 +13,11 @@ import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
+// A usage limit ends the attempt cleanly (the CLI has exited, its partial changes are on disk): the loop
+// waits it out and then starts a fresh attempt that continues from those changes.
+export const implementationLimit = (cli, { message, retryAt = null }) =>
+  Object.assign(new Error(`Implementation stopped by the ${cli} usage limit: ${message}`), { code: "IMPLEMENTATION_USAGE_LIMIT", retryAt });
+
 // Cline worker: one exclusive lock, never replayed after an interruption, and every change still
 // goes through Node's scope/HEAD verification and independent QA. The worker never commits.
 
@@ -144,11 +149,11 @@ export class CloudImplementationWorker {
       // Fail closed: tool use without a single hook decision means the scope hook did not run.
       if (codexUsedTools(stdout) && !decisions.length) throw new Error(CODEX_FAIL_CLOSED);
       const limit = detectCodexUsageLimit(stdout + "\n" + stderr);
-      if (limit) throw new Error(`Implementation stopped by the Codex usage limit: ${limit.message}`);
+      if (limit) throw implementationLimit("Codex", limit);
       summary = await readFile(outputFile, "utf8").catch(() => "");
     } else {
       try { summary = extractClaudeResult(stdout); }
-      catch (error) { if (error.code === "CODEX_USAGE_LIMIT") throw new Error(`Implementation stopped by the Claude usage limit: ${error.message}`); summary = error.message; return { exitCode: exitCode || 1, runResult: { finishReason: "failed", text: summary.slice(0, 2000) } }; }
+      catch (error) { if (error.code === "CODEX_USAGE_LIMIT") throw implementationLimit("Claude", error); summary = error.message; return { exitCode: exitCode || 1, runResult: { finishReason: "failed", text: summary.slice(0, 2000) } }; }
     }
     const tail = (stderr || stdout).trim().split(/\r?\n/).slice(-5).join("\n");
     return { exitCode, runResult: { finishReason: exitCode === 0 ? "completed" : "failed", text: (summary.trim() || tail || "No summary.").slice(0, 2000) } };

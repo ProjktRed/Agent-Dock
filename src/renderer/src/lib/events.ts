@@ -37,7 +37,9 @@ export function describeEvent(e: EngineEvent): string {
       const cli = (value: unknown) => value === "claude" ? "Claude Code" : "Codex";
       return `${role}: usage limit on ${cli(e.fromCli)}; retrying on ${cli(e.toCli)}${model(e)}`;
     }
-    case "waiting-for-codex": return "Waiting for the usage limit to reset (Resume to retry)";
+    case "waiting-for-codex": return e.operation === "implementation" ? "Implementation waiting for the usage limit to reset (Resume to continue; its partial changes are kept)" : "Waiting for the usage limit to reset (Resume to retry)";
+    case "implementation-usage-limit": return `Implementation stopped by a usage limit: ${first(e.message)}`;
+    case "implementation-limit-resumed": return e.automatic ? "Trying the implementation again after the usage-limit wait" : "Continuing the implementation after Resume";
     case "task-loaded": return `Task loaded: ${e.taskId ?? ""}${Array.isArray(e.skills) && e.skills.length ? ` · skills: ${e.skills.join(", ")}` : ""}`;
     case "known-issues-selected": return Array.isArray(e.knownIssues) && e.knownIssues.length ? `Known worker issues included: ${e.knownIssues.join(", ")}` : "No known worker issues apply";
     case "cline-started": return `Implementation started${attemptOf(e)}`;

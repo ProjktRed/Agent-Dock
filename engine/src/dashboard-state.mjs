@@ -227,7 +227,7 @@ export class DashboardState {
       }
       if(event.operation==='resolver')next.resolverRunning=false;
       if (event.operation === "qa" && event.source === "manual-elevate") next.elevateRunning = false;
-    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished') {
+    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished' || event.type === "cline-started" || event.type === "implementation-limit-resumed") {
       next.interruptedOperation = null;
       next.codexLimitMessage = null;
       next.codexRetryAt = null;

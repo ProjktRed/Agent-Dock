@@ -200,6 +200,10 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   The worker is told never to commit, git write commands are denied, and Node's scope and HEAD
   checks plus independent QA still gate every change. An interrupted implementation is never
   replayed (the same rule as for Cline).
+  A usage limit is different: the CLI has exited and its partial changes are on disk, so the task
+  waits (Waiting: usage limit) with those changes kept. Resume starts a fresh attempt that is told to
+  review and finish them; in Unattended mode the engine also tries again by itself every 30 minutes
+  (engine flag `--limit-retry-minutes`, 0 = wait for Resume). Stop and restart keep the wait.
 - **Workflow roles** (Workflow tab): your own read-only roles at three points in the loop.
   - **Before implementation**: runs once per task; its guidance is added to every worker prompt
     for that task.
@@ -272,8 +276,6 @@ debugging switches. It does not replace live-provider integration testing or an 
 ## Known limitations
 
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
-- A usage limit hit during a Codex or Claude Code implementation stops that attempt. Because an
-  interrupted implementation is never replayed, the task then needs Resolve or your decision.
 - llama.cpp is only started automatically when a launcher script is set (Settings › Advanced ›
   llama.cpp launcher; passed as `--llamacpp-launcher`). Router mode and thinking expect the
   launcher to accept `-ModelsDir`, `-Reasoning` and `-ReasoningEffort` and pass them on to

@@ -7,11 +7,11 @@ import { redactText } from "./redact.mjs";
 // Unattended mode: run-wide limits the engine enforces itself. A limit asks for Stop, so the loop ends at
 // its next safe point (never mid-task), and the end-of-run report says which limit ended it.
 export const RUN = {
-  unattended: false, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0,
+  unattended: false, limitRetryMinutes: null, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0,
   startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
   usage: { input: 0, cached: 0, output: 0, costUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 },
 };
-const NO_LIMITS = { unattended: false, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0 };
+const NO_LIMITS = { unattended: false, limitRetryMinutes: null, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0 };
 let watched = null; // { state, stateDir } once the run is watched for its token and spend budget
 let dayWrite = Promise.resolve();
 
@@ -23,11 +23,12 @@ function count(value, flag, { decimal = false } = {}) {
 }
 
 /** --unattended true|false, --max-tasks N, --max-hours H, --max-elevations N, --max-tokens N, --max-cost USD,
- *  --max-tokens-day N, --max-cost-day USD (0 = no limit). */
+ *  --max-tokens-day N, --max-cost-day USD (0 = no limit), --limit-retry-minutes N (0 = wait for Resume). */
 export function parseRunLimits(options) {
   const unattended = options.unattended === undefined ? false : options.unattended === "true" ? true : options.unattended === "false" ? false : (() => { throw new Error("--unattended must be true or false"); })();
   const limits = { unattended, maxTasks: count(options["max-tasks"], "max-tasks"), maxHours: count(options["max-hours"], "max-hours", { decimal: true }), maxElevations: count(options["max-elevations"], "max-elevations") };
   // Budget flags appear only when given, so runs without them keep the limits they had before.
+  if (options["limit-retry-minutes"] !== undefined) limits.limitRetryMinutes = count(options["limit-retry-minutes"], "limit-retry-minutes");
   for (const [key, flag, decimal] of [["maxTokens", "max-tokens"], ["maxCost", "max-cost", true], ["maxTokensDay", "max-tokens-day"], ["maxCostDay", "max-cost-day", true]])
     if (options[flag] !== undefined) limits[key] = count(options[flag], flag, { decimal });
   return limits;
@@ -37,6 +38,23 @@ export function useRunLimits(limits = {}) {
   Object.assign(RUN, { ...NO_LIMITS, ...limits, startedAt: Date.now(), tasksPassed: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
     usage: { input: 0, cached: 0, output: 0, costUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 } });
   watched = null;
+}
+
+/** How long a usage-limit wait lasts before the engine tries again by itself: 0 means only Resume continues.
+ *  Unattended runs retry every 30 minutes by default, so an overnight run carries on once the limit resets. */
+export const limitRetryMs = () => (RUN.limitRetryMinutes ?? (RUN.unattended ? 30 : 0)) * 60_000;
+
+/** Waits out a usage limit: Stop ends the wait, Resume (a newer resume generation) continues, and with
+ *  automatic retry the wait also ends once the interval since `since` has passed. */
+export async function waitOutLimit({ readControl, generation, since = Date.now(), pollMs = 1000, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  const retry = limitRetryMs();
+  for (;;) {
+    const control = await readControl();
+    if (control.stopAfterSafePoint) return "stopped";
+    if (Number(control.resumeGeneration ?? 0) > generation) return "resumed";
+    if (retry && now() - since >= retry) return "retry";
+    await sleep(pollMs);
+  }
 }
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
