@@ -138,6 +138,16 @@ describe("engine launch args", () => {
     expect(none.autoAllImported).toBe(false);
     expect(none.args).not.toContain("--skills-file");
   });
+  it("launches with every role on one CLI's default model, as first setup assigns them", () => {
+    for (const kind of ["claude", "codex"] as const) {
+      const id = clis().find((c) => c.kind === kind)!.id;
+      const list = agents().map((a) => ({ ...a, cliId: id, model: "", reasoning: undefined, provider: undefined, providerCliId: undefined }));
+      const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+      expect(plan.problems).toEqual([]);
+      expect(plan.args[plan.args.indexOf("--implementation-cli") + 1]).toBe(kind);
+      expect(plan.args[plan.args.indexOf("--orchestrator") + 1]).toBe(kind);
+    }
+  });
   it("passes each role agent's custom instructions through the skills file, and refuses over-long ones", () => {
     const list = agents().map((agent) => agent.role === "implementation" ? { ...agent, autoAllImported: false, instructions: "  Use tabs.  " }
       : agent.role === "qa" ? { ...agent, instructions: "Check the changelog." } : { ...agent, autoAllImported: false });

@@ -12,6 +12,35 @@ custom workflow roles and adjustable loop limits. The app launches it as
 a separate process per project and reads the engine's `.state` files. It never re-implements
 the loop.
 
+## Getting started
+
+**You need:** Windows 10 or 11, [Git](https://git-scm.com/download/win), and Codex CLI or Claude Code,
+installed and signed in. Agent Dock never handles their logins. Optional: Cline CLI with
+llama.cpp or Ollama, to implement with a local model instead of a cloud CLI.
+
+1. **Setup** opens on first launch. Step 1 checks Git, the CLI for planning and QA, and the
+   Implementation agent's CLI. If only Codex or only Claude Code is installed, one button points
+   the agents at it, on its default model; change models later in **Agents**.
+2. **Add a project:** an existing Git repository, a GitHub clone, or a new folder. Give it an
+   objective (what the loop should build), or let **Create plan with a model** write an
+   `IMPLEMENTATION_PLAN.md` for you to review.
+3. **Start** the project on **Overview**. Assessment picks one small task, Implementation makes the
+   change inside that task's files, and QA checks it and commits it. **Progress** shows each step;
+   **Runs** lists finished runs with their reports.
+
+What stays under your control:
+- Nothing runs until you press Start, and Pause, Stop and Stop now work at any time. **Stop all**
+  (Settings › Safety) stops every project at once.
+- Workers cannot commit, change Git history or touch paths outside their task. Protected paths
+  (Settings › Safety) and Agent Dock's own folders are refused to every worker.
+- **Unattended mode** (Settings › Safety) adds hard caps on tasks, hours, corrections, tokens and
+  spend, and a Supervisor that alerts or pauses on stalls and repeated failures.
+- API keys you enter are encrypted with your Windows account (DPAPI) and kept out of logs,
+  prompts and notifications.
+
+Something wrong? **Settings › Advanced › Export diagnostics** saves a zip for a bug report, with
+secrets, project code and model prompts left out.
+
 ## Run
 
 Requires Node 20+ (the engine runs on the system `node` when found, otherwise on Electron's
