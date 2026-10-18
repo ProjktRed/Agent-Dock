@@ -53,6 +53,8 @@ export interface Agent {
   timeoutSeconds: number;
   instructions: string;
   skills: string[];
+  /** Implementation agents: skills Assessment may pick per task by their descriptions ("when relevant"). */
+  autoSkills?: string[];
   enabled: boolean;
 }
 

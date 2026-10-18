@@ -102,6 +102,14 @@ describe("engine launch args", () => {
     expect(none.skills).toEqual({});
     expect(none.args).not.toContain("--skills-file");
   });
+  it("passes 'when relevant' implementation skills, without repeating always-assigned ones", () => {
+    const list = agents().map((agent) => agent.role === "implementation" ? { ...agent, skills: ["tdd"], autoSkills: ["tdd", "css", "css", "sql"] } : agent);
+    const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings() });
+    expect(plan.autoSkills).toEqual(["css", "sql"]);
+    const onlyAuto = buildEngineArgs({ project: project(), agents: agents().map((a) => a.role === "implementation" ? { ...a, autoSkills: ["css"] } : a), clis: clis(), settings: settings() });
+    expect(onlyAuto.skills).toEqual({});
+    expect(onlyAuto.args).toContain("--skills-file");
+  });
   it("detects OpenCode Console and normalizes its model-list endpoint for chat", () => {
     const list = agents().map((agent) => agent.role === "implementation"
       ? { ...agent, provider: "openai" as const, providerCliId: "zen", model: "deepseek-v4.1-flash-free" }

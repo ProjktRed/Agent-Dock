@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
+import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, taskSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
@@ -329,7 +329,7 @@ export class CodexWorker {
   async assess({ objective, previous }) {
     const result = await this.invoke([
       "You are Codex performing one assessment operation. Inspect this repository and its instructions.",
-      managerHandoffSkill("assessment"),
+      managerHandoffSkill("assessment") + autoSkillCatalogText(),
       "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
       "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",

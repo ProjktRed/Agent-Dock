@@ -65,6 +65,7 @@ export interface EngineLaunchPlan {
   roles: EngineRoleEntry[];
   /** Skill names assigned per engine role (engine-bundled skills excluded); resolved and written to --skills-file at start. */
   skills: Record<string, string[]>;
+  autoSkills: string[];
   /** Block the start. */
   problems: string[];
   /** Shown, but the start goes ahead (engine guardrails off). */
@@ -269,7 +270,9 @@ export function buildEngineArgs(input: {
   assign("resolver", assessment);
   if (elevation?.enabled) assign("elevate", elevation);
   for (const entry of roleEntries) assign(`role:${entry.id}`, agentForWorkflowRole(workflowRoles.find((r) => r.id === entry.id)!, agents));
-  if (Object.keys(skills).length) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // "When relevant" skills: Assessment sees their descriptions and picks per task; always-assigned ones are not repeated.
+  const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
+  if (Object.keys(skills).length || autoSkills.length) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
   // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
   if (!guarded) {
     for (const [key, flag] of TUNING_FLAGS) {
@@ -289,6 +292,7 @@ export function buildEngineArgs(input: {
     args,
     roles: roleEntries,
     skills,
+    autoSkills,
     problems,
     warnings,
     summary: {

@@ -208,7 +208,8 @@ function Skills() {
   if (!skills) return <div className="skel" style={{ width: "50%" }} />;
   const sel = skills.find((s) => s.id === selId) ?? null;
   const enabled = (s: SkillInfo) => snap.settings.skills.enabled[s.id] ?? true;
-  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name));
+  const assigned = (s: SkillInfo) => snap.agents.filter((a) => a.skills.includes(s.name) || (a.autoSkills ?? []).includes(s.name));
+  const assignedLabel = (s: SkillInfo) => assigned(s).map((a) => (a.skills.includes(s.name) ? a.name : `${a.name} (when relevant)`)).join(", ");
   const toggleAgent = async (agent: Agent, skill: SkillInfo) => {
     const has = agent.skills.includes(skill.name);
     setAgents(await window.api.saveAgent({ ...agent, skills: has ? agent.skills.filter((x) => x !== skill.name) : [...agent.skills, skill.name] }));
@@ -230,7 +231,7 @@ function Skills() {
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
                   <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
-                  <td className="sub">{assigned(s).map((a) => a.name).join(", ") || "None"}</td>
+                  <td className="sub">{assignedLabel(s) || "None"}</td>
                   <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? `${s.warnings.length} warning(s)` : "Compatible"}</span></td>
                   <td onClick={(e) => e.stopPropagation()}>{s.source === "engine" ? <span className="lock"><Icon name="lock" size="sm" />Required</span> : <Toggle on={enabled(s)} onChange={(v) => saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, [s.id]: v } } })} label={`Enable ${s.name}`} />}</td>
                 </tr>

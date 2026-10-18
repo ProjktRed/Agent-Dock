@@ -31,6 +31,8 @@ export interface LaunchCheck {
   roles: EngineRoleEntry[];
   /** Skill names assigned per engine role (written with their instructions to <state>/assigned-skills.json at start). */
   skills: Record<string, string[]>;
+  /** Implementation skills Assessment may pick per task (written to the same file with their descriptions). */
+  autoSkills: string[];
 }
 
 /** One entry of the engine's --roles-file. */

@@ -28,7 +28,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   useEffect(() => setDraft(agent), [agent]);
   useEffect(() => { void window.api.skills().then(setLibrary).catch(() => {}); }, []);
   // Imported, enabled skills not yet on this agent; the engine adds its own bounded-task-handoff itself.
-  const addable = library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false && !draft.skills.includes(sk.name));
+  const addable = library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false && !draft.skills.includes(sk.name) && !(draft.autoSkills ?? []).includes(sk.name));
   const orchestrator = draft.role === "qa" || draft.role === "assessment" || draft.role === "elevation";
   const implementation = draft.role === "implementation";
   const custom = draft.role === "custom";
@@ -295,6 +295,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
       </label>
       <div className="field">
         <span className="row" style={{ gap: 8 }}>Skills<Support kind="engine" /></span>
+        {implementation && <span className="sub">Always: added to every task.</span>}
         <div className="row wrap" style={{ gap: 10 }}>
           {draft.skills.map((k) => (
             <span className="chip raised" key={k}>{k}<button className="x" onClick={() => set("skills", draft.skills.filter((x) => x !== k))} aria-label={`Remove ${k}`}><Icon name="close" size="sm" /></button></span>
@@ -306,6 +307,21 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           </select>
           <button className="btn ghost sm" onClick={() => { openSettingsSection("skills"); go("settings"); }}><Icon name="download" size="sm" />Import skills</button>
         </div>
+        {implementation && (
+          <>
+            <span className="sub" style={{ marginTop: 6 }}>When relevant: Assessment reads each skill's description and adds up to 3 to a task that needs them.</span>
+            <div className="row wrap" style={{ gap: 10 }}>
+              {(draft.autoSkills ?? []).map((k) => (
+                <span className="chip raised" key={k}>{k}<button className="x" onClick={() => set("autoSkills", (draft.autoSkills ?? []).filter((x) => x !== k))} aria-label={`Remove ${k}`}><Icon name="close" size="sm" /></button></span>
+              ))}
+              {!(draft.autoSkills ?? []).length && <span className="sub">None.</span>}
+              <select className="sel" style={{ width: "auto", minWidth: 160 }} value="" aria-label="Add a skill used when relevant" disabled={!addable.length} onChange={(e) => e.target.value && set("autoSkills", [...(draft.autoSkills ?? []), e.target.value])}>
+                <option value="">{addable.length ? "Add skill…" : library.some((sk) => sk.source === "imported") ? "All skills added" : "No imported skills"}</option>
+                {addable.map((sk) => <option key={sk.id} value={sk.name} title={sk.description}>{sk.name}{sk.description ? "" : " (no description)"}</option>)}
+              </select>
+            </div>
+          </>
+        )}
       </div>
       <div className="well pad stack" style={{ gap: 12 }}>
         <div className="row"><h3 className="h3">Connection health</h3><span className="grow" />{testing && <span className="row sub"><Spinner />Testing…</span>}<button className="btn sm" onClick={test} disabled={testing}>Test connection</button></div>

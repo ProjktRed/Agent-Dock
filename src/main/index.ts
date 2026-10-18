@@ -187,15 +187,18 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
     await mkdir(p.stateDir, { recursive: true });
     await writeFile(path.join(p.stateDir, "workflow-roles.json"), JSON.stringify(check.roles, null, 2));
   }
-  if (Object.keys(check.skills).length) {
+  if (Object.keys(check.skills).length || check.autoSkills.length) {
     await mkdir(p.stateDir, { recursive: true });
-    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify(await assignedSkillsFile(check.skills), null, 2));
+    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify(await assignedSkillsFile(check.skills, check.autoSkills), null, 2));
   }
   return check.args;
 }
 
-/** The SKILL.md instructions of each role's assigned skills; disabled or missing skills are left out. */
-async function assignedSkillsFile(assigned: Record<string, string[]>) {
+/**
+ * The SKILL.md instructions of each role's assigned skills; disabled or missing skills are left out.
+ * "When relevant" implementation skills also carry their description, which Assessment uses to pick them.
+ */
+async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames: string[] = []) {
   const available = (await listSkills(engineDir, store.data.settings.skills.importedDirs))
     .filter((s) => s.source === "imported" && store.data.settings.skills.enabled[s.id] !== false);
   const roles: Record<string, { name: string; instructions: string }[]> = {};
@@ -210,7 +213,16 @@ async function assignedSkillsFile(assigned: Record<string, string[]>) {
     const total = roles[role].reduce((sum, s) => sum + s.instructions.length, 0);
     if (total > ROLE_SKILLS_MAX_CHARS) throw new Error(`Skills assigned to ${role} are longer than ${ROLE_SKILLS_MAX_CHARS.toLocaleString()} characters in total; unassign some.`);
   }
-  return { version: 1, roles };
+  const auto: { name: string; description: string; instructions: string }[] = [];
+  for (const name of autoNames) {
+    const skill = available.find((s) => s.name === name);
+    if (!skill || !skill.instructions.trim()) continue;
+    if (skill.instructions.length > SKILL_MAX_CHARS) throw new Error(`Skill “${name}” is longer than ${SKILL_MAX_CHARS.toLocaleString()} characters; shorten its SKILL.md or remove it from “When relevant”.`);
+    // Without a description, the first line of text stands in so Assessment can still judge relevance.
+    const description = skill.description.trim() || skill.instructions.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean)!.slice(0, 200);
+    auto.push({ name, description, instructions: (await skillDeliveryText(skill)).text });
+  }
+  return { version: 1, roles, ...(auto.length ? { auto: { implementation: auto } } : {}) };
 }
 
 function providerEnv(p: Project): NodeJS.ProcessEnv {

@@ -5,6 +5,7 @@ import { diagnostic } from "./diagnostics.mjs";
 import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
 import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } from './recovery-policy.mjs';
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
+import { selectedAutoSkills } from './task-handoff-skill.mjs';
 
 async function readJson(file, fallback) {
   try {
@@ -86,7 +87,8 @@ export class DashboardState {
         resumeGeneration: 0,
       });
     }
-    await this.appendEvent({ type: "task-loaded", taskId: task.id });
+    const skills = selectedAutoSkills(task).map((skill) => skill.name);
+    await this.appendEvent({ type: "task-loaded", taskId: task.id, ...(skills.length ? { skills } : {}) });
   }
 
   async record(event) {

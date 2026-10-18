@@ -38,7 +38,7 @@ export function describeEvent(e: EngineEvent): string {
       return `${role}: usage limit on ${cli(e.fromCli)}; retrying on ${cli(e.toCli)}${model(e)}`;
     }
     case "waiting-for-codex": return "Waiting for the usage limit to reset (Resume to retry)";
-    case "task-loaded": return `Task loaded: ${e.taskId ?? ""}`;
+    case "task-loaded": return `Task loaded: ${e.taskId ?? ""}${Array.isArray(e.skills) && e.skills.length ? ` · skills: ${e.skills.join(", ")}` : ""}`;
     case "known-issues-selected": return Array.isArray(e.knownIssues) && e.knownIssues.length ? `Known worker issues included: ${e.knownIssues.join(", ")}` : "No known worker issues apply";
     case "cline-started": return `Implementation started${attemptOf(e)}`;
     case "cline-provider-ready": return `Implementation model ready${model(e)}`;

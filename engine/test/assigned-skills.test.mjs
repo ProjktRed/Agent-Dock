@@ -59,3 +59,24 @@ test('no skills file means prompts are unchanged, and --skills-file loads at sta
  parseLoopOptions([]);
  assert.equal(buildInitialPrompt(task),plain);
 });
+
+test('automatic skills: Assessment sees only the catalog, the worker gets the ones named in the task',async t=>{
+ t.after(()=>useAssignedSkills({}));
+ const auto=n=>({name:n,description:`Use for ${n} work.`,instructions:`AUTO_BODY_${n}`});
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},auto:{qa:[]}}),/auto must be/);
+ assert.throws(()=>parseAssignedSkills({version:1,roles:{},auto:{implementation:[{name:'x',description:' ',instructions:'y'}]}}),/needs a description/);
+ useAssignedSkills(parseAssignedSkills({version:1,roles:{implementation:[skill('tdd','Write the test first.')]},
+  auto:{implementation:['css','sql','auth','docs'].map(auto).concat([{...auto('tdd')}])}}));
+ const worker=new CodexWorker({workspace:os.tmpdir(),stateDir:os.tmpdir()});
+ const prompts=[];worker.invoke=async prompt=>{prompts.push(prompt);return {task};};
+ await worker.assess({objective:'o'}).catch(()=>{});
+ assert.match(prompts[0],/- css: Use for css work\./);
+ assert.ok(!prompts[0].includes('AUTO_BODY_'),'Assessment never gets automatic skill bodies');
+ assert.ok(!buildQaPrompt({task}).includes('- css:'),'only the choosing Assessment sees the catalog');
+ const picked={...task,prompt:'Task skill: implement\nSkills: SQL, nope, css, auth, docs, tdd\nFix x'};
+ const prompt=buildInitialPrompt(picked);
+ for(const n of ['sql','css','auth'])assert.ok(prompt.includes('AUTO_BODY_'+n),n);
+ assert.ok(!prompt.includes('AUTO_BODY_docs'),'at most 3 are used');
+ assert.equal(prompt.split('## Skill: tdd').length,2,'always-assigned tdd appears once');
+ assert.ok(!buildInitialPrompt(task).includes('AUTO_BODY_'),'no Skills line, no automatic skills');
+});
