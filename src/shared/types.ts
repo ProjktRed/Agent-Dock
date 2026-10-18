@@ -181,6 +181,8 @@ export interface Settings {
     notifyDigests?: boolean;
     /** Send signed approval requests to Telegram/email when a run waits for you (the app must be running). */
     remoteApprovals?: boolean;
+    /** Keep per-call folders, Cline sessions and log archives this many days (the newest are always kept); 0 = forever. */
+    retentionDays?: number;
     defaultProject: string;
   };
   workflow: WorkflowSettings;

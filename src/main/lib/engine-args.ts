@@ -290,6 +290,8 @@ export function buildEngineArgs(input: {
   }
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
+  const retentionDays = input.settings.general.retentionDays ?? DEFAULT_SETTINGS.general.retentionDays ?? 30;
+  args.push("--retention-days", String(Number.isFinite(retentionDays) && retentionDays >= 0 ? retentionDays : 30));
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
   const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...workflow.supervisor };
   const count = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);

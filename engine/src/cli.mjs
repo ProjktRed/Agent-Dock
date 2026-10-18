@@ -15,6 +15,7 @@ import { createImplementationWorker, createRoles, gitStartupError, recordLoopEve
 import {configureProtection} from './guard/protected-paths.mjs';
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
+import { applyRetention } from "./retention.mjs";
 import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { createReviewer } from "./supervisor-review.mjs";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
@@ -128,6 +129,12 @@ const reviewer = supervisorConfig.mode !== "off" && supervisorConfig.review !== 
   ? await createReviewer({ kind: options["supervisor-reviewer"] ?? (useClaude ? "claude" : "codex"), model: options["supervisor-model"], baseUrl: options["supervisor-base-url"], stateDir, workspace, codexLauncher, options })
     .catch(async (error) => { await state.record({ type: "supervisor-review-failed", message: `Supervisor review is off for this run: ${error.message}` }); return null; })
   : null;
+// Retention: old per-call folders, Cline sessions and log archives go before the run adds new ones.
+const retentionDays = options["retention-days"] === undefined ? 30 : Number(options["retention-days"]);
+if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new Error("--retention-days must be a number of days, 0 to keep everything");
+const retention = await applyRetention(stateDir, { days: retentionDays }).catch(() => null);
+if (retention && (retention.calls || retention.sessions || retention.setAside || retention.activityTrimmed || retention.actionLogRotated || retention.actionLogPruned))
+  await state.record({ type: "retention", days: retentionDays, ...retention });
 const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
 try {
   const result = await runNodeLoop({

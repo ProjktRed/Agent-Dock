@@ -634,6 +634,8 @@ function SupervisorCard() {
 /** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
 function StopAllCard() {
   const { snap, toast } = useApp();
+  const patch = useSettingsPatch();
+  const retention = snap.settings.general.retentionDays ?? 30;
   const [confirmNow, setConfirmNow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState<Awaited<ReturnType<typeof window.api.verifyActionLogs>> | null>(null);
@@ -659,6 +661,10 @@ function StopAllCard() {
       </SetRow>
       <SetRow title="Action log" desc="Every activity event and control request (with who asked: app, dashboard, terminal or a run limit), chained by SHA-256 in action-log.ndjson in each project's state folder. Clearing activity history never touches it; an edited or deleted entry breaks the chain." support="engine">
         <button className="btn sm" onClick={() => void window.api.verifyActionLogs().then(setLogs, (error) => toast("error", (error as Error).message))}>Verify logs</button>
+      </SetRow>
+      <SetRow title="Keep history" desc="Days to keep per-call folders (prompts and answers), Cline sessions and action-log archives. The newest 100 calls are always kept; the action log records what was removed, so the rest still verifies. Applied when a run starts; 0 keeps everything." support="engine">
+        <input className="input mono" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
+          onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== retention) void patch("general", { retentionDays: v }); else e.target.value = String(retention); }} />
       </SetRow>
       {logs && (
         <ul className="list">

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,6 +29,12 @@ const GIT_MIN_AGE_MS = 2_000;
 const GIT_MAX_AGE_MS = 10_000;
 
 /** Launches the vendored engine (engine/src/cli.mjs) per project and reads its .state files. */
+/** Keeps one previous engine log: past 10 MB, app-engine.log becomes app-engine.old.log. */
+function rotateEngineLog(stateDir: string) {
+  const file = path.join(stateDir, "app-engine.log");
+  try { if (statSync(file).size > 10 * 1024 * 1024) renameSync(file, path.join(stateDir, "app-engine.old.log")); } catch { /* no log yet */ }
+}
+
 export class EngineManager {
   private modules = new Map<string, Promise<Record<string, any>>>();
   private alive = new Map<string, ProcessRecord>();
@@ -108,6 +114,7 @@ export class EngineManager {
   private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<ProcessRecord> {
     mkdirSync(project.stateDir, { recursive: true });
     const { command, env } = await this.resolveNode();
+    rotateEngineLog(project.stateDir);
     const log = openSync(path.join(project.stateDir, "app-engine.log"), "a");
     try {
       // Detached with file-backed stdio: the engine keeps running safely if the window or app closes.
@@ -136,6 +143,7 @@ export class EngineManager {
 
   async start(project: Project, args: string[], resolveBlock = false, envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
     if (await this.refreshAlive(project)) throw new Error("Automation is already running for this project.");
+    rotateEngineLog(project.stateDir);
     // A stop left by the previous run (a run limit, Stop) would end this one before it starts.
     const state = await this.state(project);
     if ((await state.readControl()).stopAfterSafePoint) await state.setControl("resume", { source: "app" });

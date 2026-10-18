@@ -65,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
     notifyInfo: false,
     notifyDigests: true,
     remoteApprovals: false,
+    retentionDays: 30,
     defaultProject: "last",
   },
   workflow: {
