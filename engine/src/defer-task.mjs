@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
@@ -31,9 +32,30 @@ export async function deferTask({ workspace, stateDir, task, baselineSha, reason
   return { entry };
 }
 
+/**
+ * You set a blocked task aside (engine not running): the same as a Supervisor defer, from the app.
+ * The work is stashed, the task listed as deferred, and its recovery state archived, so the next Run
+ * starts with a fresh Assessment. Refuses when HEAD moved from the task's baseline (nothing to stash safely).
+ */
+export async function setAsideTask({ workspace, stateDir, reason = "Set aside by you", state = null, source = "app" }) {
+  const file = path.join(stateDir, "current-task.json");
+  let saved;
+  try { saved = JSON.parse(await readFile(file, "utf8")); } catch { throw new Error("There is no current task to set aside"); }
+  const { automation, ...task } = saved;
+  if (!task.id) throw new Error("There is no current task to set aside");
+  const result = await deferTask({ workspace, stateDir, task, baselineSha: automation?.recovery?.baselineSha, reason });
+  if (result.blocked) throw new Error(result.blocked);
+  const archive = path.join(stateDir, "set-aside");
+  await mkdir(archive, { recursive: true });
+  await rename(file, path.join(archive, `${String(task.id).replace(/[^\w.-]+/g, "_")}-${Date.now()}.json`));
+  for (const name of ["pending-codex.json", "correction-task.json"]) await rm(path.join(stateDir, name), { force: true });
+  await state?.record({ type: "task-set-aside", taskId: task.id, reason: result.entry.reason, stash: result.entry.stash?.message ?? null, source });
+  return result.entry;
+}
+
 /** The objective Assessment sees, with the deferred tasks it must not pick again. */
 export async function objectiveWithDeferred(stateDir, objective) {
   const list = await readDeferred(stateDir);
   if (!list.length) return objective;
-  return `${objective}\n\nDeferred tasks (set aside by the Supervisor; do not choose them or the same work again in this run): ${list.map((d) => `${d.id} "${d.name}" (${d.reason})`).join("; ")}`;
+  return `${objective}\n\nDeferred tasks (set aside by the Supervisor or by you; do not choose them or the same work again unless nothing else in the objective remains; their unfinished work is in the named git stash): ${list.map((d) => `${d.id} "${d.name}" (${d.reason})`).join("; ")}`;
 }

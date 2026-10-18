@@ -193,6 +193,7 @@ export class DashboardState {
       "manual-review": [recoveryClassification({output:event.qa,manualReviewCause:event.manualReviewCause})==='blocked'?'BLOCKED':'USER_ATTENTION', "idle", "fail", false],
       "user-attention": ["USER_ATTENTION", "idle", "fail", false],
       "blocked": ["BLOCKED", "idle", "fail", false],
+      "task-set-aside": ["waiting", "idle", "waiting", false],
       "sol-reassessment-started": ["elevating", "idle", "fail", false],
       "sol-reassessment-finished": ["USER_ATTENTION", "idle", "fail", false],
       "resolver-started": ["resolving", "idle", "waiting", false],
@@ -211,6 +212,7 @@ export class DashboardState {
     if(['user-attention','manual-review'].includes(event.type)&&next.stage==='USER_ATTENTION') {next.userAttention=true;next.userAttentionReason=event.qa;next.userAttentionSince??=new Date().toISOString();}
     if(event.type==='blocked') {next.userAttention=false;next.blockedReason=event.qa;next.elevateRunning=false;}
     if(event.type==='qa-retry') {next.blockedReason=null;next.resolverResult=null;}
+    if(event.type==='task-set-aside') {next.blockedReason=null;next.resolverResult=null;next.userAttention=false;next.userAttentionReason=null;}
     if(event.type==='qa-pass') {next.userAttention=false;next.userAttentionReason=null;next.elevateResult=null;}
     if (event.type === "codex-usage-limit" || event.type === "waiting-for-codex") {
       if (event.operation === "assessment" || event.operation === 'correction-assessment') next.qaStatus = "waiting";

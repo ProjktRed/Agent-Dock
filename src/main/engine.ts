@@ -196,6 +196,13 @@ export class EngineManager {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }
 
+  /** Sets the blocked or waiting task aside (work stashed, task deferred); the next Run starts a fresh Assessment. */
+  async setAside(project: Project, source = "app"): Promise<{ id: string; stash: { message: string } | null }> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before setting the task aside.");
+    this.gitCache.delete(project.id);
+    return (await this.load("defer-task.mjs")).setAsideTask({ workspace: project.path, stateDir: project.stateDir, state: await this.state(project), source });
+  }
+
   /** Adds a line to the project's Activity (and its action log). */
   async recordEvent(project: Project, event: Record<string, unknown>): Promise<void> {
     await (await this.state(project)).record(event);

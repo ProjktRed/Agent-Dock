@@ -39,6 +39,7 @@ const api: DesktopApi = {
   testNotifyChannel: invoke("notify:test") as DesktopApi["testNotifyChannel"],
   verifyActionLogs: invoke("engine:verifyLogs") as DesktopApi["verifyActionLogs"],
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
+  setAside: invoke("engine:setAside") as DesktopApi["setAside"],
   decidePlanProposal: invoke("plan:decide") as DesktopApi["decidePlanProposal"],
   usage: invoke("usage") as DesktopApi["usage"],
   localContext: invoke("usage:localContext") as DesktopApi["localContext"],

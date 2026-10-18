@@ -16,7 +16,7 @@ const CYCLE = [
 ] as const;
 
 function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
-  const { control, activeProject } = useApp();
+  const { control, activeProject, toast } = useApp();
   const kind = s.runState;
   // Codex's Windows sandbox failed to prepare a folder QA writes to (usually the shared .git).
   const sandboxError = kind === "blocked" && /helper_unknown_error|setup refresh had errors/i.test(s.blockedReason ?? "");
@@ -71,6 +71,10 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
           {(kind === "waiting-limit" || kind === "attention") && <button className="btn sm" onClick={() => control(projectId, "resume", "Resumed")}>Resume</button>}
           {kind === "blocked" && s.assessmentRetry && <button className="btn primary sm" onClick={() => control(projectId, "resume", "Assessment restarted")}>Retry Assessment</button>}
           {kind === "blocked" && s.qaRetry && <button className="btn primary sm" disabled={sandboxError && Boolean(owner)} title={sandboxError && owner ? "Fix the folder owner first" : "Collect fresh check results for the finished attempt and let QA review it again"} onClick={() => control(projectId, "retry-qa", "QA restarted on the finished attempt")}>Retry QA</button>}
+          {(kind === "blocked" || kind === "attention") && !s.processAlive && (
+            <button className="btn sm" title="Put the task's uncommitted work in a named git stash (nothing is deleted), list it as deferred, and let the next Run choose another task"
+              onClick={() => void window.api.setAside(projectId).then((r) => toast("success", r.stash ? `Task ${r.id} set aside. Its work is in git stash "${r.stash.message}".` : `Task ${r.id} set aside.`), (error) => toast("error", (error as Error).message))}>Set task aside</button>
+          )}
           {activeProject && <button className="btn ghost sm" onClick={() => window.api.openPath(activeProject.path)}><Icon name="external" size="sm" />Open workspace</button>}
           {!s.elevateAvailable && kind === "attention" && s.elevateReason && <span className="sub">Elevate unavailable: {s.elevateReason}</span>}
           {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}

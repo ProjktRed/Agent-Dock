@@ -104,6 +104,8 @@ export interface DesktopApi {
   setNotifyChannel(kind: NotifyChannel, value: string | Record<string, string> | null): Promise<AppSnapshot>;
   testNotifyChannel(kind: NotifyChannel): Promise<void>;
   /** Checks each project's hash-chained action log. */
+  /** Sets the stopped project's current task aside: its work goes into a named git stash, the next Run starts a fresh Assessment. */
+  setAside(projectId: string): Promise<{ id: string; stash: { message: string } | null }>;
   /** Supervisor plan proposals for a project, newest last. */
   planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */

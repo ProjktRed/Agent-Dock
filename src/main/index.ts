@@ -682,6 +682,7 @@ function registerIpc() {
   handle("engine:check", (id: string) => launchCheck(project(id)));
   handle("engine:control", (id: string, action: ControlAction) => runControl(id, action));
   handle("engine:log", (id: string) => engine.engineLog(project(id)));
+  handle("engine:setAside", async (id: string) => { const r = await engine.setAside(project(id)); void pollOnce(); return r; });
   handle("notify:setChannel", async (kind: NotifyChannel, value: string | Record<string, string> | null) => {
     if (!NOTIFY_CHANNELS.includes(kind)) throw new Error("Unknown channel");
     const checked = value ? (await engine.notifyModule()).checkChannel(kind, value) : null;

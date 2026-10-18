@@ -71,6 +71,7 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-proposal-applied": return `Plan change committed${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "assessment-rejected": return `Assessment chose again: ${first(e.qa)}`;
     case "qa-commit-recovered": return `QA commit recovered: ${first(e.qa)}`;
+    case "task-set-aside": return `Task ${e.taskId ?? ""} set aside by you: ${e.stash ? `its work is in git stash "${e.stash}"` : "it had no uncommitted work"}. The next Run starts a fresh Assessment.`;
     case "plan-item-done": return `Plan item checked off${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
