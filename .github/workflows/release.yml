@@ -3,11 +3,14 @@
 # publishes a GitHub Release in the public releases repository (repository variable RELEASE_REPO,
 # default ProjktRed/Agent-Dock; the source is the private ProjktRed/Agent-Dock-Dev), using the RELEASES_TOKEN secret: a fine-grained token with
 # Contents read/write on that repository only. Installed apps verify the signature before updating.
+# Run it by hand (Actions › Release › Run workflow) for a dry run: the same checks and build, with the
+# installer and zip attached to the run as an artifact; nothing is signed or published.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,7 +33,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Signing key and version
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+      - name: Signing key, release key and tag
+        if: github.event_name == 'push'
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -38,9 +45,9 @@ jobs:
         run: |
           test -n "$RELEASE_SIGNING_KEY" || { echo "::error::Add the repository secret RELEASE_SIGNING_KEY (see scripts/sign-release.mjs)"; exit 1; }
           test -n "$RELEASES_TOKEN" || { echo "::error::Add the repository secret RELEASES_TOKEN (fine-grained token, Contents read/write on the releases repository)"; exit 1; }
-          version=$(node -p "require('./package.json').version")
-          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          # A build without the public key could never verify, and so never install, its own updates.
+          grep -q 'BEGIN PUBLIC KEY' src/main/release-key.ts || { echo "::error::Put the release public key in src/main/release-key.ts before tagging"; exit 1; }
+          [ "v$VERSION" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1; }
       - name: Git identity for test repositories
         run: |
           git config --global user.email "ci@agent-dock.invalid"
@@ -66,12 +73,23 @@ jobs:
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath "AgentDock-$env:VERSION-win-x64.zip"
+      - name: Dry run artifact
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgentDock-${{ env.VERSION }}-dry-run
+          path: |
+            dist/AgentDock-Setup-${{ env.VERSION }}-win-x64.exe
+            AgentDock-${{ env.VERSION }}-win-x64.zip
+          retention-days: 7
       - name: Sign
+        if: github.event_name == 'push'
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out .
       - name: Release notes
+        if: github.event_name == 'push'
         shell: bash
         run: |
           previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
@@ -87,6 +105,7 @@ jobs:
             git log --no-merges --format='- %s' ${previous:+"$previous..$GITHUB_REF_NAME"} | head -100
           } > notes.md
       - name: Publish
+        if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
