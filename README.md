@@ -2,21 +2,18 @@
 
 <img src="assets/logo.svg" width="72" alt="Agent Dock logo">
 
-A Windows desktop command center for the Codex ↔ Cline automation loop: manage projects,
-agents, CLI connections and settings, and monitor runs with progress, usage and token data.
+A Windows desktop app for running AI coding agents on your projects: plan, implement, review and
+test in a supervised loop, and monitor progress, usage limits and token consumption in one place.
 
-The automation itself is the Codex ↔ Cline loop engine, vendored in
-[`engine/`](engine/) (see [engine/ENGINE_README.md](engine/ENGINE_README.md)), extended with
-per-role model, reasoning effort and speed flags, implementation through Codex or Claude Code,
-custom workflow roles and adjustable loop limits. The app launches it as
-a separate process per project and reads the engine's `.state` files. It never re-implements
-the loop.
+The loop runs in the engine in [`engine/`](engine/), with per-role models, reasoning effort and
+speed, a choice of implementation CLI, custom workflow roles and adjustable loop limits. The app
+launches it as a separate process per project and reads the engine's `.state` files.
 
 ## Getting started
 
 **Install:** download `AgentDock-Setup-<version>-win-x64.exe` from
 [the releases page](https://github.com/ProjktRed/Agent-Dock/releases) and run it. It installs
-for your Windows account only (no admin rights) into `%LOCALAPPDATA%ProgramsAgentDock`, with Start
+for your Windows account only (no admin rights) into `%LOCALAPPDATA%\Programs\AgentDock`, with Start
 menu and desktop shortcuts and an uninstaller. The installer is not Authenticode-signed yet, so Windows
 SmartScreen may warn about an unknown publisher (More info › Run anyway); the release notes list its
 SHA-256. Agent Dock then updates itself from the same page, and installs a release only when its
@@ -67,52 +64,11 @@ Other scripts: `npm run build` (production bundle into `out/`), `npm start` (run
 `npm test` (app unit tests), `npm run test:engine` (the engine's own suite), `npm run typecheck`,
 `npm run package` (unpacked Windows build via electron-builder).
 
-## Install as a Windows app
+## Build and install from source
 
-```bash
-npm run release:local
-```
-
-This builds the app from a **clean copy of the latest commit** on the current branch, not from
-your working tree, and installs it:
-
-1. Clones/refreshes the source into `<root>\Updates\repo` and checks out the branch head
-   (uncommitted changes are never included).
-2. Writes `build-info.json` (commit, branch, source) and the logo icon, runs `npm ci`,
-   `electron-vite build` and `electron-builder --win --dir`.
-3. Mirrors the result to `<root>\App\AgentDock.exe` and adds “Agent Dock” Start menu and
-   Desktop shortcuts. No admin rights are needed.
-
-`<root>` is `%LOCALAPPDATA%\Programs\Agent Dock` by default; set `AGENT_DOCK_HOME` to use another
-folder. The installed app and its update workspace stay outside the source repository:
-
-```
-<root>\App       installed app (replaced on update)
-<root>\Updates   clean clone of the committed source + build output
-```
-
-Options: `--source <repo path or git URL>`, `--branch <name>`, `--install-dir <dir>`, `--commit <sha>`.
-
-### Automatic updates
-
-The installed app compares its commit with the source branch on launch
-(`git ls-remote <source> refs/heads/<branch>`). When a newer commit exists it lists the new
-commits and offers **Update now**, or installs automatically if you enable it (Settings ›
-Updates). While the app runs it repeats that check in the background (every 30 minutes by default,
-Settings › Updates › Check while running) and when you return to the window (at most every
-10 minutes). Background checks stay silent when the source can't be reached, and show a Windows
-notification for a new update when the window isn't in front. Updating:
-
-1. fetches the new commit into the staging copy and runs **that commit's**
-   `scripts/release-local.mjs --stage build` while the app keeps running (log shown in Settings),
-2. starts the swap stage, quits; the swap waits for the app to exit, mirrors the new build over
-   the install folder and relaunches.
-
-Updates are refused while an automation engine is running, because the engine files are replaced.
-Building needs Node.js, npm and Git on PATH.
-
-The source is any git location: by default the repository the app was built from, or a URL such
-as `https://github.com/<owner>/<repo>.git` set in Settings › Updates › Update source.
+`npm run release:local` builds the latest commit of the current branch (never uncommitted changes)
+and installs it for your Windows account, with Start menu and desktop shortcuts. Such a build
+updates itself from its Git source (Settings › Updates).
 
 ## Architecture
 
@@ -128,7 +84,7 @@ src/preload/     contextBridge API (window.api), typed by src/shared/api.ts
 src/renderer/    React UI: Overview (Progress, Usage limits, Token consumption), Projects,
                  Workflow, Agents, CLIs, Settings, first-launch setup
 src/shared/      types and defaults shared by all three
-engine/          vendored engine (+ per-role model flags), its tests, skills and fixtures
+engine/          automation engine, its tests, skills and fixtures
 tests/           vitest unit tests for the main-process logic
 ```
 
@@ -142,7 +98,7 @@ tests/           vitest unit tests for the main-process logic
 | Implementation agent on Codex CLI or Claude Code: model, effort, speed, timeout | `--implementation-cli codex\|claude`, `--implementation-model`, `--implementation-effort`, `--implementation-fast`, `--timeout-seconds` |
 | Workflow roles (Workflow tab) with an enabled agent | `--roles-file <state>\workflow-roles.json` (written at start) |
 | Engine guardrails off: loop limits (Settings › Workflow rules, Context limits) that differ from the defaults | `--elevation-after`, `--max-corrections`, `--resolver-max-strategies`, `--task-max-files`, `--task-max-new-lines`, `--task-max-read-files` |
-| llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` → launcher `-ModelsDir` |
+| llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` |
 | QA agent's CLI (Codex or Claude Code) | `--orchestrator codex\|claude` (+ `--codex-exe` / `--claude-command` for a custom path) |
 | QA, Assessment, Elevation agents: model, reasoning effort, speed (Resolver follows Assessment) | `--qa-model` / `--qa-effort` / `--qa-fast`, `--assessment-*`, `--resolver-*`, `--elevate-*` |
 | Assessment or Elevation on another CLI than QA (guardrails may stay on) | `--assessment-cli` / `--resolver-cli` / `--elevate-cli codex\|claude` |
@@ -269,7 +225,7 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   checks and reruns before-QA gates. Fingerprints cover tracked and non-ignored repository files;
   use Retry QA after changing ignored/external dependencies or submodule contents.
 
-## Security boundaries (0.16.5)
+## Security boundaries
 
 - **Protected paths** in Settings › Safety now reach every engine launch through
   `--protected-paths` (a JSON string array). Paths may be workspace-relative or absolute;
@@ -313,10 +269,6 @@ debugging switches. It does not replace live-provider integration testing or an 
 ## Known limitations
 
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
-- llama.cpp is only started automatically when a launcher script is set (Settings › Advanced ›
-  llama.cpp launcher; passed as `--llamacpp-launcher`). Router mode and thinking expect the
-  launcher to accept `-ModelsDir`, `-Reasoning` and `-ReasoningEffort` and pass them on to
-  `llama-server` as `--models-dir`, `--reasoning` and `--reasoning-effort`.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file
   lock, usually antivirus or indexing). It can intermittently fail an engine test under parallel
   load or interrupt a run. Excluding the engine state folders from real-time
@@ -332,9 +284,8 @@ installer, zip, `manifest.json` and `manifest.sig` to the public releases reposi
 1. `node scripts/sign-release.mjs --generate-key release-key.pem`, add the file's contents as the
    repository secret `RELEASE_SIGNING_KEY`, delete the file, and put the printed public key in
    `src/main/release-key.ts`.
-2. Create the public repository `ProjktRed/Agent-Dock` (the source is the private
-   `ProjktRed/Agent-Dock-Dev`) with one commit (a README), or set
-   another one as the repository variable `RELEASE_REPO`.
+2. Create the public releases repository with one commit (a README). If it is not the default in
+   `release.yml`, set it as the repository variable `RELEASE_REPO`.
 3. Add the secret `RELEASES_TOKEN`: a fine-grained token with Contents read/write on the releases
    repository only.
 
