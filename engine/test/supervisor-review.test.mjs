@@ -70,8 +70,8 @@ test('defer at a loop boundary stashes the work, records it, and Assessment move
  git('init','-q');git('config','user.email','t@example.com');git('config','user.name','T');git('config','core.autocrlf','false');
  await writeFile(path.join(ws,'a.js'),'1\n');git('add','.');git('commit','-qm','base');
  const head=git('rev-parse','HEAD');
- const A={id:'A',name:'Stuck task',prompt:'Task skill: implement\nA',allowedPaths:['a.js'],qaCommand:'t'};
- const B={id:'B',name:'Other task',prompt:'Task skill: implement\nB',allowedPaths:['b.js'],qaCommand:'t'};
+ const A={id:'A',name:'Stuck task',prompt:'Task skill: implement\nA',allowedPaths:['a.js'],qaCommand:'npm test'};
+ const B={id:'B',name:'Other task',prompt:'Task skill: implement\nB',allowedPaths:['b.js'],qaCommand:'npm test',planItems:['Build the other thing']};
  const state=new DashboardState({stateDir});await state.initialize({task:A,workspace:ws});
  const objectives=[];let assessments=0;
  const packet=({task,attempt,workerResult})=>({task,baselineSha:head,attempt,diff:{text:'d',bytes:1},changedFiles:task.allowedPaths,clineSummary:{exitCode:workerResult.exitCode,text:'x'},qaEvidence:{command:{command:'t',exitCode:1},categories:{tests:'FAIL',scopeCheck:'PASS'}}});
@@ -95,4 +95,5 @@ test('defer at a loop boundary stashes the work, records it, and Assessment move
  git('stash','apply');assert.equal(await readFile(path.join(ws,'a.js'),'utf8'),'work in progress\n','and nothing was lost');
  const events=await state.readEvents(200);
  assert.ok(events.some(e=>e.type==='task-deferred'&&e.taskId==='A'));
+ assert.deepEqual(events.find(e=>e.type==='qa-pass')?.planItems,['Build the other thing'],'an approved task reports the plan items it completes');
 });

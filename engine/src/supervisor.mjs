@@ -123,7 +123,13 @@ export async function superviseEvent(event) {
   if (!S || SUPERVISOR.mode === "off") return;
   S.lastEventAt = S.now(); S.stallAlerted = 0;
   const taskId = event.taskId ?? S.state.live?.task?.id ?? null;
-  if (taskId && taskId !== S.taskId) { S.taskId = taskId; S.failures = []; S.taskStartTokens = runTokens(); S.burnAlerted = false; }
+  // Assessment runs under the pseudo task "assessment"; its tokens count toward the task it chooses.
+  if (taskId && taskId !== S.taskId) {
+    const fromAssessment = S.taskId === "assessment";
+    S.taskId = taskId; S.failures = [];
+    if (!fromAssessment) { S.taskStartTokens = runTokens(); S.burnAlerted = false; }
+  }
+  const taskName = taskId === "assessment" ? "Assessment (choosing the next task)" : taskId;
 
   if ((event.type === "retry" || event.type === "qa-fail") && SUPERVISOR.repeatFailures) {
     S.failures.push(failureSignature(event.qa));
@@ -145,8 +151,8 @@ export async function superviseEvent(event) {
 
   if (SUPERVISOR.tokensPerTask) {
     const used = runTokens() - S.taskStartTokens;
-    if (!S.burnAlerted && used >= SUPERVISOR.tokensPerTask) { S.burnAlerted = true; await alert("burn rate", `${taskId ?? "This task"} has used ${used.toLocaleString("en-US")} tokens, over the ${SUPERVISOR.tokensPerTask.toLocaleString("en-US")} per-task threshold.`); }
-    else if (S.burnAlerted !== "acted" && used >= SUPERVISOR.tokensPerTask * 2) { S.burnAlerted = "acted"; await alert("burn rate", `${taskId ?? "This task"} has used ${used.toLocaleString("en-US")} tokens, twice the per-task threshold.`, { act: true }); }
+    if (!S.burnAlerted && used >= SUPERVISOR.tokensPerTask) { S.burnAlerted = true; await alert("burn rate", `${taskName ?? "This task"} has used ${used.toLocaleString("en-US")} tokens, over the ${SUPERVISOR.tokensPerTask.toLocaleString("en-US")} per-task threshold.`); }
+    else if (S.burnAlerted !== "acted" && used >= SUPERVISOR.tokensPerTask * 2) { S.burnAlerted = "acted"; await alert("burn rate", `${taskName ?? "This task"} has used ${used.toLocaleString("en-US")} tokens, twice the per-task threshold.`, { act: true }); }
   }
 
   if (event.type === "qa-pass") {

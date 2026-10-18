@@ -41,6 +41,18 @@ test('guard refusal spikes alert, then act at twice the threshold; alert mode ne
  assert.deepEqual(state.controls,[]);
 });
 
+test('Assessment tokens count toward the task it chooses, and the alert names Assessment',async t=>{
+ useRunLimits();t.after(()=>useRunLimits());
+ const state=fakeState({task:{id:'assessment'}});
+ const stop=startSupervisor(state,{config:{mode:'alert',tokensPerTask:1000}});t.after(stop);
+ await recordUsage({input:1200});await superviseEvent({type:'codex-finished'});
+ assert.ok(state.events.at(-1).message.startsWith('Assessment (choosing the next task) has used 1,200 tokens'));
+ await recordUsage({input:500});await superviseEvent({type:'cline-started',taskId:'T1'});
+ assert.equal(state.events.filter(e=>e.type==='supervisor-alert').length,1,'no second first-threshold alert for the same work');
+ await recordUsage({input:500});await superviseEvent({type:'cline-finished',taskId:'T1'});
+ assert.match(state.events.at(-1).message,/^T1 has used 2,200 tokens, twice/);
+});
+
 test('burn rate per task, scope creep and plan drift',async t=>{
  const ws=await mkdtemp(path.join(os.tmpdir(),'supervisor-'));t.after(()=>rm(ws,{recursive:true,force:true}));
  await writeFile(path.join(ws,'IMPLEMENTATION_PLAN.md'),'## Phase 1 — Core\n- [x] one\n- [ ] two\n');

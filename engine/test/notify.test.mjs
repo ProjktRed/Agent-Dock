@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {channelRequest,checkChannel,flushNotifications,notify,notifyFromEnv,sendChannel,useNotify} from '../src/notify.mjs';
+import {channelRequest,checkChannel,flushNotifications,notify,notifyEvent,notifyFromEnv,sendChannel,useNotify} from '../src/notify.mjs';
 
 const TOKEN='123456789:'+'A'.repeat(35);
 const EMAIL={apiKey:'am_live_0123456789',inbox:'Bot@AgentMail.to',to:'me@example.com, you@example.org'};
@@ -44,5 +44,7 @@ test('email only gets what needs you; other channels get everything; failures ne
  assert.equal(mails(),1);
  notify({type:'supervisor-digest',title:'Digest',message:'d'});notify({type:'user-attention',title:'Needs you',message:'m'});await flushNotifications();
  assert.equal(mails(),2);assert.equal(sent.length,10);
+ notifyEvent({type:'waiting-for-codex',qa:'You hit your usage limit.\nmore'});await flushNotifications();
+ assert.equal(mails(),3,'a usage-limit wait needs you, so it is emailed');
  await assert.rejects(sendChannel('telegram',{token:TOKEN,chatId:'42'},{title:'t',message:'m'},async()=>({ok:false,status:401})),/telegram answered HTTP 401/);
 });

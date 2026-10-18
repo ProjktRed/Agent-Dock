@@ -434,7 +434,7 @@ function Safety() {
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>Unattended mode</h2>
-        <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder." support="engine">
+        <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder. Token budgets count new input and output; input read from a prompt cache (about a tenth of the price) is reported but not counted." support="engine">
           <Toggle on={w.unattended === true} onChange={(v) => patch("workflow", { unattended: v })} label="Unattended mode" />
         </SetRow>
         {w.unattended && (
@@ -444,7 +444,7 @@ function Safety() {
               ["maxHours", "Stop after hours", "0 = no limit"],
               ["maxCorrections", "Corrections per task", "then stop for you (at least 1)"],
               ["maxElevations", "Automatic Elevations per run", "0 = no limit"],
-              ["maxMillionTokens", "Token budget per run (millions)", "0 = no limit"],
+              ["maxMillionTokens", "Token budget per run (millions)", "cache reads not counted; 0 = no limit"],
               ["maxCostUsd", "Spend budget per run (USD)", "Claude Code and OpenCode report cost; 0 = no limit"],
               ["maxMillionTokensDay", "Token budget per day (millions)", "this project, all runs today"],
               ["maxCostUsdDay", "Spend budget per day (USD)", "this project, all runs today"],

@@ -136,6 +136,9 @@ export class EngineManager {
 
   async start(project: Project, args: string[], resolveBlock = false, envDelta: NodeJS.ProcessEnv = {}): Promise<void> {
     if (await this.refreshAlive(project)) throw new Error("Automation is already running for this project.");
+    // A stop left by the previous run (a run limit, Stop) would end this one before it starts.
+    const state = await this.state(project);
+    if ((await state.readControl()).stopAfterSafePoint) await state.setControl("resume", { source: "app" });
     const logBefore = (await this.engineLog(project, 10_000_000)).length;
     const record = await this.spawnEngine(project, "cli.mjs", resolveBlock ? [...args, "--resolve-block", "true"] : args, envDelta);
     // Preflight (provider, model, orchestrator sign-in) fails within seconds; report it instead of silently going idle.

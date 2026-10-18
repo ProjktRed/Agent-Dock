@@ -6,7 +6,7 @@ import { diagnostic } from "./diagnostics.mjs";
 // uses checkChannel/sendChannel from here so the rules and message shapes exist once.
 export const CHANNELS = ["webhook", "discord", "slack", "telegram", "email"];
 /** Email is for what needs you; it never gets routine alerts or periodic digests. */
-const EMAIL_TYPES = new Set(["user-attention", "blocked", "run-limit", "plan-proposal", "test", "approval"]);
+const EMAIL_TYPES = new Set(["user-attention", "blocked", "run-limit", "waiting-for-codex", "plan-proposal", "test", "approval"]);
 const EMPTY = { project: "", webhook: null, discord: null, slack: null, telegram: null, email: null, digests: true };
 let config = { ...EMPTY };
 let send = (...args) => fetch(...args);
@@ -104,6 +104,7 @@ export function notify({ type, title, message, urgent = false }) {
 export function notifyEvent(event) {
   if (event.type === "run-limit") notify({ type: event.type, title: "Run limit reached", message: event.message });
   else if (event.type === "user-attention") notify({ type: event.type, title: "Needs your attention", message: String(event.qa ?? "").split(/\r?\n/).find((l) => l.trim()) ?? "" });
+  else if (event.type === "waiting-for-codex") notify({ type: event.type, title: "Waiting: usage limit", message: `${String(event.qa ?? event.message ?? "").split(/\r?\n/).find((l) => l.trim()) ?? "The orchestrator hit its usage limit."} The run continues after Resume.` });
   else if (event.type === "blocked") notify({ type: event.type, title: "Run blocked", message: String(event.qa ?? event.message ?? "").split(/\r?\n/).find((l) => l.trim()) ?? "" });
 }
 

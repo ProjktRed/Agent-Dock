@@ -39,7 +39,10 @@ export function useRunLimits(limits = {}) {
 }
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-export const runTokens = () => RUN.usage.input + RUN.usage.output;
+/** Tokens that count toward budgets and alerts: new input (not read from a prompt cache) plus output.
+ *  Cache reads cost about a tenth and dominate long CLI sessions, so they are reported but not counted. */
+export const countedTokens = ({ input = 0, cached = 0, output = 0 }) => Math.max(0, input - cached) + output;
+export const runTokens = () => countedTokens(RUN.usage);
 const money = (usd) => `$${usd.toFixed(2)}`;
 const n = (value) => value.toLocaleString("en-US");
 
@@ -51,7 +54,7 @@ export async function watchUsage(state, stateDir) {
   RUN.day = saved?.date === today() ? { date: saved.date, tokens: Number(saved.tokens) || 0, costUsd: Number(saved.costUsd) || 0 } : { date: today(), tokens: 0, costUsd: 0 };
 }
 
-/** One CLI call's usage: input tokens (cached ones included), output tokens, and cost when the CLI reports it.
+/** One CLI call's usage: input tokens (cache reads included, and also given as cached), output tokens, and cost when the CLI reports it.
  *  A budget asks for Stop like the other limits, so the work that crosses it still finishes. */
 export async function recordUsage({ input = 0, cached = 0, output = 0, costUsd = 0 } = {}) {
   const clean = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0);
@@ -59,7 +62,7 @@ export async function recordUsage({ input = 0, cached = 0, output = 0, costUsd =
   if (!input && !output && !costUsd) return;
   Object.assign(RUN.usage, { input: RUN.usage.input + input, cached: RUN.usage.cached + cached, output: RUN.usage.output + output, costUsd: RUN.usage.costUsd + costUsd, calls: RUN.usage.calls + 1 });
   if (RUN.day.date !== today()) RUN.day = { date: today(), tokens: 0, costUsd: 0 };
-  RUN.day.tokens += input + output; RUN.day.costUsd += costUsd;
+  RUN.day.tokens += countedTokens({ input, cached, output }); RUN.day.costUsd += costUsd;
   if (!watched) return;
   const { state, stateDir } = watched, day = { ...RUN.day };
   dayWrite = dayWrite.then(() => atomicWriteJson(path.join(stateDir, "usage-day.json"), day)).catch(() => {});
@@ -81,8 +84,9 @@ export function claudeUsage(stdout) {
   try { envelope = JSON.parse(String(stdout).trim().split(/\r?\n/).filter(Boolean).at(-1)); } catch { return null; }
   const u = envelope?.usage;
   if (!u && envelope?.total_cost_usd === undefined) return null;
-  const cached = (Number(u?.cache_read_input_tokens) || 0) + (Number(u?.cache_creation_input_tokens) || 0);
-  return { input: (Number(u?.input_tokens) || 0) + cached, cached, output: Number(u?.output_tokens) || 0, costUsd: Number(envelope.total_cost_usd) || 0 };
+  // Cache writes cost more than plain input, so only cache reads are "cached".
+  const cached = Number(u?.cache_read_input_tokens) || 0;
+  return { input: (Number(u?.input_tokens) || 0) + (Number(u?.cache_creation_input_tokens) || 0) + cached, cached, output: Number(u?.output_tokens) || 0, costUsd: Number(envelope.total_cost_usd) || 0 };
 }
 
 /** codex exec --json: usage on each turn.completed event (input_tokens already includes cached_input_tokens; no cost). */
@@ -106,9 +110,9 @@ export function openCodeUsage(events) {
   let found = false;
   for (const event of events ?? []) {
     if (event?.type !== "step_finish") continue;
-    const t = event.part?.tokens ?? {}, cached = (Number(t.cache?.read) || 0) + (Number(t.cache?.write) || 0);
+    const t = event.part?.tokens ?? {}, cached = Number(t.cache?.read) || 0;
     found = true;
-    total.input += (Number(t.input) || 0) + cached; total.cached += cached;
+    total.input += (Number(t.input) || 0) + (Number(t.cache?.write) || 0) + cached; total.cached += cached;
     total.output += (Number(t.output) || 0) + (Number(t.reasoning) || 0); total.costUsd += Number(event.part?.cost) || 0;
   }
   return found ? total : null;
@@ -165,7 +169,7 @@ export async function writeRunReport(stateDir, result) {
     line("Mode", report.unattended ? "Unattended" : "Attended"), line("Started", report.startedAt), line("Ended", `${report.endedAt} (${report.hours} h)`),
     line("Result", report.status), line("Why it ended", String(report.reason ?? "").split(/\r?\n/)[0].slice(0, 300) || "finished"), "",
     line("Tasks approved", report.tasksApproved), line("QA failures", report.qaFailures), line("Corrections", report.corrections), line("Elevations", report.elevations), line("Stops for attention", report.needsAttention), line("Supervisor alerts", `${report.supervisorAlerts} (see supervisor-digest.md)`), "",
-    line("Tokens", `${n(report.usage.tokens)} (input ${n(report.usage.input)}, of which cached ${n(report.usage.cached)}; output ${n(report.usage.output)}) over ${report.usage.calls} call(s)`),
+    line("Tokens", `${n(report.usage.tokens)} counted toward limits (new input ${n(report.usage.input - report.usage.cached)} + output ${n(report.usage.output)}); ${n(report.usage.cached)} more read from prompt caches, not counted; ${report.usage.calls} call(s)`),
     line("Reported spend", `${money(report.usage.costUsd)} (only CLIs that report cost count: Claude Code, OpenCode)`), "",
     line("Action log", report.actionLog.ok ? `verified, ${report.actionLog.entries} entries, head ${report.actionLog.head}` : `NOT VERIFIED (entry ${report.actionLog.brokenAt ?? "?"}: ${report.actionLog.reason})`),
     line("Limits", `tasks ${report.limits.maxTasks || "none"}, hours ${report.limits.maxHours || "none"}, Elevations ${report.limits.maxElevations || "none"}, tokens ${report.limits.maxTokens ? n(report.limits.maxTokens) : "none"}, spend ${report.limits.maxCost ? money(report.limits.maxCost) : "none"}, tokens/day ${report.limits.maxTokensDay ? n(report.limits.maxTokensDay) : "none"}, spend/day ${report.limits.maxCostDay ? money(report.limits.maxCostDay) : "none"}`), "",

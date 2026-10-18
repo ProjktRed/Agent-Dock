@@ -69,6 +69,10 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-proposal-approved": return `Plan change approved: ${first(e.message)} It is committed between tasks.`;
     case "plan-proposal-dismissed": return `Plan change dismissed: ${first(e.message)}`;
     case "plan-proposal-applied": return `Plan change committed${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
+    case "assessment-rejected": return `Assessment chose again: ${first(e.qa)}`;
+    case "qa-commit-recovered": return `QA commit recovered: ${first(e.qa)}`;
+    case "plan-item-done": return `Plan item checked off${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
+    case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
     case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;

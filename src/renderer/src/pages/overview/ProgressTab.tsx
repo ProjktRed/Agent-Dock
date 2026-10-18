@@ -109,7 +109,11 @@ function PlanProposals({ projectId, refreshKey }: { projectId: string; refreshKe
             <b className="grow" style={{ fontWeight: 600 }}>{p.reason || "Plan edit"}</b>
             <span className="sub">{clock(p.at)}</span>
           </div>
-          <pre className="mono log selectable" style={{ maxHeight: 200, margin: 0, whiteSpace: "pre-wrap" }}>{p.preview}</pre>
+          <pre className="mono log selectable" style={{ maxHeight: 200, margin: 0, whiteSpace: "pre-wrap" }}>
+            {p.preview.split("\n").map((line, i) => (
+              <div key={i} className={line.startsWith("+ ") ? "ok" : line.startsWith("- ") ? "err" : line.startsWith("@@") ? "mut" : undefined}>{line}</div>
+            ))}
+          </pre>
           {p.applies === false && <span className="sub err">No longer fits the plan: {p.problem}</span>}
           <div className="row wrap" style={{ gap: 10 }}>
             {p.status === "approved"

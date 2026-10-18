@@ -4,7 +4,7 @@ import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {applyApprovedPlanProposals,checkPlanEdits,decidePlanProposal,listPlanProposals,planExcerpt,proposePlanChange,readPlanProposals} from '../src/plan-stewardship.mjs';
+import {queuePlanTick,applyApprovedPlanProposals,checkPlanEdits,decidePlanProposal,listPlanProposals,planExcerpt,proposePlanChange,readPlanProposals} from '../src/plan-stewardship.mjs';
 import {buildReviewPrompt,parseReview} from '../src/supervisor-review.mjs';
 import {awaitSupervisorReview,parseSupervisorOptions,startSupervisor,superviseEvent} from '../src/supervisor.mjs';
 
@@ -33,6 +33,18 @@ test('plan edits: split, add and remove open items; line endings kept; a preview
  assert.match(r.preview,/@@ line 8\n- - \[ \] Old idea/);
 });
 
+test('edits apply in order: rewrite a big item, then add the rest after the new line (as a real review did)',()=>{
+ const big='- [ ] Add truncate, wordCount, titleCase, reverseWords, camelCase, snakeCase and a CLI, all with tests and docs';
+ const r=checkPlanEdits(PLAN.replace('- [ ] Old idea',big),[
+  {op:'edit',line:big,text:'- [ ] Add truncate(text, max) and wordCount(text), with tests and docs'},
+  {op:'add',line:'- [ ] Add truncate(text, max) and wordCount(text), with tests and docs',text:'- [ ] Add titleCase and reverseWords, with tests and docs'},
+  {op:'add',line:'- [ ] Add titleCase and reverseWords, with tests and docs',text:'- [ ] Add camelCase and snakeCase, with tests and docs'},
+  {op:'edit',line:'- [ ] Docs',text:'- [ ] Write README usage docs'}]);
+ assert.equal(r.ok,true,r.errors?.join('; '));
+ assert.ok(r.text.includes(['## Phase 2 — Polish','- [ ] Add truncate(text, max) and wordCount(text), with tests and docs','- [ ] Add titleCase and reverseWords, with tests and docs','- [ ] Add camelCase and snakeCase, with tests and docs','- [ ] Write README usage docs',''].join('\r\n')));
+ assert.equal(r.preview,['@@ line 8','- '+big,'- - [ ] Docs','+ - [ ] Add truncate(text, max) and wordCount(text), with tests and docs','+ - [ ] Add titleCase and reverseWords, with tests and docs','+ - [ ] Add camelCase and snakeCase, with tests and docs','+ - [ ] Write README usage docs'].join('\n'));
+});
+
 test('plan edits never check an item off, touch checked items or headings, or guess an ambiguous line',()=>{
  const refuse=(edits,re)=>{const r=checkPlanEdits(PLAN,edits);assert.equal(r.ok,false);assert.match(r.errors.join('\n'),re);};
  refuse([{op:'edit',line:'- [ ] Docs',text:'- [x] Docs'}],/cannot check off/);
@@ -42,7 +54,7 @@ test('plan edits never check an item off, touch checked items or headings, or gu
  refuse([{op:'edit',line:'- [ ] Missing',text:'x'}],/not in the plan/);
  refuse([{op:'edit',line:'',text:'x'}],/not in the plan/);
  refuse([{op:'edit',line:'- [ ] Docs',text:'a\nb'}],/one non-empty line/);
- refuse([{op:'edit',line:'- [ ] Docs',text:'- [ ] A'},{op:'remove',line:'- [ ] Docs',text:''}],/edited twice/);
+ assert.doesNotMatch(checkPlanEdits(PLAN,[{op:'edit',line:'- [ ] Docs',text:'- [ ] A'},{op:'remove',line:'- [ ] Docs',text:''}]).text,/- \[ \] (A|Docs)\r/,'a rewritten line can be named by its old text');
  assert.match(checkPlanEdits('- [ ] A\n- [ ] A\n',[{op:'remove',line:'- [ ] A',text:''}]).errors[0],/more than once/);
  // The reviewer sees phases with open work, not finished ones.
  assert.match(planExcerpt(PLAN),/Phase 2 — Polish\n- \[ \] Old idea\n- \[ \] Docs/);
@@ -74,7 +86,7 @@ test('a proposal changes nothing until approved; approval commits only the plan,
  assert.match((await applyApprovedPlanProposals({stateDir:state,workspace:ws})).waiting,/uncommitted/);
  assert.equal(git(ws,'rev-parse','HEAD'),head);
  git(ws,'checkout','--','app.js');
- assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws,state:events}),{applied:1});
+ assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws,state:events}),{applied:1,ticked:0});
  assert.equal(git(ws,'rev-parse','HEAD~1'),head);
  assert.equal(git(ws,'show','--name-only','--format=%s','HEAD'),'Plan: Drop the old idea\n\nIMPLEMENTATION_PLAN.md');
  assert.equal(git(ws,'status','--porcelain'),'');
@@ -87,8 +99,25 @@ test('a proposal changes nothing until approved; approval commits only the plan,
  await writeFile(path.join(ws,'IMPLEMENTATION_PLAN.md'),(await readFile(path.join(ws,'IMPLEMENTATION_PLAN.md'),'utf8')).replace('- [ ] Docs','- [x] Docs'));git(ws,'commit','-qam','qa');
  assert.equal((await listPlanProposals({stateDir:state,workspace:ws})).find(x=>x.id===q.id).applies,false);
  await decidePlanProposal({stateDir:state,id:q.id,decision:'approve'});
- assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws}),{applied:0});
+ assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws}),{applied:0,ticked:0});
  assert.equal((await readPlanProposals(state)).find(x=>x.id===q.id).status,'failed');
+});
+
+test('an approved task checks off its plan item between tasks, as its own commit; unknown items are reported',async t=>{
+ const {ws,state}=await repo(t),events=fakeState();
+ await queuePlanTick({stateDir:state,taskId:'T7',item:'Docs'});
+ await queuePlanTick({stateDir:state,taskId:'T8',item:'- [ ] Something   not in the plan'});
+ await writeFile(path.join(ws,'app.js'),'dirty');
+ assert.match((await applyApprovedPlanProposals({stateDir:state,workspace:ws})).waiting,/uncommitted/,'waits for a clean tree');
+ git(ws,'checkout','--','app.js');
+ const head=git(ws,'rev-parse','HEAD');
+ assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws,state:events}),{applied:0,ticked:1});
+ assert.equal(git(ws,'rev-parse','HEAD~1'),head);
+ assert.equal(git(ws,'show','--name-only','--format=%s','HEAD'),'Plan: check off Docs\n\nIMPLEMENTATION_PLAN.md');
+ assert.equal(await readFile(path.join(ws,'IMPLEMENTATION_PLAN.md'),'utf8'),PLAN.replace('- [ ] Docs','- [x] Docs'),'only that box changes; line endings kept');
+ assert.deepEqual(events.events.map(e=>e.type),['plan-item-done','plan-tick-skipped']);
+ assert.match(events.events[1].message,/No unchecked plan item reads "Something not in the plan"/);
+ assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws}),{applied:0},'the queue is consumed');
 });
 
 test('a Supervisor review with plan edits stores a pending proposal and never edits the plan',async t=>{

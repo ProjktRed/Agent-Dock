@@ -59,7 +59,7 @@ test('the run report says how the run went and which limit ended it',async t=>{
 
 test('token usage is read from Claude, Codex and OpenCode output',()=>{
  const claude=JSON.stringify({type:'result',result:'{}',usage:{input_tokens:10,cache_read_input_tokens:100,cache_creation_input_tokens:5,output_tokens:20},total_cost_usd:0.25});
- assert.deepEqual(claudeUsage('noise\n'+claude),{input:115,cached:105,output:20,costUsd:0.25});
+ assert.deepEqual(claudeUsage('noise\n'+claude),{input:115,cached:100,output:20,costUsd:0.25},'cache writes are new input; only cache reads are cached');
  assert.equal(claudeUsage('not json'),null);
  const codex=[JSON.stringify({type:'thread.started'}),JSON.stringify({type:'turn.completed',usage:{input_tokens:1000,cached_input_tokens:600,output_tokens:50,reasoning_output_tokens:30}}),JSON.stringify({type:'turn.completed',usage:{input_tokens:200,output_tokens:10}})].join('\n');
  assert.deepEqual(codexUsage(codex),{input:1200,cached:600,output:90,costUsd:0});
@@ -78,13 +78,15 @@ test('token and spend budgets ask for Stop, and the day total carries over betwe
  await watchUsage(state,dir);
  await recordUsage({input:600,output:100});
  assert.deepEqual(state.controls,[]);
- await recordUsage({input:250,cached:200,output:60});
+ await recordUsage({input:5000,cached:5000,output:0});
+ assert.deepEqual(state.controls,[],'tokens read from a prompt cache do not count toward the budget');
+ await recordUsage({input:250,cached:200,output:260});
  assert.deepEqual(state.controls,['stop']);
  assert.match(state.events[0].message,/Token budget reached: 1,010 of 1,000 tokens/);
  const day=JSON.parse(await readFile(path.join(dir,'usage-day.json'),'utf8'));
  assert.equal(day.tokens,1010);
  const report=await writeRunReport(dir,{status:'stopped'});
- assert.deepEqual([report.limit,report.usage.tokens,report.usage.cached,report.usage.calls],['tokens',1010,200,2]);
+ assert.deepEqual([report.limit,report.usage.tokens,report.usage.cached,report.usage.calls],['tokens',1010,5200,3]);
  // A later run the same day starts from today's total for the daily budget.
  useRunLimits({unattended:true,maxCostDay:1});
  const next=fakeState();

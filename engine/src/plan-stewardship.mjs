@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // Plan stewardship (Supervisor 0.19.4): the reviewer may propose line edits to IMPLEMENTATION_PLAN.md.
@@ -10,6 +10,7 @@ import path from "node:path";
 // a heading: marking work done stays with QA.
 export const PLAN_FILE = "IMPLEMENTATION_PLAN.md";
 export const PROPOSALS_FILE = "plan-proposals.json";
+export const TICKS_FILE = "plan-ticks.json";
 export const PLAN_OPS = ["add", "edit", "remove"];
 export const MAX_PLAN_EDITS = 8;
 const KEEP = 50;
@@ -35,25 +36,29 @@ export function parsePlanEdits(value) {
 
 /**
  * Checks edits against the plan text and returns the new text, or the reasons it cannot apply.
- * Each edit names an existing line exactly (trailing spaces ignored); it must match one line only.
+ * Edits apply in order, each to the plan as the earlier ones left it (so "edit a line, then add
+ * items after the new line" works). Each names a line exactly (trailing spaces ignored) that must
+ * match one line only.
  */
 export function checkPlanEdits(planText, edits) {
   const eol = /\r\n/.test(planText) ? "\r\n" : "\n";
-  const lines = String(planText).split(/\r?\n/);
+  const original = String(planText).split(/\r?\n/), lines = [...original];
   const errors = [];
   if (!Array.isArray(edits) || !edits.length) errors.push("No edits");
   if (edits?.length > MAX_PLAN_EDITS) errors.push(`At most ${MAX_PLAN_EDITS} edits`);
-  const changes = new Map();
-  const at = (index) => changes.get(index) ?? changes.set(index, { replace: undefined, adds: [] }).get(index);
+  // A line an earlier edit rewrote can still be named by its old text.
+  const rewritten = new Map();
   for (const [n, edit] of (edits ?? []).entries()) {
     const label = `Edit ${n + 1}`;
     if (!PLAN_OPS.includes(edit?.op)) { errors.push(`${label}: unknown operation`); continue; }
-    const target = String(edit.line ?? "").trimEnd();
-    const matches = target.trim() ? lines.flatMap((l, i) => (l.trimEnd() === target ? [i] : [])) : [];
-    if (matches.length !== 1) { errors.push(`${label}: the line ${matches.length ? "appears more than once" : "is not in the plan"}: "${target.slice(0, 80)}"`); continue; }
+    const named = String(edit.line ?? "").trimEnd();
+    const find = (t) => (t.trim() ? lines.flatMap((l, i) => (l.trimEnd() === t ? [i] : [])) : []);
+    let target = named, matches = find(named);
+    if (!matches.length && rewritten.has(named)) { target = rewritten.get(named); matches = find(target); }
+    if (matches.length !== 1) { errors.push(`${label}: the line ${matches.length ? "appears more than once" : "is not in the plan"}: "${named.slice(0, 80)}"`); continue; }
     const index = matches[0];
+    const text = String(edit.text ?? "").trimEnd();
     if (edit.op !== "remove") {
-      const text = String(edit.text ?? "");
       if (/[\r\n]/.test(text) || !text.trim()) { errors.push(`${label}: the new text must be one non-empty line`); continue; }
       if (text.length > 300) { errors.push(`${label}: the new text is longer than 300 characters`); continue; }
       if (CHECKED.test(text) && !(edit.op === "edit" && CHECKED.test(lines[index]))) { errors.push(`${label}: the Supervisor cannot check off plan items`); continue; }
@@ -61,22 +66,39 @@ export function checkPlanEdits(planText, edits) {
     if (edit.op !== "add") {
       if (CHECKED.test(lines[index])) { errors.push(`${label}: checked items cannot be changed or removed`); continue; }
       if (HEADING.test(lines[index])) { errors.push(`${label}: headings cannot be changed or removed`); continue; }
-      const change = at(index);
-      if (change.replace !== undefined) { errors.push(`${label}: the same line is edited twice`); continue; }
-      change.replace = edit.op === "remove" ? null : edit.text;
-    } else at(index).adds.push(edit.text);
+    }
+    if (edit.op === "add") lines.splice(index + 1, 0, text);
+    else if (edit.op === "edit") { lines[index] = text; rewritten.set(target, text); for (const [k, v] of rewritten) if (v === target) rewritten.set(k, text); }
+    else lines.splice(index, 1);
   }
   if (errors.length) return { ok: false, errors };
-  const out = [], preview = [];
-  lines.forEach((line, index) => {
-    const change = changes.get(index);
-    if (!change) return out.push(line);
-    preview.push(`@@ line ${index + 1}`);
-    if (change.replace === undefined) { out.push(line); preview.push(`  ${line}`); }
-    else { preview.push(`- ${line}`); if (change.replace !== null) { out.push(change.replace); preview.push(`+ ${change.replace}`); } }
-    for (const add of change.adds) { out.push(add); preview.push(`+ ${add}`); }
-  });
-  return { ok: true, text: out.join(eol), preview: preview.join("\n") };
+  return { ok: true, text: lines.join(eol), preview: lineDiff(original, lines) };
+}
+
+/** A small line diff for the preview: "@@ line N" hunks of -/+ lines (a pure insertion shows the line before it). */
+export function lineDiff(a, b) {
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { ops.push([" ", a[i], i]); i++; j++; }
+    else if (j >= b.length || (i < a.length && lcs[i + 1][j] >= lcs[i][j + 1])) { ops.push(["-", a[i], i]); i++; }
+    else { ops.push(["+", b[j], i]); j++; }
+  }
+  const out = [];
+  for (let k = 0; k < ops.length; k++) {
+    if (ops[k][0] === " ") continue;
+    const start = k;
+    while (k < ops.length && ops[k][0] !== " ") k++;
+    const hunk = ops.slice(start, k);
+    if (hunk.some(([t]) => t === "-")) out.push(`@@ line ${hunk.find(([t]) => t === "-")[2] + 1}`, ...hunk.map(([t, l]) => `${t} ${l}`));
+    else {
+      const before = start > 0 ? ops[start - 1] : null;
+      out.push(`@@ line ${before ? before[2] + 1 : 1}`, ...(before ? [`  ${before[1]}`] : []), ...hunk.map(([t, l]) => `${t} ${l}`));
+    }
+  }
+  return out.join("\n");
 }
 
 /** The plan as the reviewer sees it: phases with open items, in the file's exact lines, capped. */
@@ -108,6 +130,14 @@ async function readPlan(workspace) {
   return readFile(path.join(workspace, PLAN_FILE), "utf8");
 }
 const hash = (text) => createHash("sha256").update(text).digest("hex");
+
+/** A commit subject: the first sentence, cut at a word boundary. */
+export function commitSubject(text, max = 64) {
+  const first = String(text ?? "").split(/\r?\n/)[0].split(/(?<=[.!?])\s/)[0].trim().replace(/[.]$/, "");
+  if (first.length <= max) return first;
+  const cut = first.slice(0, max), space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[,;:]$/, "")}…`;
+}
 
 /** Stores a valid proposal (pending) and returns it, or returns { errors } and stores nothing. */
 export async function proposePlanChange({ stateDir, workspace, reason, edits, source = "supervisor-review", state = null }) {
@@ -152,6 +182,51 @@ function git(args, cwd) {
     resolve({ ok: !error, out: String(stdout), err: String(stderr || error?.message || "") })));
 }
 
+const normalizeItem = (text) => String(text ?? "").replace(/^\s*-\s+\[[ xX]\]\s+/, "").replace(/\s+/g, " ").trim();
+
+/** QA approved a task that completes a plan item: queue the check-off for the next task boundary. */
+export async function queuePlanTick({ stateDir, taskId, item }) {
+  const text = normalizeItem(item);
+  if (!text) return null;
+  const file = path.join(stateDir, TICKS_FILE);
+  let list = [];
+  try { list = JSON.parse(await readFile(file, "utf8")); if (!Array.isArray(list)) list = []; } catch {}
+  const tick = { taskId: taskId ?? null, item: text, at: new Date().toISOString() };
+  list.push(tick);
+  const temp = `${file}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify(list.slice(-50), null, 2));
+  await rename(temp, file);
+  return tick;
+}
+
+/** Checks off queued items: the one unchecked line with that text, as its own commit of the plan only. */
+async function applyPlanTicks({ stateDir, workspace, state }) {
+  const file = path.join(stateDir, TICKS_FILE);
+  let ticks = [];
+  try { ticks = JSON.parse(await readFile(file, "utf8")); } catch {}
+  if (!Array.isArray(ticks) || !ticks.length) return 0;
+  let done = 0;
+  for (const tick of ticks) {
+    let plan;
+    try { plan = await readPlan(workspace); } catch { break; }
+    const eol = /\r\n/.test(plan) ? "\r\n" : "\n", lines = plan.split(/\r?\n/);
+    const matches = lines.flatMap((line, i) => (/^\s*-\s+\[ \]\s+/.test(line) && normalizeItem(line) === tick.item ? [i] : []));
+    if (matches.length !== 1) {
+      const already = lines.some((line) => /^\s*-\s+\[[xX]\]\s+/.test(line) && normalizeItem(line) === tick.item);
+      if (!already) await state?.record({ type: "plan-tick-skipped", taskId: tick.taskId, message: `${matches.length ? "More than one" : "No"} unchecked plan item reads "${tick.item.slice(0, 120)}"; check it off yourself if it is done.` });
+      continue;
+    }
+    lines[matches[0]] = lines[matches[0]].replace(/\[ \]/, "[x]");
+    await writeFile(path.join(workspace, PLAN_FILE), lines.join(eol));
+    const commit = await git(["commit", "-m", `Plan: check off ${commitSubject(tick.item, 56)}`, "-m", `Task ${tick.taskId ?? "?"} was approved by QA; checked off by Agent Dock.`, "--", PLAN_FILE], workspace);
+    if (!commit.ok) { await writeFile(path.join(workspace, PLAN_FILE), plan); await state?.record({ type: "plan-tick-skipped", taskId: tick.taskId, message: `git commit failed: ${commit.err.trim().slice(0, 200)}` }); continue; }
+    await state?.record({ type: "plan-item-done", taskId: tick.taskId, message: tick.item, commit: (await git(["rev-parse", "HEAD"], workspace)).out.trim() });
+    done++;
+  }
+  await rm(file, { force: true });
+  return done;
+}
+
 /**
  * Applies approved proposals, each as its own commit of the plan file only. Runs only at a task
  * boundary (or with no engine running) and only on a clean workspace, so no task ever sees it in its
@@ -159,9 +234,13 @@ function git(args, cwd) {
  */
 export async function applyApprovedPlanProposals({ stateDir, workspace, state = null }) {
   const list = await readPlanProposals(stateDir), approved = list.filter((p) => p.status === "approved");
-  if (!approved.length) return { applied: 0 };
+  let hasTicks = false;
+  try { hasTicks = (await readFile(path.join(stateDir, TICKS_FILE), "utf8")).trim().length > 2; } catch {}
+  if (!approved.length && !hasTicks) return { applied: 0 };
   const status = await git(["status", "--porcelain=v1", "--untracked-files=all"], workspace);
   if (!status.ok || status.out.trim()) return { applied: 0, waiting: "the workspace has uncommitted changes" };
+  const ticked = hasTicks ? await applyPlanTicks({ stateDir, workspace, state }) : 0;
+  if (!approved.length) return { applied: 0, ticked };
   let applied = 0;
   for (const proposal of approved) {
     let plan;
@@ -173,7 +252,7 @@ export async function applyApprovedPlanProposals({ stateDir, workspace, state = 
       continue;
     }
     await writeFile(path.join(workspace, PLAN_FILE), check.text);
-    const subject = `Plan: ${(proposal.reason || "Supervisor plan change").split(/\r?\n/)[0].slice(0, 72)}`;
+    const subject = `Plan: ${commitSubject(proposal.reason) || "Supervisor plan change"}`;
     const commit = await git(["commit", "-m", subject, "-m", `Proposed by the Agent Dock Supervisor and approved in Agent Dock (proposal ${proposal.id}).`, "--", PLAN_FILE], workspace);
     if (!commit.ok) {
       await writeFile(path.join(workspace, PLAN_FILE), plan);
@@ -187,5 +266,5 @@ export async function applyApprovedPlanProposals({ stateDir, workspace, state = 
     applied++;
   }
   await writeProposals(stateDir, list);
-  return { applied };
+  return { applied, ticked };
 }

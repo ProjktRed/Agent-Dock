@@ -15,6 +15,8 @@ import {TUNING} from './engine-tuning.mjs';
 import {elevationAllowed} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
 import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
+import {interruptedQaCommit} from './interrupted-qa.mjs';
+import {assertSafeQaCommand} from './guard/protected-paths.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReason:value.runResult?.finishReason??null,text:String(value.summary??value.runResult?.summary??value.runResult?.text??'No structured summary provided.').slice(0,2000)}});
@@ -47,7 +49,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   const suppliedTaskChanged=r&&task&&task.id===saved.id&&recoveryFingerprint(task)!==recoveryFingerprint(Object.fromEntries(Object.entries(saved).filter(([k])=>k!=='automation')));
   if(r && (!task || task.id===saved.id)) task=Object.fromEntries(Object.entries(saved).filter(([k])=>k!=='automation'));
   else r=null;
-  let previous;
+  let previous,qaCommandRejections=0;
   const save=async(consumeCodexResult=false)=>{
     await atomicWriteJson(file,{...task,automation:{...(saved?.id===task.id?saved.automation:{}),recovery:r}});
     await emit('recovery-state',{recovery:{correctionCount:r.correctionCount,correctionHistory:r.correctionHistory,assessmentResult:r.assessmentResult,currentCorrection:r.currentCorrection,elevateResult:r.elevateResult,resolverResult:r.resolverResult,userAttention:r.userAttention,userAttentionReason:r.failure?.output,phase:r.phase},consumeCodexResult});
@@ -141,7 +143,17 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(r.phase==='blocked') return block(r.blockedReason??'Recovery is blocked');
       if(r.phase==='worker-launching'||r.phase==='worker-running') return block('Cannot reconcile interrupted local worker; implementation must not be replayed');
       if(!['worker','evidence','review','qa','decision','correction-assessment','elevation','passed'].includes(r.phase))return block('Malformed recovery phase');
-      const completedPass=(pending?.operation==='qa'&&pending.status==='completed'&&pending.result?.status==='pass')?pending.result:(r.phase==='decision'&&r.failure?.status==='pass'?r.failure:null);
+      let completedPass=(pending?.operation==='qa'&&pending.status==='completed'&&pending.result?.status==='pass')?pending.result:(r.phase==='decision'&&r.failure?.status==='pass'?r.failure:null);
+      // QA was killed after committing but before reporting: accept the commit only if the engine's own checks pass.
+      // Retry QA after such a block (HEAD moved by the unreported commit) uses the same check.
+      if(!completedPass&&((pending?.operation==='qa'&&pending.status!=='completed'&&['review','qa'].includes(r.phase))||(r.forceFreshQa&&r.phase==='evidence'))){
+        const recovered=await interruptedQaCommit({workspace,task,baselineSha:r.baselineSha});
+        if(recovered){
+          completedPass=recovered;r.failure=recovered;r.phase='decision';r.forceFreshQa=false;r.blockedReason=null;
+          await rm(path.join(stateDir,'pending-codex.json'),{force:true});pending=null;
+          await save();await emit('qa-commit-recovered',{attempt:r.attempt,qa:recovered.output});
+        }
+      }
       if(completedPass)await verify({workspace,baselineHead:r.baselineSha,decision:completedPass,task});
       else if(r.phase!=='passed') await reconcile(task,r.baselineSha);
       if(pending?.status==='completed'&&pending.operationId===r.lastAppliedOperationId) {
@@ -175,6 +187,14 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             if(op.result.status==='done'){await emit('loop-complete');return{status:'done'};}
             if(op.result.status!=='task'){await consumeAssessment();return block(op.result.output??'Assessment could not produce a safe task');}
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');
+            // An unapproved check command would only fail at QA, after Implementation did the work: ask Assessment again.
+            try{assertSafeQaCommand({workspace,stateDir,command:task.qaCommand});qaCommandRejections=0;}
+            catch(error){
+              if(++qaCommandRejections>1)return block(`${error.message}: ${task.qaCommand}`);
+              const rejected=task;task=null;await consumeAssessment();pending=null;
+              await emit('assessment-rejected',{qa:`Check command "${rejected.qaCommand}" is not allowed. Assessment chooses again.`});
+              return{status:'reassess',task:rejected,qa:`Rejected before implementation: qaCommand "${rejected.qaCommand}" is not an approved check. Use an existing npm script (npm test, npm run <script>) or npx tsc/eslint/prettier/vitest/playwright.`};
+            }
             assessmentOperationId=op.operationId;
           }
           if(!await beforeNextTask())return{status:'stopped'};
@@ -286,7 +306,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             if(classification==='blocked')return block(r.failure.output??'Unsafe QA condition');
             if(classification==='pass') {
               if(r.failure.verifiedIssue)await recordVerifiedIssue(knowledgeFile,r.failure.verifiedIssue,{role:'QA',passed:r.qaPacket.qaEvidence.command.exitCode===0});
-              r.phase='passed';r.userAttention=false;r.elevateResult=null;await save();await emit('qa-pass',{attempt:r.attempt,qa:r.failure.output});continue;
+              r.phase='passed';r.userAttention=false;r.elevateResult=null;await save();await emit('qa-pass',{attempt:r.attempt,qa:r.failure.output,...(task.planItems?.length?{planItems:task.planItems}:{})});continue;
             }
             r.userAttention=true;await emit('qa-fail',{attempt:r.attempt,qa:r.failure.output});await emit('user-attention',{qa:r.failure.output});
             const fingerprint=recoveryFingerprint({task,baseline:r.baselineSha,diff:r.qaPacket.diff,failure:r.failure,corrections:r.correctionHistory});
@@ -341,6 +361,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(!result){await emit('queued');await sleep(pollMs);continue;}
       if(result.status==='blocked')result=await block(result.output??r?.blockedReason??'Recovery is blocked');
       if(result.status==='resolver-ready')continue;
+      if(result.status==='reassess'){previous={task:result.task,result:result.qa};task=null;continue;}
       if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
       if(result.status!=='passed'||stopAfterTask)return result;
       previous={task,result:result.qa};task=null;r=null;saved=null;

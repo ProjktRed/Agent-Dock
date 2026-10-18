@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { withoutSecrets } from "./secret-env.mjs";
 
+/** Runs the task's (already validated) check command, without secrets in the environment. */
+export const runCheckCommand = (command, cwd) => runCommand(command, cwd);
+
 function runCommand(command, cwd) {
   return new Promise((resolve, reject) => {
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";

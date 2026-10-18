@@ -14,7 +14,7 @@ import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
-import { applyApprovedPlanProposals } from "./plan-stewardship.mjs";
+import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
 import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { createReviewer } from "./supervisor-review.mjs";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
@@ -136,7 +136,10 @@ try {
     manualResolver: options['resolve-block']==='true',
     betweenTasks: () => applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}),
     onTask: async (task) => { await state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }); await superviseTask(task).catch(() => {}); },
-    onEvent: (event) => recordLoopEvent(state,event,options),
+    onEvent: async (event) => {
+      await recordLoopEvent(state,event,options);
+      if (event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: state.live?.task?.id, item }).catch(() => {});
+    },
     readControl: () => state.readControl(), pendingCodex,
     roles, runRole,
   });

@@ -72,8 +72,8 @@ export function parseRecoveryResult(text) {
 
 const taskSchema = {
   type: "object", additionalProperties: false,
-  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } } },
-  required: ["id", "name", "prompt", "qaCommand", "allowedPaths"],
+  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } }, planItems: { type: "array", items: { type: "string" } } },
+  required: ["id", "name", "prompt", "qaCommand", "allowedPaths", "planItems"],
 };
 export const codexOutputSchema = {
   type: "object", additionalProperties: false,
@@ -119,9 +119,12 @@ export function parseCodexResult(text) {
   }
   if (value.task !== null) {
     if (!value.task || typeof value.task !== "object" || Array.isArray(value.task)) throw new Error("Invalid Codex structured result: task must be an object or null");
+    // planItems arrived in 0.20.2; results saved by older versions (or written by hand) have none.
+    if (!Object.hasOwn(value.task, "planItems")) value.task.planItems = [];
     const taskKeys = Object.keys(taskSchema.properties);
     for (const key of taskKeys) if (!Object.hasOwn(value.task, key)) throw new Error(`Invalid Codex structured result: task missing ${key}`);
     for (const key of Object.keys(value.task)) if (!taskKeys.includes(key)) throw new Error(`Invalid Codex structured result: unexpected task.${key}`);
+    if (!Array.isArray(value.task.planItems) || value.task.planItems.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.planItems must be a string array");
     for (const key of ["id", "name", "prompt", "qaCommand"]) if (typeof value.task[key] !== "string") throw new Error(`Invalid Codex structured result: task.${key} must be a string`);
     if (!Array.isArray(value.task.allowedPaths) || value.task.allowedPaths.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.allowedPaths must be a string array");
   }
@@ -184,6 +187,7 @@ export function buildQaPrompt(qaPacket) {
     "Return manual-review for hard blockers only; specify manualReviewCause: out-of-scope, unexpected-head, malformed-state, unsafe-commit, missing-permissions, security-policy, or destructive-action.",
     "A failed worker exit, failed required check, missing trustworthy final result, HEAD change or scope violation cannot pass.",
     "Only when all required checks pass: git add only approved changed paths, commit exactly this task, and return pass with full commit hash and verification evidence.",
+    "Commit with plain commands the protection policy accepts: git add <each changed path> then git commit -m \"<message>\" (optionally -q, or a second -m for a body); no other commit flags, and no $, backticks, % or backslashes in the message.",
     "No-commit instructions in the Cline task apply to the implementing Cline worker. QA owns acceptance and the single scoped commit under the user-approved workflow. A direct user prohibition on commits still overrides this workflow. If commit approval is rejected, stop and report the rejection; do not retry or bypass it.",
     "Never edit source, weaken tests or change git configuration. End commands, return JSON and exit completely.",
     "verifiedIssue must be null unless an independently established recurring tooling/environment cause has an implemented fix and passing relevant verification. Only then supply a compact reusable issue entry. Never record speculative causes or ordinary application bugs.",
@@ -335,6 +339,7 @@ export class CodexWorker {
       "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
       "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
+      "planItems: the unchecked IMPLEMENTATION_PLAN.md items that will be finished once this task is approved, counting work already committed (for example, a tests task that completes an item whose code an earlier task added, or an item the repository already fully satisfies). Copy each item's text exactly, without the leading \"- [ ] \"; use [] when none. Do not add the plan file to allowedPaths for this: after QA approves the task, the engine checks these items off itself.",
       "qaCommand must use an existing project npm test/run script, or a supported local check (npx tsc, eslint, prettier, vitest or playwright), optionally chained with &&. No arbitrary executables, package installation, interpreters, shell expressions or output redirection. Protected paths cannot be inspected or edited; narrow file searches to public source directories and use git ls-files for discovery.",
       "Before returning a task, verify that allowedPaths are sufficient for every implementation change reasonably required to make qaCommand pass. Do not create a task whose required contract change predictably breaks typed fixtures or callers that the task forbids Cline to update.",
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",

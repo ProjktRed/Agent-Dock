@@ -105,8 +105,20 @@ function pathsIn(input,out=[]) {
   return out;
 }
 
+// A QA commit message is free text: it may span lines and contain <>()[]!?*;| inside its quotes,
+// but nothing a shell expands in quotes ($, backtick, %, ^, backslash). It becomes one opaque word.
+const COMMIT_MESSAGE='__AGENT_DOCK_COMMIT_MESSAGE__';
+const quotedMessages=script=>script.replace(/(\s-m\s+)(?:"([^"$`%^\\\0]*)"|'([^'$`%^\\\0]*)')(?=\s|$)/g,(_,flag,dq,sq)=>((dq??sq).trim()?flag+COMMIT_MESSAGE:_));
+
 function commandSafe(policy,script,cwd) {
   script=stripCheckOutputFilter(script);
+  if(typeof script==='string'&&/\bgit\s+commit\b/.test(script))script=quotedMessages(script);
+  // ";" runs commands one after another, like "&&" (Windows PowerShell 5.1 has no "&&"): every part must be safe.
+  if(typeof script==='string'&&script.includes(';')&&!/[\r\n|]/.test(script)){
+    const parts=script.split(';').map(p=>p.trim());
+    if(parts.at(-1)==='')parts.pop();
+    return parts.length>1&&parts.every(p=>p&&commandSafe(policy,p,cwd));
+  }
   if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?]/.test(script))return false;
   if(process.platform!=='win32'&&script.includes('\\'))return false;
   if(script.includes('&&'))return script.split('&&').every(part=>commandSafe(policy,part,cwd));
@@ -136,11 +148,23 @@ function commandSafe(policy,script,cwd) {
     if(['status','rev-parse','ls-files'].includes(words[0]))return words.every(w=>!w.includes('/')&&!w.includes('\\')&&!w.startsWith('.')||!isProtectedPath(policy,w,cwd));
     if(words[0]==='diff'&&words.length===2&&['--check','--stat','--numstat','--name-only'].includes(words[1]))return true;
     if(words[0]==='branch'&&words[1]==='--show-current'&&words.length===2)return true;
+    // History without content: commit messages and file names, never a patch (it could show protected files).
+    const REV=/^(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40})(?:\.\.(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40}))?$/;
+    const LIST=new Set(['--oneline','--stat','--name-only','--name-status','--no-color','--decorate','--no-decorate']);
+    if(words[0]==='log')return words.slice(1).every((w,i,all)=>LIST.has(w)||/^-\d{1,4}$/.test(w)||(w==='-n'&&/^\d{1,4}$/.test(all[i+1]??''))||(/^\d{1,4}$/.test(w)&&all[i-1]==='-n')||REV.test(w));
+    if(words[0]==='show'&&words.slice(1).some(w=>['--stat','--name-only','--name-status'].includes(w)))return words.slice(1).every(w=>LIST.has(w)||REV.test(w))&&words.slice(1).filter(w=>REV.test(w)).length<=1;
     if(words[0]==='show'&&words.length===2&&/^(?:HEAD|[a-f0-9]{7,40}):/.test(words[1]))return safeRead(policy,words[1].slice(words[1].indexOf(':')+1),cwd);
     if(['add','commit'].includes(words[0])&&policy.allowGitCommit) {
       // QA commits only after engine scope verification; reject paths naming protected content.
       if(words[0]==='add')return words.length>1&&words.slice(1).filter(w=>w!=='--').every(w=>!w.startsWith('-')&&safeRead(policy,w,cwd));
-      return words[1]==='-m'&&words.length===3;
+      // commit [-q|--quiet] -m <message> [-m <message>…]; nothing else (no -a, --amend, paths or hook bypass).
+      const rest=words.slice(1);let messages=0;
+      for(let i=0;i<rest.length;i++){
+        if(rest[i]==='-q'||rest[i]==='--quiet')continue;
+        if(rest[i]==='-m'&&rest[i+1]?.trim()&&!rest[i+1].startsWith('-')){messages++;i++;continue;}
+        return false;
+      }
+      return messages>0;
     }
     if(words[0]!=='diff')return false;
     const divider=words.indexOf('--');
