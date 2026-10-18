@@ -12,7 +12,8 @@ export const TRUSTED_LIBRARIES = [
 
 // Only text is imported. Scripts and binaries are listed as skipped: Agent Dock never runs skill files.
 const TEXT_FILE = /\.(md|txt|json|ya?ml|csv)$|(^|\/)(LICENSE|NOTICE|COPYING)[^/]*$/i;
-const MAX_SKILLS = 25, MAX_FILES_PER_SKILL = 60, MAX_FILE_BYTES = 200_000, MAX_SKILL_BYTES = 1_000_000;
+// MAX_SKILLS: shown and downloaded at once; larger libraries are listed first. MAX_REVIEW: chosen from a list.
+const MAX_SKILLS = 25, MAX_REVIEW = 60, MAX_REVIEW_BYTES = 20_000_000, MAX_FILES_PER_SKILL = 60, MAX_FILE_BYTES = 200_000, MAX_SKILL_BYTES = 1_000_000;
 
 export interface GitHubSource { owner: string; repo: string; ref: string | null; path: string }
 
@@ -104,13 +105,14 @@ export async function previewLibraryImport(input: string, fetchImpl: Fetch = fet
       skills: skillDirs.map((dir) => ({ name: path.posix.basename(dir || source.repo), description: "", path: dir, files: [], skipped: [], findings: [] })) };
   }
   if (only) {
-    if (!only.length || only.length > MAX_SKILLS) throw new Error(`Choose 1 to ${MAX_SKILLS} skills to review.`);
+    if (!only.length || only.length > MAX_REVIEW) throw new Error(`Choose 1 to ${MAX_REVIEW} skills to review.`);
     const unknown = only.filter((dir) => !skillDirs.includes(dir));
     if (unknown.length) throw new Error(`Not a skill folder in this library: ${unknown.join(", ")}`);
   }
   const reviewDirs = only ? skillDirs.filter((dir) => only.includes(dir)) : skillDirs;
   const contents = new Map<string, { path: string; text: string }[]>();
   const skills: LibrarySkillPreview[] = [];
+  let downloaded = 0;
   for (const dir of reviewDirs) {
     const inner = (p: string) => dir ? p.startsWith(dir + "/") : true;
     // Nested skills belong to their own folder.
@@ -124,6 +126,8 @@ export async function previewLibraryImport(input: string, fetchImpl: Fetch = fet
       if (total + b.size > MAX_SKILL_BYTES) { skipped.push({ path: rel(b.path), reason: "skill is over 1 MB" }); return false; }
       total += b.size; return true;
     }).slice(0, MAX_FILES_PER_SKILL);
+    downloaded += wanted.reduce((sum, b) => sum + b.size, 0);
+    if (downloaded > MAX_REVIEW_BYTES) throw new Error("The chosen skills are over 20 MB together; choose fewer.");
     const files = await inBatches(wanted, 6, async (b) => {
       const res = await fetchImpl(`https://raw.githubusercontent.com/${source.owner}/${source.repo}/${commit}/${b.path.split("/").map(encodeURIComponent).join("/")}`);
       if (!res.ok) throw new Error(`Could not download ${b.path} (${res.status}).`);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Agent, EngineEvent, Role, TokenRecord } from "@shared/types";
+import type { Agent, EngineEvent, Role, SkillInfo, TokenRecord } from "@shared/types";
 import { cleanError, useApp } from "../store";
 import { ago, clock, connectionMeta, roleLabel, tokens, uid } from "../lib/format";
 import { agentForRoleClient } from "../lib/agents";
@@ -8,6 +8,7 @@ import { Icon } from "../components/Icon";
 import { Disclosure, Dot, Empty, Modal, Spinner, St, Support, Tabs, Toggle } from "../components/ui";
 import { stageLabel } from "./Workflow";
 import { describeEvent, isHiddenEvent } from "../lib/events";
+import { openSettingsSection } from "./Settings";
 
 const ROLE_EVENTS: Record<string, RegExp> = {
   implementation: /^(cline-|implementation-)/,
@@ -23,7 +24,11 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const [draft, setDraft] = useState(agent);
   const [manual, setManual] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [library, setLibrary] = useState<SkillInfo[]>([]);
   useEffect(() => setDraft(agent), [agent]);
+  useEffect(() => { void window.api.skills().then(setLibrary).catch(() => {}); }, []);
+  // Imported, enabled skills not yet on this agent; the engine adds its own bounded-task-handoff itself.
+  const addable = library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false && !draft.skills.includes(sk.name));
   const orchestrator = draft.role === "qa" || draft.role === "assessment" || draft.role === "elevation";
   const implementation = draft.role === "implementation";
   const custom = draft.role === "custom";
@@ -289,12 +294,17 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         <textarea className="ta" style={{ minHeight: 70 }} value={draft.instructions} onChange={(e) => set("instructions", e.target.value)} placeholder="The engine writes its own role prompts; these notes are stored for when it accepts additions." />
       </label>
       <div className="field">
-        <span className="row" style={{ gap: 8 }}>Skills<Support kind="saved" /></span>
+        <span className="row" style={{ gap: 8 }}>Skills<Support kind="engine" /></span>
         <div className="row wrap" style={{ gap: 10 }}>
           {draft.skills.map((k) => (
             <span className="chip raised" key={k}>{k}<button className="x" onClick={() => set("skills", draft.skills.filter((x) => x !== k))} aria-label={`Remove ${k}`}><Icon name="close" size="sm" /></button></span>
           ))}
-          {draft.skills.length === 0 && <span className="sub">None assigned. Manage skills in Settings › Skills.</span>}
+          {draft.skills.length === 0 && <span className="sub">None assigned.</span>}
+          <select className="sel" style={{ width: "auto", minWidth: 160 }} value="" aria-label="Add a skill" disabled={!addable.length} onChange={(e) => e.target.value && set("skills", [...draft.skills, e.target.value])}>
+            <option value="">{addable.length ? "Add skill…" : library.some((sk) => sk.source === "imported") ? "All skills added" : "No imported skills"}</option>
+            {addable.map((sk) => <option key={sk.id} value={sk.name} title={sk.description}>{sk.name}{sk.origin ? ` · ${sk.origin.split("@")[0]}` : ""}</option>)}
+          </select>
+          <button className="btn ghost sm" onClick={() => { openSettingsSection("skills"); go("settings"); }}><Icon name="download" size="sm" />Import skills</button>
         </div>
       </div>
       <div className="well pad stack" style={{ gap: 12 }}>

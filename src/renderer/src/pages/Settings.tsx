@@ -178,11 +178,11 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
             {warned && <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed the warnings and want to import these skills.</span></label>}
             <div className="row" style={{ gap: 8 }}>
               {preview.browse
-                ? <span className="sub grow">{preview.skills.length} skills in this library. Choose up to 25 to download and review.</span>
+                ? <span className="sub grow">{preview.skills.length} skills in this library. Choose up to 60 to download and review · <button className="btn ghost sm" onClick={() => setChosen(chosen.length ? [] : preview.skills.slice(0, 60).map((sk) => sk.path))}>{chosen.length ? "Select none" : preview.skills.length > 60 ? "Select first 60" : "Select all"}</button></span>
                 : <span className="sub grow">{importable.length} of {preview.skills.length} can be imported · <button className="btn ghost sm" onClick={() => setChosen(chosen.length === importable.length ? [] : importable.map((sk) => sk.name))}>{chosen.length === importable.length ? "Select none" : "Select all"}</button></span>}
               <button className="btn" onClick={onClose}>Cancel</button>
               {preview.browse
-                ? <button className="btn primary" disabled={busy || !chosen.length || chosen.length > 25} onClick={() => void load(preview.url, chosen)}>Review {chosen.length || ""}</button>
+                ? <button className="btn primary" disabled={busy || !chosen.length || chosen.length > 60} onClick={() => void load(preview.url, chosen)}>Review {chosen.length || ""}</button>
                 : <button className="btn primary" disabled={busy || !chosen.length || (warned && !confirmed)} onClick={() => void install()}>Import {chosen.length || ""}</button>}
             </div>
           </>
