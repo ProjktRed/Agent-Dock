@@ -1,7 +1,7 @@
 # Signed release: pushing a tag vX.Y.Z (matching package.json) builds the Windows app, the per-user
 # installer and a zip, signs a manifest of the zip with the RELEASE_SIGNING_KEY secret (Ed25519) and
 # publishes a GitHub Release in the public releases repository (repository variable RELEASE_REPO,
-# default ProjktRed/agent-dock-releases), using the RELEASES_TOKEN secret: a fine-grained token with
+# default ProjktRed/Agent-Dock; the source is the private ProjktRed/Agent-Dock-Dev), using the RELEASES_TOKEN secret: a fine-grained token with
 # Contents read/write on that repository only. Installed apps verify the signature before updating.
 name: Release
 
@@ -90,5 +90,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          RELEASE_REPO: ${{ vars.RELEASE_REPO || 'ProjktRed/agent-dock-releases' }}
+          RELEASE_REPO: ${{ vars.RELEASE_REPO || 'ProjktRed/Agent-Dock' }}
         run: gh release create "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md

@@ -15,7 +15,7 @@ the loop.
 ## Getting started
 
 **Install:** download `AgentDock-Setup-<version>-win-x64.exe` from
-[the releases page](https://github.com/ProjktRed/agent-dock-releases/releases) and run it. It installs
+[the releases page](https://github.com/ProjktRed/Agent-Dock/releases) and run it. It installs
 for your Windows account only (no admin rights) into `%LOCALAPPDATA%ProgramsAgentDock`, with Start
 menu and desktop shortcuts and an uninstaller. The installer is not Authenticode-signed yet, so Windows
 SmartScreen may warn about an unknown publisher (More info › Run anyway); the release notes list its
@@ -332,7 +332,8 @@ installer, zip, `manifest.json` and `manifest.sig` to the public releases reposi
 1. `node scripts/sign-release.mjs --generate-key release-key.pem`, add the file's contents as the
    repository secret `RELEASE_SIGNING_KEY`, delete the file, and put the printed public key in
    `src/main/release-key.ts`.
-2. Create the public repository `ProjktRed/agent-dock-releases` with one commit (a README), or set
+2. Create the public repository `ProjktRed/Agent-Dock` (the source is the private
+   `ProjktRed/Agent-Dock-Dev`) with one commit (a README), or set
    another one as the repository variable `RELEASE_REPO`.
 3. Add the secret `RELEASES_TOKEN`: a fine-grained token with Contents read/write on the releases
    repository only.

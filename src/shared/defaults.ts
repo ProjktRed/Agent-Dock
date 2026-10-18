@@ -33,8 +33,11 @@ export const DEFAULT_CLIS: CliConnection[] = [
   cli("ollama", "ollama", "Ollama", "http://127.0.0.1:11434"),
 ];
 
-/** Public repository the signed releases are published to (the source repository stays private). */
-export const DEFAULT_RELEASE_REPO = "ProjktRed/agent-dock-releases";
+/** Public repository the signed releases are published to. The source lives in the private ProjktRed/Agent-Dock-Dev. */
+export const DEFAULT_RELEASE_REPO = "ProjktRed/Agent-Dock";
+/** The source repository's former address, now the public releases repository: never a place to build updates from. */
+export const FORMER_SOURCE = /^https:\/\/github\.com\/ProjktRed\/Agent-Dock(?:\.git)?\/?$/i;
+export const DEV_SOURCE = "https://github.com/ProjktRed/Agent-Dock-Dev.git";
 
 /** Builds made by the release workflow (build-info branch "release") have no source to build from: they always use signed releases. */
 export const updateChannel = (settings: { updates: { channel?: "git" | "release" } }, installedBranch?: string | null): "git" | "release" =>

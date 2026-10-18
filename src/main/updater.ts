@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_RELEASE_REPO, updateChannel } from "@shared/defaults";
+import { DEFAULT_RELEASE_REPO, DEV_SOURCE, FORMER_SOURCE, updateChannel } from "@shared/defaults";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
@@ -81,7 +81,8 @@ export class Updater {
 
   private target(settings: Settings) {
     return {
-      source: settings.updates.source.trim() || this.installed?.source || "",
+      // Builds made before the rename still record the old source address, which is now the public releases repository.
+      source: [settings.updates.source.trim() || this.installed?.source || ""].map((x) => (FORMER_SOURCE.test(x) ? DEV_SOURCE : x))[0],
       branch: settings.updates.branch.trim() || this.installed?.branch || "master",
     };
   }

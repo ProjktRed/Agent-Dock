@@ -1,7 +1,7 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "Agent Dock: Windows command center for the Codex ↔ Cline automation loop",
   "private": true,
   "license": "MIT",
