@@ -85,6 +85,11 @@ export interface DesktopApi {
   pickTaskFile(): Promise<string | null>;
   inspectDirectory(dir: string): Promise<DirectoryInspection>;
   addProject(request: AddProjectRequest): Promise<Project>;
+  /** Writes nothing: returns the generated IMPLEMENTATION_PLAN.md text for review. */
+  generatePlan(projectId: string, cliId: string, model: string | null): Promise<string>;
+  cancelPlan(projectId: string): Promise<void>;
+  /** Writes the reviewed plan (never over an existing one) and commits only that file in a Git repo. */
+  savePlan(projectId: string, text: string): Promise<{ committed: boolean }>;
   updateProject(project: Project): Promise<Project[]>;
   removeProject(id: string, deleteHistory: boolean): Promise<Project[]>;
   setActiveProject(id: string | null): Promise<void>;

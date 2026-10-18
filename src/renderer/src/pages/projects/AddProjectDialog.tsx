@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { AddProjectRequest, DirectoryInspection, Project } from "@shared/types";
+import { useEffect, useState } from "react";
+import type { AddProjectRequest, CliConnection, DirectoryInspection, Project } from "@shared/types";
 import { cleanError, useApp } from "../../store";
 import { Modal, Spinner, St, Toggle } from "../../components/ui";
 
@@ -10,8 +10,74 @@ const MODES: { value: Mode; label: string; help: string }[] = [
   { value: "new", label: "New project", help: "Create an empty workspace, optionally with Git and a starter implementation plan." },
 ];
 
+const CLOUD_PLANNERS = ["codex", "claude"];
+const LOCAL_PLANNERS = ["llamacpp", "ollama", "openai"];
+const plannerModels = (c: CliConnection | undefined) => (c?.collected?.models ?? []).map((m) => m.id);
+
+/** After the project exists: generate a plan, let the user edit it, then write and commit it. Nothing is written before Save. */
+function PlanStep({ project, connection, model, onDone }: { project: Project; connection: CliConnection; model: string; onDone: () => void }) {
+  const [state, setState] = useState<"running" | "review" | "error">("running");
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [run, setRun] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setState("running"); setError(null); setElapsed(0);
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    window.api.generatePlan(project.id, connection.id, model || null)
+      .then((plan) => { if (live) { setText(plan); setState("review"); } })
+      .catch((e) => { if (live) { setError(cleanError(e)); setState("error"); } })
+      .finally(() => clearInterval(timer));
+    return () => { live = false; clearInterval(timer); };
+  }, [run]);
+  const phases = (text.match(/^##s+Phases+d+/gim) ?? []).length;
+  const tasks = (text.match(/^s*-s+[[ xX]]s+/gm) ?? []).length;
+  const save = async () => {
+    setSaving(true); setError(null);
+    try { await window.api.savePlan(project.id, text); onDone(); } catch (e) { setError(cleanError(e)); } finally { setSaving(false); }
+  };
+  return (
+    <div className="stack" style={{ gap: 14 }}>
+      <div className="row" style={{ gap: 8 }}>
+        <span className="grow" style={{ fontWeight: 600 }}>Implementation plan for {project.name}</span>
+        <span className="sub">Planner: {connection.name}{model ? ` · ${model}` : ""}</span>
+      </div>
+      {state === "running" && (
+        <div className="well pad row" style={{ gap: 10, minHeight: 120 }}>
+          <Spinner /><span className="grow">Planning… {elapsed}s. {CLOUD_PLANNERS.includes(connection.kind) ? "The planner reads the workspace (read-only)." : "The planner gets the file list and README."}</span>
+          <button className="btn" onClick={() => { void window.api.cancelPlan(project.id); }}>Cancel planning</button>
+        </div>
+      )}
+      {state === "review" && (
+        <>
+          <textarea className="ta mono" style={{ minHeight: 320 }} value={text} onChange={(e) => setText(e.target.value)} aria-label="Generated implementation plan" />
+          <span className="sub">{phases} phase(s) · {tasks} task(s). Edit freely; each phase needs “## Phase N — Title” and “- [ ]” tasks. Save writes IMPLEMENTATION_PLAN.md{project.path ? " and commits only that file in a Git repository" : ""}.</span>
+        </>
+      )}
+      {error && <div className="banner errb" role="alert"><span className="err">{error}</span></div>}
+      <div className="row" style={{ gap: 8 }}>
+        <span className="grow" />
+        <button className="btn ghost" disabled={saving} onClick={onDone}>Skip plan</button>
+        {state !== "running" && <button className="btn" disabled={saving} onClick={() => setRun(run + 1)}>Regenerate</button>}
+        {state === "review" && <button className="btn primary" disabled={saving || !phases || !tasks} onClick={() => void save()}>{saving && <Spinner />}Save plan</button>}
+      </div>
+    </div>
+  );
+}
+
 export function AddProjectDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (p: Project) => void }) {
   const { snap } = useApp();
+  const planners = snap.clis.filter((c) => CLOUD_PLANNERS.includes(c.kind) || LOCAL_PLANNERS.includes(c.kind));
+  const [makePlan, setMakePlan] = useState(false);
+  const [plannerId, setPlannerId] = useState(planners[0]?.id ?? "");
+  const [plannerModel, setPlannerModel] = useState("");
+  const [planning, setPlanning] = useState<Project | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const planner = planners.find((c) => c.id === plannerId);
+  const local = Boolean(planner && LOCAL_PLANNERS.includes(planner.kind));
   const [mode, setMode] = useState<Mode>("local");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,9 +106,12 @@ export function AddProjectDialog({ onClose, onAdded }: { onClose: () => void; on
 
   const name = mode === "local" ? localName : mode === "github" ? ghName : newName;
   const duplicate = snap.projects.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+  const offerPlan = mode !== "local" || Boolean(inspection && !inspection.planFile);
+  const planning_ = makePlan && offerPlan;
   const ready =
     !duplicate &&
     name.trim() &&
+    (!planning_ || (Boolean(planner) && objective.trim() && (!local || plannerModel.trim() || planner?.defaultModel))) &&
     (mode === "local" ? Boolean(inspection?.exists) : mode === "github" ? /^(https:\/\/|git@)/.test(url.trim()) && ghParent : Boolean(newParent));
 
   const submit = async () => {
@@ -53,15 +122,30 @@ export function AddProjectDialog({ onClose, onAdded }: { onClose: () => void; on
         ? { mode, path: inspection!.path, name: localName, objective }
         : mode === "github"
           ? { mode, url, branch, parentDir: ghParent, name: ghName, objective }
-          : { mode, parentDir: newParent, name: newName, initGit, starterPlan, objective };
+          : { mode, parentDir: newParent, name: newName, initGit, starterPlan: starterPlan && !planning_, objective };
     try {
-      onAdded(await window.api.addProject(request));
+      const added = await window.api.addProject(request);
+      if (!planning_) return onAdded(added);
+      // A cloned repository may already have a plan: keep it and skip planning.
+      if ((await window.api.inspectDirectory(added.path)).planFile) {
+        setNotice("This repository already has IMPLEMENTATION_PLAN.md, so no plan was generated.");
+        return onAdded(added);
+      }
+      setPlanning(added);
     } catch (e) {
       setError(cleanError(e));
     } finally {
       setBusy(false);
     }
   };
+
+  if (planning) {
+    return (
+      <Modal label="Create implementation plan" wide onClose={() => { void window.api.cancelPlan(planning.id); onAdded(planning); }} title="Create implementation plan">
+        <PlanStep project={planning} connection={planner!} model={plannerModel.trim() || (local ? planner?.defaultModel ?? "" : "")} onDone={() => onAdded(planning)} />
+      </Modal>
+    );
+  }
 
   return (
     <Modal label="Add project" wide onClose={onClose} title={<>Add project<div className="sub" style={{ fontWeight: 400 }}>Registering never moves, rewrites or deletes existing files.</div></>}>
@@ -124,13 +208,35 @@ export function AddProjectDialog({ onClose, onAdded }: { onClose: () => void; on
                 </label>
               </div>
               <div className="setrow"><div className="grow"><div className="lt">Initialize Git repository</div><div className="ld">git init on main plus an initial commit, which the engine needs as a baseline</div></div><Toggle on={initGit} onChange={setInitGit} label="Initialize Git" /></div>
-              <div className="setrow"><div className="grow"><div className="lt">Add starter implementation plan</div><div className="ld">Creates IMPLEMENTATION_PLAN.md in the format the engine reads</div></div><Toggle on={starterPlan} onChange={setStarterPlan} label="Starter plan" /></div>
+              {!makePlan && <div className="setrow"><div className="grow"><div className="lt">Add starter implementation plan</div><div className="ld">Creates IMPLEMENTATION_PLAN.md in the format the engine reads</div></div><Toggle on={starterPlan} onChange={setStarterPlan} label="Starter plan" /></div>}
             </>
           )}
-          <label className="field"><span>Objective (optional, can be set later)</span><textarea className="ta" style={{ minHeight: 64 }} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="What should the automation work toward?" /></label>
+          {offerPlan && (
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="setrow"><div className="grow"><div className="lt">Create plan with a model</div><div className="ld">After the project is added, a planner writes IMPLEMENTATION_PLAN.md toward the objective. You review and edit it before anything is saved.</div></div><Toggle on={makePlan} onChange={setMakePlan} label="Create plan with a model" /></div>
+              {makePlan && (
+                <div className="grid-f">
+                  <label className="field"><span>Planner</span>
+                    <select className="sel" value={plannerId} onChange={(e) => { setPlannerId(e.target.value); setPlannerModel(""); }}>
+                      {!planners.length && <option value="">No planner connections (add one in CLIs)</option>}
+                      <optgroup label="Cloud (reads the workspace)">{planners.filter((c) => CLOUD_PLANNERS.includes(c.kind)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>
+                      <optgroup label="Local AI">{planners.filter((c) => LOCAL_PLANNERS.includes(c.kind)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>
+                    </select>
+                  </label>
+                  <label className="field"><span>Model{local ? "" : " (optional)"}</span>
+                    <input className="input mono" list="planner-models" value={plannerModel} onChange={(e) => setPlannerModel(e.target.value)} placeholder={planner?.defaultModel ?? (local ? "model id" : "CLI default")} />
+                    <datalist id="planner-models">{plannerModels(planner).map((m) => <option key={m} value={m} />)}</datalist>
+                  </label>
+                </div>
+              )}
+              {makePlan && mode === "github" && <span className="hint">Skipped if the repository already has IMPLEMENTATION_PLAN.md.</span>}
+            </div>
+          )}
+          <label className="field"><span>{planning_ ? "Objective (the planner plans toward it)" : "Objective (optional, can be set later)"}</span><textarea className="ta" style={{ minHeight: 64 }} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="What should the automation work toward?" /></label>
         </div>
       </div>
       {error && <div className="banner errb" role="alert"><span className="err">{error}</span></div>}
+      {notice && <div className="banner"><span>{notice}</span></div>}
       <div className="row">
         <span className="sub grow">{duplicate ? `A project named “${name}” is already registered.` : ""}</span>
         <button className="btn ghost" onClick={onClose}>Cancel</button>

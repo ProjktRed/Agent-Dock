@@ -14,6 +14,7 @@ import { countCompactions, implementationUsage, readActivity, readOrchestratorUs
 import { addProject, inspectDirectory, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
+import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
@@ -172,6 +173,7 @@ const project = (id: string) => {
   return p;
 };
 const agents = () => store.data.agents ?? [];
+const planners = new Map<string, AbortController>();
 
 function osNotify(title: string, body: string) {
   if (Notification.isSupported()) new Notification({ title, body, icon: appIcon(64) }).show();
@@ -494,6 +496,22 @@ function registerIpc() {
     await store.saveProjects();
     return p;
   });
+  // Planner: one run per project at a time; cancel aborts the HTTP call or stops the CLI.
+  handle("planner:generate", async (projectId: string, cliId: string, model: string | null) => {
+    const p = project(projectId);
+    const connection = store.data.clis.find((c) => c.id === cliId);
+    if (!connection || !(PLANNER_KINDS as readonly string[]).includes(connection.kind)) throw new Error("Choose a planner.");
+    planners.get(projectId)?.abort();
+    const controller = new AbortController();
+    planners.set(projectId, controller);
+    try {
+      return await generatePlan(p.path, p.objective, { connection, model: model?.trim() || null, apiKey: connection.kind === "openai" ? store.getSecret(connection.id) : null }, controller.signal);
+    } finally {
+      if (planners.get(projectId) === controller) planners.delete(projectId);
+    }
+  });
+  handle("planner:cancel", (projectId: string) => { planners.get(projectId)?.abort(); });
+  handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
     store.data.projects = store.data.projects.map((x) => (x.id === p.id ? p : x));
     await store.saveProjects();
