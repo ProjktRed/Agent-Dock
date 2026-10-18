@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Signed releases (0.22.1). The release workflow zips the Windows build and runs this script:
 //
 //   sign-release.mjs --zip <file.zip> --version <x.y.z> --commit <sha> --out <dir>

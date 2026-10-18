@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Replaces the installed app with a new build, after the running app has exited, then relaunches it.
 // Shipped inside the app (resources/scripts/swap.mjs) so a signed release can be installed without
 // Node.js on PATH: the downloaded app's own executable runs it with ELECTRON_RUN_AS_NODE=1, from the
