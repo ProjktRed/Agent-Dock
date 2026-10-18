@@ -79,7 +79,7 @@ jobs:
         run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath "AgentDock-$env:VERSION-win-x64.zip"
       - name: Dry run artifact
         if: env.DRY_RUN == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: AgentDock-${{ env.VERSION }}-dry-run
           path: |
