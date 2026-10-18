@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { redactText } from "./redact.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
@@ -63,6 +64,7 @@ export class ClaudeWorker extends CodexWorker {
   }
 
   async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+    prompt = redactText(prompt, { assignments: false });
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });

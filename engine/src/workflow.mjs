@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { clineHandoffSkill } from "./task-handoff-skill.mjs";
+import { redactText } from "./redact.mjs";
 
 /**
  * Deterministic CREATE / MODIFY status of each approved path, so the local worker
@@ -28,7 +29,7 @@ export function describeAllowedPaths(task, workspace) {
   return ["File status (computed by Node from git):", ...lines].join("\n");
 }
 
-export function buildCorrectionPrompt(task, qaOutput, attempt, codexCorrection = "", strategyRevision = false, { workspace } = {}) {
+function correctionPromptText(task, qaOutput, attempt, codexCorrection = "", strategyRevision = false, { workspace } = {}) {
   return [
     `Correction for task ${task.id} (attempt ${attempt + 1}):`,
     "Next bounded correction:",
@@ -50,7 +51,7 @@ export function buildCorrectionPrompt(task, qaOutput, attempt, codexCorrection =
   ].filter(Boolean).join("\n\n");
 }
 
-export function buildInitialPrompt(task, { workspace } = {}) {
+function initialPromptText(task, { workspace } = {}) {
   const allowed = task.allowedPaths?.length
     ? `Change only these Codex-approved paths: ${task.allowedPaths.join(", ")}.`
     : "Change only files required by this task.";
@@ -167,3 +168,7 @@ export async function runTask({
   }
   return runAttempts({ task, worker, runQa, prepare, onEvent, shouldStop });
 }
+
+// Every implementation prompt (Cline, OpenCode, Codex or Claude Code) leaves the machine without known secrets.
+export const buildCorrectionPrompt = (...args) => redactText(correctionPromptText(...args), { assignments: false });
+export const buildInitialPrompt = (...args) => redactText(initialPromptText(...args), { assignments: false });

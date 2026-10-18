@@ -473,6 +473,7 @@ function Safety() {
             "Failed work is left in place for inspection, never reset or committed automatically",
             "A dirty baseline after a crash blocks automatic restart",
             "Usage-limit failures wait for Resume instead of counting as QA failures",
+            "Saved keys, tokens and webhook URLs, and well-known credential formats, are hidden before anything is logged, notified or sent to a model",
           ].map((t) => <li key={t}><St kind="done" /><span>{t}</span></li>)}
         </ul>
       </section>

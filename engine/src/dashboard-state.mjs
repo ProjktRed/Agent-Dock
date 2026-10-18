@@ -7,6 +7,7 @@ import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } fro
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
 import { selectedAutoSkills } from './task-handoff-skill.mjs';
 import { appendAction, flushActionLog } from './action-log.mjs';
+import { redactDeep } from './redact.mjs';
 export { flushActionLog };
 
 async function readJson(file, fallback) {
@@ -94,6 +95,7 @@ export class DashboardState {
   }
 
   async record(event) {
+    event = redactDeep(event);
     this.live ??= await this.readLive();
     const next = { ...this.live, updatedAt: new Date().toISOString() };
     if(event.type==='recovery-state') {
@@ -250,7 +252,7 @@ export class DashboardState {
   async appendEvent(event) {
     await mkdir(this.stateDir, { recursive: true });
     const currentTaskId = (await this.readLive())?.task?.id;
-    const entry = { timestamp: new Date().toISOString(), taskId: currentTaskId, ...event };
+    const entry = redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event });
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
     // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.
     await appendAction(this.stateDir, entry).catch((error) => diagnostic("ACTION_LOG_WRITE_FAILED", { message: error.message }));

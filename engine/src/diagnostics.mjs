@@ -1,8 +1,11 @@
+import { redactText } from "./redact.mjs";
+
 const installed = Symbol.for("agent-dock-engine.process-diagnostics");
 
 export function diagnostic(type, fields = {}) {
   const entry = { timestamp: new Date().toISOString(), diagnostic: type, ...fields };
-  process.stderr.write(`${JSON.stringify(entry)}\n`);
+  // The engine log is kept and shown in the app: no secrets in it.
+  process.stderr.write(`${redactText(JSON.stringify(entry))}\n`);
 }
 
 export function installTopLevelDiagnostics() {

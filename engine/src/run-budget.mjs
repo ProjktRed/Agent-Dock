@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { flushActionLog, verifyActionLog } from "./action-log.mjs";
+import { redactText } from "./redact.mjs";
 
 // Unattended mode: run-wide limits the engine enforces itself. A limit asks for Stop, so the loop ends at
 // its next safe point (never mid-task), and the end-of-run report says which limit ended it.
@@ -162,6 +163,7 @@ export async function writeRunReport(stateDir, result) {
     // The chain head at the end of the run: a log later cut short no longer reaches this entry.
     actionLog: await flushActionLog().then(() => verifyActionLog(stateDir)).catch((error) => ({ ok: false, reason: error.message })),
   };
+  report.reason = redactText(String(report.reason ?? ""));
   await atomicWriteJson(path.join(stateDir, "run-report.json"), report);
   const line = (label, value) => `- ${label}: ${value}`;
   await writeFile(path.join(stateDir, "run-report.md"), [

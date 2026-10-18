@@ -1,4 +1,5 @@
 import { diagnostic } from "./diagnostics.mjs";
+import { redactText } from "./redact.mjs";
 
 // Remote notification channels the engine sends itself, so an unattended run reaches you even when
 // the app is closed. The app passes them in AGENT_DOCK_NOTIFY (never on the command line: webhook
@@ -90,7 +91,7 @@ export function notifyFromEnv(env = process.env) {
  */
 export function notify({ type, title, message, urgent = false }) {
   if (type === "supervisor-digest" && !config.digests) return;
-  const note = { project: config.project, type, title, message, at: new Date().toISOString() };
+  const note = { project: config.project, type, title: redactText(String(title ?? "")), message: redactText(String(message ?? "")), at: new Date().toISOString() };
   for (const kind of CHANNELS) {
     if (!config[kind] || (kind === "email" && !urgent && !EMAIL_TYPES.has(type))) continue;
     const request = sendChannel(kind, config[kind], note)

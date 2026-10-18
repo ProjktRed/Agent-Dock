@@ -7,6 +7,7 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, taskSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
 
@@ -237,6 +238,7 @@ export class CodexWorker {
   }
 
   async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+    prompt = redactText(prompt, { assignments: false });
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
