@@ -146,5 +146,6 @@ test('Codex skill scan skips broken links and non-folder skill paths instead of 
  await rm(path.join(workspace,'.cline','skills'),{recursive:true,force:true});
  await writeFile(path.join(workspace,'.cline','skills'),'not a folder');
  const disabled=disabledPaths(codexSkillArgs({workspace,env}));
- for(const file of files.filter(f=>!f.includes(path.join(workspace,'.cline'))))assert.ok(disabled.includes(file),file);
+ const cline=path.join(await realpath(workspace),'.cline');
+ for(const file of files.filter(f=>!f.includes(cline)))assert.ok(disabled.includes(file),file);
 });

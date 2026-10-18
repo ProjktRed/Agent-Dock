@@ -3,6 +3,10 @@ import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+// The native form expands Windows short (8.3) names such as C:\Users\RUNNER~1, so the paths given to
+// Codex match its own canonical paths; the JavaScript form leaves them short.
+const canonicalPath = (p) => realpathSync.native(p);
+
 export const claudeSkillArgs = ['--disable-slash-commands'];
 const UNREADABLE = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP']);
 
@@ -24,7 +28,7 @@ export function codexSkillArgs({workspace, env = process.env}) {
   function scan(dir) {
     // Codex cannot load a skill it cannot read either: skip missing, broken or unreadable entries.
     let canonical, entries;
-    try { canonical = realpathSync(dir); }
+    try { canonical = canonicalPath(dir); }
     catch (error) { if (UNREADABLE.has(error.code)) return; throw error; }
     if (visited.has(canonical)) return;
     visited.add(canonical);
@@ -36,7 +40,7 @@ export function codexSkillArgs({workspace, env = process.env}) {
       try { stat = entry.isSymbolicLink() ? statSync(file) : entry; }
       catch (error) { if (UNREADABLE.has(error.code)) continue; throw error; }
       if (stat.isDirectory()) scan(file);
-      else if (entry.name === 'SKILL.md' && stat.isFile()) skills.add(realpathSync(file));
+      else if (entry.name === 'SKILL.md' && stat.isFile()) skills.add(canonicalPath(file));
     }
   }
   for (const root of roots) scan(root);
