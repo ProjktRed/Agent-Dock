@@ -1,0 +1,72 @@
+# Signed release: pushing a tag vX.Y.Z (matching package.json) builds the Windows app, zips it,
+# signs a manifest with the RELEASE_SIGNING_KEY secret (Ed25519) and publishes a GitHub Release.
+# Installed apps on the "release" update channel verify that signature before installing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Signing key and version
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_KEY" || { echo "::error::Add the repository secret RELEASE_SIGNING_KEY (see scripts/sign-release.mjs)"; exit 1; }
+          version=$(node -p "require('./package.json').version")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Git identity for test repositories
+        run: |
+          git config --global user.email "ci@agent-dock.invalid"
+          git config --global user.name "Agent Dock CI"
+          git config --global init.defaultBranch master
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:engine
+      - name: Icon
+        run: node -e "import('./scripts/logo.mjs').then(m=>{require('fs').mkdirSync('build',{recursive:true});require('fs').writeFileSync('build/icon.png',m.logoPng(256))})"
+      - name: Build
+        env:
+          AGENT_DOCK_BUILD_SOURCE: https://github.com/${{ github.repository }}
+          AGENT_DOCK_BUILD_BRANCH: release
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run package
+      - name: Packaged security (fuses, bundled Node, debug switches refused)
+        run: node scripts/verify-packaged-security.mjs dist/win-unpacked/AgentDock.exe
+      - name: Swap script is bundled
+        shell: bash
+        run: test -f dist/win-unpacked/resources/scripts/swap.mjs
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/win-unpacked/* -DestinationPath "AgentDock-$env:VERSION-win-x64.zip"
+      - name: Sign
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out .
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --generate-notes

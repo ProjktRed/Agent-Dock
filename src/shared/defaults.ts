@@ -85,7 +85,7 @@ export const DEFAULT_SETTINGS: Settings = {
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
   tuning: { elevationAfter: 3, resolverMaxStrategies: 3, maxCorrections: 0, taskMaxFiles: 1, taskMaxNewLines: 200, taskMaxReadFiles: 3, defaultContextTokens: null, defaultMaxOutputTokens: null },
-  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "" },
+  updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "", channel: "git", releaseRepo: "ProjktRed/Agent-Dock" },
   onboardingComplete: false,
   activeProjectId: null,
 };

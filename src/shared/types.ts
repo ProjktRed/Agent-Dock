@@ -218,6 +218,10 @@ export interface Settings {
     importedDirs: string[];
   };
   updates: {
+    /** git: build from the source repository (developers). release: signed GitHub Releases, verified by the app. */
+    channel?: "git" | "release";
+    /** owner/name of the repository whose releases to install. */
+    releaseRepo?: string;
     autoCheck: boolean;
     autoInstall: boolean;
     /** Minutes between background checks while the app runs (also on window focus); 0 = launch only. */

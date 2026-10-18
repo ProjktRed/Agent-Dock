@@ -5,6 +5,8 @@ import path from "node:path";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
+import { checkRelease, downloadRelease, extractRelease, launchSwap, type ReleaseInfo } from "./release-channel";
+import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
 const STAGING = path.join(path.dirname(path.dirname(process.execPath)), "Updates");
@@ -20,6 +22,7 @@ export class Updater {
   status: UpdateStatus;
   private building = false;
   private muted = false;
+  private release: ReleaseInfo | null = null;
 
   constructor(
     private readonly packaged: boolean,
@@ -28,6 +31,9 @@ export class Updater {
     private readonly resolveNode: () => Promise<string | null>,
     /** A portable copy (portable.json) with updates off: never checks, builds or swaps. */
     private readonly portableNoUpdates = false,
+    /** The installed version (package.json); the signed release channel only installs newer ones. */
+    private readonly appVersion = "0.0.0",
+    private readonly releaseKey = RELEASE_PUBLIC_KEY,
   ) {
     this.status = { state: portableNoUpdates ? "portable" : installed && packaged ? "idle" : "dev", installed, source: installed?.source ?? "", branch: installed?.branch ?? "", latest: null, commits: [], checkedAt: null, error: null, log: [] };
   }
@@ -100,6 +106,7 @@ export class Updater {
       this.set({ state: "dev", source, branch, error: null });
       return this.status;
     }
+    if (settings.updates.channel === "release") return this.probeRelease(settings, quiet);
     if (!source) {
       this.set({ state: "error", error: "No update source configured." });
       return this.status;
@@ -138,6 +145,51 @@ export class Updater {
     return logResult.code === 0 ? parseLog(logResult.stdout) : [];
   }
 
+  /** Signed release channel: the newest GitHub Release, verified against the built-in release key. */
+  private async probeRelease(settings: Settings, quiet: boolean): Promise<UpdateStatus> {
+    const repo = settings.updates.releaseRepo?.trim() || "ProjktRed/Agent-Dock";
+    if (!quiet) this.set({ state: "checking", source: `github.com/${repo} (signed releases)`, branch: "", error: null });
+    try {
+      this.release = await checkRelease(repo, this.appVersion, this.releaseKey);
+    } catch (error) {
+      this.release = null;
+      this.set({ state: "error", checkedAt: new Date().toISOString(), error: (error as Error).message });
+      return this.status;
+    }
+    if (!this.release) {
+      this.set({ state: "up-to-date", latest: { commit: this.installed!.commit, subject: this.installed!.subject }, commits: [], checkedAt: new Date().toISOString() });
+      return this.status;
+    }
+    const m = this.release.manifest;
+    this.set({ state: "available", latest: { commit: m.commit, subject: `Signed release ${m.version}`, version: m.version }, commits: [{ hash: m.commit, subject: this.release.notes.split(/\r?\n/).find((l) => l.trim())?.slice(0, 200) ?? `Release ${m.version}`, date: m.builtAt, body: this.release.notes.slice(0, 4000) }], checkedAt: new Date().toISOString() });
+    return this.status;
+  }
+
+  /** Download, verify, extract and hand off to the new app's swap; no Node.js or git needed. */
+  private async applyRelease(onReadyToQuit: () => void): Promise<void> {
+    const info = this.release!;
+    this.building = true;
+    this.set({ state: "building", log: [], error: null });
+    try {
+      const dir = path.join(STAGING, "release");
+      this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
+      const zip = await downloadRelease(info, dir);
+      this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      const unpacked = await extractRelease(zip, path.join(dir, info.manifest.version));
+      this.append(`Extracted to ${unpacked}.`);
+      this.set({ state: "ready" });
+      const fd = openSync(path.join(STAGING, "swap.log"), "a");
+      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd }); }
+      finally { closeSync(fd); }
+      onReadyToQuit();
+    } catch (error) {
+      this.set({ state: "error", error: (error as Error).message });
+      throw error;
+    } finally {
+      this.building = false;
+    }
+  }
+
   /** package.json version at a commit already fetched into the staging clone. */
   private async versionAt(commit: string): Promise<string | null> {
     const shown = await run("git", ["show", `${commit}:package.json`], { cwd: REPO });
@@ -157,6 +209,10 @@ export class Updater {
     if (!this.packaged || !this.installed) throw new Error("Updates apply to the installed app only.");
     if (this.building) throw new Error("An update is already being built.");
     if (this.status.state !== "available" || !this.status.latest) throw new Error("No update available. Check for updates first.");
+    if (settings.updates.channel === "release") {
+      if (!this.release) throw new Error("No verified release. Check for updates first.");
+      return this.applyRelease(onReadyToQuit);
+    }
     const node = await this.resolveNode();
     if (!node) throw new Error("Building an update needs Node.js and npm on PATH.");
     const { source, branch } = this.target(settings);

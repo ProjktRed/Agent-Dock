@@ -20,6 +20,8 @@ export function Updates() {
   const status = useUpdateStatus();
   const [source, setSource] = useState(u.source);
   const [branch, setBranch] = useState(u.branch);
+  const [releaseRepo, setReleaseRepo] = useState(u.releaseRepo ?? "ProjktRed/Agent-Dock");
+  const release = u.channel === "release";
   const patch = (next: Partial<typeof u>) => saveSettings({ ...snap.settings, updates: { ...u, ...next } });
   if (!status) return <div className="skel" style={{ width: "40%" }} />;
   const dev = status.state === "dev" || status.state === "portable";
@@ -84,12 +86,24 @@ export function Updates() {
           </select>
         </SetRow>
         <SetRow title="Install without asking" desc="Builds and restarts automatically when no automation is running; otherwise asks" support="app"><Toggle on={u.autoInstall} onChange={(v) => patch({ autoInstall: v })} label="Install automatically" disabled={!u.autoCheck} /></SetRow>
+        <SetRow title="Update channel" desc="Signed releases: built by GitHub Actions, installed only when the release signature matches the key built into this app; needs no Node.js or git. Source: builds the newest commit of a branch on this PC (developers; needs Node.js, npm and git)." support="app">
+          <select className="sel" value={release ? "release" : "git"} aria-label="Update channel" onChange={(e) => patch({ channel: e.target.value as "git" | "release" })}>
+            <option value="git">Source (build from git)</option>
+            <option value="release">Signed releases</option>
+          </select>
+        </SetRow>
+        {release ? (
+          <SetRow title="Release repository" desc="owner/name on GitHub. Its releases must be public and signed by the Agent Dock release key." support="app">
+            <input className="input mono" style={{ width: 240 }} value={releaseRepo} onChange={(e) => setReleaseRepo(e.target.value)} onBlur={() => releaseRepo.trim() !== (u.releaseRepo ?? "") && patch({ releaseRepo: releaseRepo.trim() })} aria-label="Release repository" />
+          </SetRow>
+        ) : (<>
         <SetRow title="Update source" desc={`A GitHub URL (https://github.com/owner/repo.git) or a local repository path. Empty uses ${status.installed?.source || "the build's source"}.`} support="app">
           <input className="input mono" style={{ width: 300 }} value={source} placeholder={status.installed?.source ?? "https://github.com/owner/repo.git"} onChange={(e) => setSource(e.target.value)} onBlur={() => source !== u.source && patch({ source: source.trim() })} aria-label="Update source" />
         </SetRow>
         <SetRow title="Branch" desc="Only committed history on this branch is used" support="app">
           <input className="input mono" style={{ width: 160 }} value={branch} placeholder={status.installed?.branch ?? "master"} onChange={(e) => setBranch(e.target.value)} onBlur={() => branch !== u.branch && patch({ branch: branch.trim() })} aria-label="Update branch" />
         </SetRow>
+        </>)}
       </section>
     </div>
   );
