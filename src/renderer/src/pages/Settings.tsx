@@ -158,6 +158,10 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
         {preview && (
           <>
             <div className={`banner ${preview.trusted ? "" : "warnb"}`}><Icon name={preview.trusted ? "lock" : "warn"} className={preview.trusted ? "info" : "warn"} /><span><span className="mono">{preview.owner}/{preview.repo}</span> at commit <span className="mono">{preview.commit.slice(0, 7)}</span>{preview.trusted ? " · trusted library" : " · not a trusted library: read every file before importing"}</span></div>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="sub grow">{preview.browse ? `${preview.skills.length} skills in this library. Choose up to 60 to download and review.` : `${importable.length} of ${preview.skills.length} can be imported.`}{chosen.length ? ` ${chosen.length} selected.` : ""}</span>
+              <button className="btn sm" onClick={() => setChosen(chosen.length ? [] : preview.browse ? preview.skills.slice(0, 60).map((sk) => sk.path) : importable.map((sk) => sk.name))}>{chosen.length ? "Select none" : preview.browse && preview.skills.length > 60 ? "Select first 60" : "Select all"}</button>
+            </div>
             <section className="well" style={{ padding: 6, maxHeight: 340, overflowY: "auto" }}>
               {preview.skills.map((sk) => {
                 const blocked = sk.findings.some((x) => x.level === "block");
@@ -177,9 +181,7 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
             </section>
             {warned && <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed the warnings and want to import these skills.</span></label>}
             <div className="row" style={{ gap: 8 }}>
-              {preview.browse
-                ? <span className="sub grow">{preview.skills.length} skills in this library. Choose up to 60 to download and review · <button className="btn ghost sm" onClick={() => setChosen(chosen.length ? [] : preview.skills.slice(0, 60).map((sk) => sk.path))}>{chosen.length ? "Select none" : preview.skills.length > 60 ? "Select first 60" : "Select all"}</button></span>
-                : <span className="sub grow">{importable.length} of {preview.skills.length} can be imported · <button className="btn ghost sm" onClick={() => setChosen(chosen.length === importable.length ? [] : importable.map((sk) => sk.name))}>{chosen.length === importable.length ? "Select none" : "Select all"}</button></span>}
+              <span className="grow" />
               <button className="btn" onClick={onClose}>Cancel</button>
               {preview.browse
                 ? <button className="btn primary" disabled={busy || !chosen.length || chosen.length > 60} onClick={() => void load(preview.url, chosen)}>Review {chosen.length || ""}</button>
