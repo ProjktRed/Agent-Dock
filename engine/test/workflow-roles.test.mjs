@@ -199,6 +199,29 @@ test('cloud implementation worker returns the final message as its summary and n
   assert.ok(spawned[0].args.includes('Edit(./src/x.js)'));
 });
 
+test('a Claude implementation reports the protection hook refusals in Activity, as Codex does', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'claude-deny-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { readdirSync, writeFileSync } = await import('node:fs');
+  const spawnProcess = () => {
+    const child = new EventEmitter();
+    child.pid = 7; child.exitCode = null;
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { end: () => setImmediate(() => {
+      // The real hook appends one line per decision next to the prompt.
+      const invocation = path.join(root, 'codex', readdirSync(path.join(root, 'codex'))[0]);
+      writeFileSync(path.join(invocation, 'scope-hook.ndjson'), JSON.stringify({ tool:'Read', allowed:false, reason:'Protected-path policy refused this tool call' }) + '\n' + JSON.stringify({ tool:'Edit', allowed:true, reason:null }) + '\n');
+      child.stdout.emit('data', JSON.stringify({ type:'result', is_error:false, result:'Done.' }) + '\n'); child.exitCode = 0; child.emit('close', 0);
+    }) });
+    return child;
+  };
+  const events = [];
+  const worker = new CloudImplementationWorker({ cli:'claude', stateDir:root, workspace:root, command:'claude', model:'haiku', spawnProcess });
+  const result = await worker.run('Add x', { task, onEvent: async (e) => events.push(e) });
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(events.filter(e => e.type === 'implementation-scope-blocked'), [{ type:'implementation-scope-blocked', tool:'Read', reason:'Protected-path policy refused this tool call' }]);
+});
+
 test('Codex implementation runs with the engine-written scope hook and refuses tool use the hook never saw', async t => {
   const { codexScopeHookArgs, codexUsedTools } = await import('../src/cloud-impl-worker.mjs');
   const args = codexScopeHookArgs({ nodePath:'C:\node\node.exe', hookScript:'C:\e\hook.mjs', policyFile:'C:\s\p.json', logFile:'C:\s\l.ndjson' });

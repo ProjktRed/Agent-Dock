@@ -143,9 +143,10 @@ export class CloudImplementationWorker {
     noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout));
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };
     let summary = "";
+    // Both CLIs log every protection decision next to the prompt; refusals show in Activity.
+    const decisions = (await readFile(hookLog, "utf8").catch(() => "")).split(/\r?\n/).filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+    for (const blocked of decisions.filter((d) => !d.allowed)) await onEvent({ type: "implementation-scope-blocked", tool: blocked.tool, reason: blocked.reason });
     if (this.cli === "codex") {
-      const decisions = (await readFile(hookLog, "utf8").catch(() => "")).split(/\r?\n/).filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
-      for (const blocked of decisions.filter((d) => !d.allowed)) await onEvent({ type: "implementation-scope-blocked", tool: blocked.tool, reason: blocked.reason });
       // Fail closed: tool use without a single hook decision means the scope hook did not run.
       if (codexUsedTools(stdout) && !decisions.length) throw new Error(CODEX_FAIL_CLOSED);
       const limit = detectCodexUsageLimit(stdout + "\n" + stderr);
