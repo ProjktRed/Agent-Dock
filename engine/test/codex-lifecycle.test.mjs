@@ -113,8 +113,9 @@ test("real child processes: assessment/FAIL/PASS exit fully before every fake Cl
           clineRuns++;
           prompts.push(prompt);
           assert.equal(codex.activeCount, 0);
-          // A separate fake Cline process checks the OS, repeatedly, during its run.
-          const code = `const fs=require('fs'); const pids=JSON.parse(fs.readFileSync(process.argv[1])); let n=0; const timer=setInterval(()=>{ for(const pid of pids){try{process.kill(pid,0);process.exit(9)}catch(e){if(e.code!=='ESRCH')process.exit(10)}} if(++n===5){clearInterval(timer);process.exit(0)}},20);`;
+          // A separate fake Cline process checks, repeatedly during its run, that no fake Codex process
+          // is still alive: each one keeps a marker file for exactly its life (PIDs are reused on Windows).
+          const code = `const fs=require('fs'),path=require('path'); const base=process.argv[1],dir=path.dirname(base),prefix=path.basename(base)+'.alive-'; let n=0; const timer=setInterval(()=>{ if(fs.readdirSync(dir).some(f=>f.startsWith(prefix)))process.exit(9); if(++n===8){clearInterval(timer);process.exit(0)}},20);`;
           const exit = await new Promise((resolve, reject) => {
             const child = spawn(process.execPath, ["-e", code, pids], { windowsHide: true });
             child.on("error", reject);
@@ -129,7 +130,7 @@ test("real child processes: assessment/FAIL/PASS exit fully before every fake Cl
       readControl: async () => ({}),
       onEvent: async (event) => events.push(event.type),
     });
-    assert.equal(result.status, "done");
+    assert.equal(result.status, "done", JSON.stringify(result).slice(0, 600));
     assert.equal(clineRuns, 2);
     assert.equal(assessments, 2);
     assert.equal(reviews, 2);

@@ -157,6 +157,10 @@ try {
   process.exitCode = 1;
 } finally {
   if (deadline) clearTimeout(deadline);
+  // A run that ends right after an approval (a task limit, Stop) applies its plan check-offs and approved plan changes now (clean tree only).
+  // Never while a task is in progress: an extra commit would move HEAD under its recovery.
+  const current = await readFile(path.join(stateDir, "current-task.json"), "utf8").then(JSON.parse, () => null);
+  if (!current || current.automation?.recovery?.phase === "passed") await applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {});
   stopSupervisor();
   await awaitSupervisorReview();
   await flushNotifications();

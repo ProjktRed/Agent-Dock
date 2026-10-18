@@ -20,7 +20,7 @@ const IMPLEMENTATION_RULES = [
   "You are the implementation worker in a bounded automation loop. Implement only the task below.",
   "Do not commit, stage, stash, reset, checkout, rebase or otherwise change git HEAD or the index. QA owns acceptance and the single task commit.",
   "Change only the task's approved paths. Do not create helper or scratch files in the repository.",
-  "Run the task's check command before finishing, then reply with a short summary of what you changed and the check result.",
+  "Run the task's check command before finishing, exactly as written and on its own (no redirection, echo, ; or extra commands: the protection policy refuses anything else), then reply with a short summary of what you changed and the check result.",
 ].join("\n");
 
 export { claudeImplementationTools };

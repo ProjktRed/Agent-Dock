@@ -38,6 +38,6 @@ test('orchestrator roles may read history (messages and file names), never a pat
   const workspace=await mkdtemp(path.join(os.tmpdir(),'qa-log-'));t.after(()=>rm(workspace,{recursive:true,force:true}));
   const policy={workspace,protectedPaths:['.git/','.env*'],allowGitCommit:false};
   const ok=command=>protectedActionReason(policy,{kind:'command',tool:'Bash',commands:[command],cwd:workspace})===null;
-  for(const command of ['git log --oneline -5','git log --oneline -n 3','git log --stat 03dc596..HEAD','git show --stat HEAD','git show --name-only 3eafc11','git log --name-status HEAD~2..HEAD'])assert.equal(ok(command),true,`allowed: ${command}`);
-  for(const command of ['git log -p','git log --patch','git show HEAD','git show 3eafc11','git log --format=x','git show --stat HEAD -- .env','git show --stat HEAD HEAD~1','git log --all','git log -n','git log --output=x'])assert.equal(ok(command),false,`denied: ${command}`);
+  for(const command of ['git log --oneline -5','git log --oneline -n 3','git log --stat 03dc596..HEAD','git show --stat HEAD','git show --name-only 3eafc11','git log --name-status HEAD~2..HEAD','git stash list','cat a.txt; git ls-files; git stash list'])assert.equal(ok(command),true,`allowed: ${command}`);
+  for(const command of ['git log -p','git log --patch','git show HEAD','git show 3eafc11','git log --format=x','git show --stat HEAD -- .env','git show --stat HEAD HEAD~1','git log --all','git log -n','git log --output=x','git stash show -p','git stash pop','git stash list --format=x'])assert.equal(ok(command),false,`denied: ${command}`);
 });

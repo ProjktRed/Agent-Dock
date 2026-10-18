@@ -148,6 +148,8 @@ function commandSafe(policy,script,cwd) {
     if(['status','rev-parse','ls-files'].includes(words[0]))return words.every(w=>!w.includes('/')&&!w.includes('\\')&&!w.startsWith('.')||!isProtectedPath(policy,w,cwd));
     if(words[0]==='diff'&&words.length===2&&['--check','--stat','--numstat','--name-only'].includes(words[1]))return true;
     if(words[0]==='branch'&&words[1]==='--show-current'&&words.length===2)return true;
+    // Names of stashed work (a task set aside); never the stashed content.
+    if(words[0]==='stash'&&words[1]==='list'&&words.length===2)return true;
     // History without content: commit messages and file names, never a patch (it could show protected files).
     const REV=/^(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40})(?:\.\.(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40}))?$/;
     const LIST=new Set(['--oneline','--stat','--name-only','--name-status','--no-color','--decorate','--no-decorate']);
