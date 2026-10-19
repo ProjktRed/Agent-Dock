@@ -16,7 +16,7 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
-import { addProject, inspectDirectory, taskHistory } from "./projects";
+import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
 import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
@@ -754,7 +754,18 @@ function registerIpc() {
     await store.saveSettings();
     void pollOnce();
   });
-  handle("project:history", async (id: string) => taskHistory(await readActivity(project(id).stateDir, 20_000)));
+  handle("project:history", async (id: string) => {
+    const p = project(id), saved = await savedTaskIds(p.stateDir);
+    return taskHistory(await readActivity(p.stateDir, 20_000)).map((h) => ({ ...h, canRerun: canRerun(saved, h.taskId) }));
+  });
+  handle("project:rerunTask", async (id: string, taskId: string) => {
+    const p = project(id);
+    if (engine.isAlive(id)) throw new Error("Stop the automation first; the task runs again as the next start's first task.");
+    const file = await prepareRerun(p.stateDir, String(taskId));
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: file } : x));
+    await store.saveProjects();
+    await runControl(id, "start");
+  });
   handle("project:gitOwner", async (id: string) => {
     const problem = await sharedGitOwnerProblem(project(id).path);
     return problem ? { ...problem, command: ownerFixCommand(problem) } : null;

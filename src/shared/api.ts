@@ -64,6 +64,8 @@ export interface HistoryEntry {
   attempts: number;
   finishedAt: string;
   summary: string;
+  /** The engine kept this task's definition, so Run again is possible. */
+  canRerun?: boolean;
 }
 
 export interface Notice {
@@ -131,6 +133,8 @@ export interface DesktopApi {
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;
   history(projectId: string): Promise<HistoryEntry[]>;
+  /** Runs one task from the history again as the next start's first task. */
+  rerunTask(projectId: string, taskId: string): Promise<void>;
   /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
   gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;

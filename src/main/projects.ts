@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AddProjectRequest, DirectoryInspection, EngineEvent, Project } from "@shared/types";
 import { isGitRepo, run } from "./lib/git";
@@ -95,6 +95,31 @@ export interface TaskHistoryEntry {
 }
 
 /** Task outcomes from the engine's append-only activity log, newest first. */
+/** Same rule as engine/src/task-archive.mjs. */
+const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;
+
+/** Task ids whose definitions the engine kept (<state>/tasks), so they can run again. */
+export async function savedTaskIds(stateDir: string): Promise<Set<string>> {
+  const names = await readdir(path.join(stateDir, "tasks")).catch(() => [] as string[]);
+  return new Set(names.filter((n) => n.endsWith(".json")).map((n) => n.slice(0, -5)));
+}
+export const canRerun = (saved: Set<string>, taskId: string) => saved.has(taskFileName(taskId).slice(0, -5));
+
+/**
+ * Task history › Run again: copies the saved task under a new id (so it never collides with the old
+ * task's recovery state) to <state>/rerun-task.json, the one-shot first task of the next start.
+ */
+export async function prepareRerun(stateDir: string, taskId: string, now = Date.now()): Promise<string> {
+  let task: Record<string, unknown> | null = null;
+  try { task = JSON.parse(await readFile(path.join(stateDir, "tasks", taskFileName(taskId)), "utf8")); } catch { /* not kept */ }
+  if (!task || typeof task.prompt !== "string" || !Array.isArray(task.allowedPaths) || typeof task.qaCommand !== "string") throw new Error(`Task ${taskId} was not kept, so it cannot run again (tasks are kept from Agent Dock 0.34 on).`);
+  const base = String(task.id ?? taskId).replace(/-again-[a-z0-9]+$/, "");
+  const { savedAt: _savedAt, ...definition } = task;
+  const file = path.join(stateDir, "rerun-task.json");
+  await writeFile(file, JSON.stringify({ ...definition, id: `${base}-again-${now.toString(36)}`, name: `${String(task.name ?? base)} (again)` }, null, 2));
+  return file;
+}
+
 export function taskHistory(events: EngineEvent[]): TaskHistoryEntry[] {
   const outcomes: Record<string, TaskHistoryEntry["outcome"]> = {
     "qa-pass": "approved",

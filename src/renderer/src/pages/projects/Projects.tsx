@@ -89,7 +89,13 @@ function AgentsTab({ project }: { project: Project }) {
 }
 
 function HistoryTab({ project }: { project: Project }) {
+  const { toast, statuses } = useApp();
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  const running = statuses[project.id]?.processAlive === true;
+  const rerun = async (taskId: string) => {
+    try { await window.api.rerunTask(project.id, taskId); toast("success", `Running ${taskId} again`); }
+    catch (error) { toast("error", cleanError(error)); }
+  };
   useEffect(() => {
     void window.api.history(project.id).then(setHistory);
   }, [project.id]);
@@ -99,7 +105,7 @@ function HistoryTab({ project }: { project: Project }) {
   return (
     <div className="fade-in well scroll-x" style={{ padding: 6 }}>
       <table className="tbl" style={{ minWidth: 640 }}>
-        <thead><tr><th>Task</th><th>Outcome</th><th>Attempts</th><th>Summary</th><th>When</th></tr></thead>
+        <thead><tr><th>Task</th><th>Outcome</th><th>Attempts</th><th>Summary</th><th>When</th><th /></tr></thead>
         <tbody>
           {history.map((h) => (
             <tr key={h.taskId}>
@@ -108,6 +114,7 @@ function HistoryTab({ project }: { project: Project }) {
               <td className="mono">{h.attempts || "—"}</td>
               <td className="sub" style={{ maxWidth: 360 }}><span className="ellipsis" style={{ display: "block" }} title={h.summary}>{h.summary || "—"}</span></td>
               <td className="sub nowrap">{ago(h.finishedAt)}</td>
+              <td>{h.canRerun && <button className="btn sm" disabled={running} title={running ? "Stop the automation first" : "Run this task again with the same prompt, files and check"} onClick={() => void rerun(h.taskId)}>Run again</button>}</td>
             </tr>
           ))}
         </tbody>
