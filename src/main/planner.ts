@@ -18,7 +18,7 @@ export function buildPlannerPrompt(objective: string, context: string | null): s
   return [
     "You are the planner for an automation loop. Write the project's IMPLEMENTATION_PLAN.md for this objective:",
     "", objective.trim(), "",
-    context ? "The workspace was summarised for you below; plan around what already exists." : "Inspect the workspace (read-only) and plan around what already exists. Do not edit, create or delete any file.",
+    context ? "The workspace was summarised for you below: its file list, manifests and the start of its most relevant source files. Plan around what already exists, and name real files in tasks where you can." : "Inspect the workspace (read-only) and plan around what already exists. Do not edit, create or delete any file.",
     "",
     "Output only the Markdown file, in exactly this structure, nothing before or after it:",
     "# Implementation plan",
@@ -57,8 +57,33 @@ export function planProblem(text: string): string | null {
   return null;
 }
 
-/** File list and README for local planners, which cannot read the workspace themselves. */
-export async function workspaceSummary(workspace: string): Promise<string> {
+const MANIFESTS = ["README.md", "package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod", "composer.json", "Gemfile", "pom.xml", "build.gradle"];
+const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cs|rb|php|swift|c|cc|cpp|h|hpp|vue|svelte|html|css|scss|sql|sh|ps1|ya?ml|toml)$/i;
+const SKIP = /(^|\/)(node_modules|dist|out|build|vendor|\.git|\.venv|__pycache__|coverage|fixtures?)(\/|$)|\.min\.|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock)$|IMPLEMENTATION_PLAN\.md$/i;
+const ENTRY = /(^|\/)(index|main|app|cli|server|lib|mod|__init__)\.[a-z]+$/i;
+const EXCERPT_CHARS = 2_500;
+const EXCERPTS_CHARS = 20_000;
+
+/**
+ * Source files a local planner should read first: entry points, files whose path names a word from the
+ * objective, then shallow files. Tests and generated code come last.
+ */
+export function pickPlannerFiles(files: string[], objective: string, max = 12): string[] {
+  const words = [...new Set(objective.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) ?? [])];
+  const score = (file: string) => {
+    const lower = file.toLowerCase();
+    let s = 0;
+    if (ENTRY.test(file)) s += 6;
+    s += 4 * words.filter((w) => lower.includes(w)).length;
+    s -= file.split("/").length;
+    if (/(^|\/)(tests?|__tests__|spec)(\/|$)|\.(test|spec)\./i.test(file)) s -= 5;
+    return s;
+  };
+  return files.filter((f) => SOURCE.test(f) && !SKIP.test(f)).map((f) => ({ f, s: score(f) })).sort((a, b) => b.s - a.s || a.f.localeCompare(b.f)).slice(0, max).map((x) => x.f);
+}
+
+/** File list, manifests and excerpts of the most relevant source files, for local planners, which cannot read the workspace themselves. */
+export async function workspaceSummary(workspace: string, objective = ""): Promise<string> {
   const files: string[] = [];
   if (isGitRepo(workspace)) {
     const listed = await run("git", ["ls-files"], { cwd: workspace });
@@ -77,9 +102,18 @@ export async function workspaceSummary(workspace: string): Promise<string> {
     await walk(workspace, "", 0);
   }
   const parts = [files.length ? `Files (${files.length}${files.length > 300 ? ", first 300" : ""}):\n${files.slice(0, 300).join("\n")}` : "The workspace is empty."];
-  for (const name of ["README.md", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]) {
+  for (const name of MANIFESTS) {
     const file = path.join(workspace, name);
-    if (existsSync(file)) parts.push(`${name}:\n${(await readFile(file, "utf8").catch(() => "")).slice(0, name === "README.md" ? 4000 : 2000)}`);
+    if (existsSync(file)) parts.push(`${name}:\n${(await readFile(file, "utf8").catch(() => "")).slice(0, name === "README.md" ? 6000 : 2000)}`);
+  }
+  let budget = EXCERPTS_CHARS;
+  for (const rel of pickPlannerFiles(files, objective)) {
+    if (budget <= 0) break;
+    const text = await readFile(path.join(workspace, rel), "utf8").catch(() => "");
+    if (!text.trim() || text.includes("\u0000")) continue;
+    const excerpt = text.slice(0, Math.min(EXCERPT_CHARS, budget));
+    budget -= excerpt.length;
+    parts.push(`${rel}${excerpt.length < text.length ? ` (first ${excerpt.length} of ${text.length} characters)` : ""}:\n${excerpt}`);
   }
   return parts.join("\n\n");
 }
@@ -142,7 +176,7 @@ export async function callPlanner(workspace: string, objective: string, planner:
   if (!model) throw new Error("Choose the local model that should write the plan.");
   let base = connection.location.trim().replace(/\/+$/, "");
   if (kind === "ollama" && !/\/v1$/.test(base)) base += "/v1";
-  const prompt = buildPlannerPrompt(objective, await workspaceSummary(workspace)) + feedback;
+  const prompt = buildPlannerPrompt(objective, await workspaceSummary(workspace, objective)) + feedback;
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const res = await fetchImpl(`${base}/chat/completions`, {
     method: "POST",

@@ -22,21 +22,27 @@ export async function createPolicy(task,workspace,security={}){
   return policy;
 }
 
+// The real location of a path that may not exist yet: its closest existing parent resolved (junctions,
+// symlinks and Windows 8.3 short names such as C:UsersRUNNER~1 all become the long canonical form).
+async function canonicalPath(absolute){
+  let ancestor=absolute;
+  for(;;){try{return path.resolve(await realpath(ancestor),path.relative(ancestor,absolute));}catch(error){if(!['ENOENT','ENOTDIR'].includes(error.code))throw error;const parent=path.dirname(ancestor);if(parent===ancestor)return null;ancestor=parent;}}
+}
+
 export async function approvedPath(policy,file){
   if(typeof file!=='string'||!file.trim())return false;
   if(isProtectedPath(policy,file))return false;
-  const absolute=path.resolve(policy.workspace,file);
-  if(!within(policy.workspace,absolute))return false;
-  const scopes=[];
+  // Compare canonical forms only: a short or differently cased spelling of an allowed file is the same
+  // file, and creating a new file through a junction must not escape.
+  const destination=await canonicalPath(path.resolve(policy.workspace,file));
+  if(!destination||!within(policy.workspace,destination))return false;
   for(const scope of policy.allowedPaths){
-    const base=path.resolve(policy.workspace,scope);if(!within(policy.workspace,base)||base===policy.workspace)continue;
+    const lexical=path.resolve(policy.workspace,scope);if(!within(policy.workspace,lexical)||lexical===policy.workspace)continue;
+    const base=await canonicalPath(lexical);if(!base||!within(policy.workspace,base)||base===policy.workspace)continue;
     let directory=scope.endsWith('/');try{directory ||= (await lstat(base)).isDirectory();}catch(error){if(error.code!=='ENOENT')throw error;}
-    if(path.relative(base,absolute)===''||(directory&&within(base,absolute)))scopes.push({base,directory});
+    if(path.relative(base,destination)===''||(directory&&within(base,destination)))return true;
   }
-  if(!scopes.length)return false;
-  // Resolve the closest existing parent too: creating a new file through a junction must not escape.
-  let ancestor=absolute;
-  for(;;){try{const destination=path.resolve(await realpath(ancestor),path.relative(ancestor,absolute));return within(policy.workspace,destination)&&scopes.some(({base,directory})=>path.relative(base,destination)===''||(directory&&within(base,destination)));}catch(error){if(error.code!=='ENOENT')throw error;const parent=path.dirname(ancestor);if(parent===ancestor)return false;ancestor=parent;}}
+  return false;
 }
 
 export async function approvedCommand(policy,value){

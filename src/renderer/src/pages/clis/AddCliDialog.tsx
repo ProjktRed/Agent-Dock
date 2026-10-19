@@ -10,7 +10,7 @@ const TYPES: { kind: CliKind; label: string; desc: string; exe: boolean; default
   { kind: "cline", label: "Cline CLI", desc: "Implementation worker", exe: true, defaultLocation: "cline" },
   { kind: "opencode", label: "OpenCode", desc: "Implementation worker", exe: true, defaultLocation: "opencode" },
   { kind: "ollama", label: "Ollama", desc: "Local model runtime", exe: false, defaultLocation: "http://127.0.0.1:11434" },
-  { kind: "llamacpp", label: "llama.cpp server", desc: "OpenAI-compatible local server", exe: false, defaultLocation: "http://127.0.0.1:8081/v1" },
+  { kind: "llamacpp", label: "llama.cpp server", desc: "OpenAI-compatible local server", exe: false, defaultLocation: "http://127.0.0.1:8080/v1" },
   { kind: "openai", label: "OpenAI-compatible API", desc: "Any /v1 endpoint", exe: false, defaultLocation: "https://" },
 ];
 const STEPS = ["Type", "Location", "Settings", "Test", "Capabilities", "Save"];

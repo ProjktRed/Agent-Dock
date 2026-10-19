@@ -93,6 +93,22 @@ test("Cline context and timeout overrides reach the isolated CLI invocation", as
   } finally { await rm(stateDir, { recursive: true, force: true }); }
 });
 
+test("without llama.cpp counters (Ollama), Cline's final usage counts toward budgets", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "cline-ollama-usage-"));
+  try {
+    const worker = new ClineCliWorker({
+      stateDir, workspace: stateDir, provider: "ollama", model: "qwen", checkExternalBusy: async () => false,
+      launch: async () => ({ exitCode: 0, output: "done", runResult: { finishReason: "completed", usage: { inputTokens: 900, outputTokens: 120, cacheReadTokens: 100, totalCost: 0 } } }),
+    });
+    const { RUN, clineUsage } = await import("../src/run-budget.mjs");
+    const before = { ...RUN.usage };
+    await worker.run("task", { onEvent: async () => {} });
+    assert.deepEqual([RUN.usage.input - before.input, RUN.usage.cached - before.cached, RUN.usage.output - before.output], [1000, 100, 120]);
+    assert.equal(clineUsage({ finishReason: "completed" }), null);
+    assert.equal(clineUsage({ usage: { inputTokens: 1, outputTokens: 1 }, aggregateUsage: { inputTokens: 5, outputTokens: 2, totalCost: 0.25 } }).costUsd, 0.25);
+  } finally { await rm(stateDir, { recursive: true, force: true }); }
+});
+
 test("llama.cpp readiness and metrics are checked around every Cline attempt", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "cline-llamacpp-attempt-"));
   const events = [];
@@ -120,8 +136,12 @@ test("llama.cpp readiness and metrics are checked around every Cline attempt", a
       launch: async () => ({ exitCode: 0, output: "done", runResult: { finishReason: "completed" } }),
     });
 
+    const { RUN } = await import("../src/run-budget.mjs");
+    const usageBefore = { ...RUN.usage };
     await worker.run("first", { onEvent: async (event) => events.push(event) });
     await worker.run("second", { onEvent: async (event) => events.push(event) });
+    // Local tokens count toward token budgets: 200 prompt and 100 generated tokens per attempt.
+    assert.deepEqual([RUN.usage.input - usageBefore.input, RUN.usage.output - usageBefore.output], [400, 200]);
 
     assert.equal(readyChecks, 2);
     assert.equal(metricReads, 4);

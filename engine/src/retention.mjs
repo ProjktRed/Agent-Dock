@@ -1,4 +1,5 @@
-import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { replaceWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { ACTION_LOG, pruneActionLog, rotateActionLog } from "./action-log.mjs";
 

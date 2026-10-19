@@ -7,6 +7,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
 import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
+import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
 import { checkCli, detectOnPath, pickRunnable, whereAll } from "./lib/clis";
@@ -62,6 +63,9 @@ if (portable) {
   app.setPath("crashDumps", path.join(portable.data, "crash-dumps"));
   app.setAppLogsPath(path.join(portable.data, "logs"));
 }
+// Development runs (npm run dev) keep their own settings, projects and secrets, apart from an
+// installed copy's; --user-data-dir still picks any other folder.
+if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) app.setPath("userData", path.join(app.getPath("appData"), "Agent Dock Dev"));
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -649,14 +653,14 @@ function registerIpc() {
     const conn = store.data.clis.find((c) => c.id === id);
     if (!conn) throw new Error("Connection not found");
     if (conn.kind !== "llamacpp" && conn.kind !== "ollama") throw new Error("Only local providers list models here");
-    const collected = conn.kind === "ollama" ? await collectOllama(conn.location.replace(/\/$/, "")) : await collectLlamaCpp(conn, store.data.settings.advanced.llamaCppLauncher);
+    const collected = conn.kind === "ollama" ? await collectOllama(conn.location.replace(/\/$/, "")) : await collectLlamaCpp(conn, store.data.settings.advanced.llamaCppLauncher, undefined, pickRunnable(await whereAll("llama-server")));
     store.data.clis = store.data.clis.map((c) => (c.id === id ? { ...c, collected } : c));
     await store.saveClis();
     return snapshot().clis;
   });
   handle("cli:detectModelsDir", () => detectLlamaModelsDir(store.data.settings.advanced.llamaCppLauncher));
   handle("cli:delete", async (id: string) => {
-    store.data.clis = store.data.clis.filter((c) => c.id !== id || c.builtIn);
+    store.data.clis = store.data.clis.filter((c) => c.id !== id);
     await store.setSecret(id, null);
     await store.saveClis();
     return snapshot().clis;
@@ -672,6 +676,14 @@ function registerIpc() {
   handle("cli:healths", () => [...health.values()]);
   handle("cli:test", (cli: CliConnection, secret?: string | null) => checkCli(cli, secret ?? store.getSecret(cli.id)));
   handle("cli:detect", (command: string) => detectOnPath(command));
+  handle("cli:discover", async () => {
+    const found = await discoverClis(store.data.clis, systemProbes(whereAll));
+    if (found.length) {
+      store.data.clis = [...store.data.clis, ...found];
+      await store.saveClis();
+    }
+    return snapshot().clis;
+  });
   handle("dialog:directory", async (title: string) => {
     const result = await dialog.showOpenDialog(win!, { title, properties: ["openDirectory", "createDirectory"] });
     return result.canceled ? null : result.filePaths[0];
@@ -887,9 +899,14 @@ app.whenReady().then(async () => {
   updater = new Updater(app.isPackaged, await Updater.readBuildInfo(app.getAppPath()), (s) => send("update", s), async () => pickRunnable(await whereAll("node")), Boolean(portable && !portable.updates), app.getVersion());
   const preferred = store.data.settings.general.defaultProject;
   if (preferred !== "last" && store.data.projects.some((p) => p.id === preferred && !p.archived)) store.data.settings.activeProjectId = preferred;
+  if (store.fresh) {
+    store.data.clis = await discoverClis([], systemProbes(whereAll));
+    await store.saveClis();
+  }
   if (!store.data.agents) {
-    const m = engineInfo.orchestratorModels.codex;
-    store.data.agents = defaultAgents({ qa: m.qa ?? "", assessment: m.assessment ?? "", elevate: m.elevate ?? "", reasoning: m.reasoning ?? "" });
+    const found = foundTools(store.data.clis, await runningLocal(store.data.clis, systemProbes(whereAll)));
+    const m = found.orchestrator ? engineInfo.orchestratorModels[found.orchestrator] : {};
+    store.data.agents = defaultAgents({ qa: m.qa ?? "", assessment: m.assessment ?? "", elevate: m.elevate ?? "", reasoning: m.reasoning ?? "" }, found);
     await store.saveAgents();
   }
   stopAllPath = await writeStopLauncher().catch((error) => { console.error("Stop-all launcher not written", error); return ""; });

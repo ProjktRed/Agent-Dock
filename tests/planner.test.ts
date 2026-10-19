@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CliConnection } from "@shared/types";
-import { buildPlannerPrompt, cleanPlanText, generatePlan, planProblem, savePlan } from "../src/main/planner";
+import { buildPlannerPrompt, cleanPlanText, generatePlan, pickPlannerFiles, planProblem, savePlan, workspaceSummary } from "../src/main/planner";
 
 const GOOD = "# Implementation plan\n\n## Phase 1 — Setup\n- [ ] Add a package.json with a test script\n- [ ] Add src/index.js exporting add()\n\n## Phase 2 — Tests\n- [ ] Cover add() with node:test\n";
 const dirs: string[] = [];
@@ -49,6 +49,18 @@ describe("planner", () => {
     expect(requests[0].body.model).toBe("glm");
     expect(requests[0].body.messages[0].content).toContain("README.md:\nCalculator project");
     expect(requests[1].body.messages[0].content).toMatch(/previous answer could not be used/);
+  });
+
+  it("shows a local planner the start of the files that matter most for the objective", async () => {
+    expect(pickPlannerFiles(["docs/guide.md", "src/deep/nested/util.ts", "src/index.ts", "src/parser.ts", "test/parser.test.ts", "node_modules/x/index.js", "package-lock.json", "src/calc/parser-helpers.ts"], "Fix the parser for negative numbers", 3))
+      .toEqual(["src/index.ts", "src/parser.ts", "src/calc/parser-helpers.ts"]);
+    const ws = await tmp();
+    await writeFile(path.join(ws, "index.js"), "export const add = (a, b) => a + b;\n" + "// filler\n".repeat(1000));
+    await writeFile(path.join(ws, "notes.txt"), "not source");
+    const summary = await workspaceSummary(ws, "Add subtraction");
+    expect(summary).toContain("index.js (first 2500 of");
+    expect(summary).toContain("export const add");
+    expect(summary).not.toContain("notes.txt:\n");
   });
 
   it("fails clearly when the second answer is still unusable, and needs an objective and a local model", async () => {

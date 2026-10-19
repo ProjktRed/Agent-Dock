@@ -126,14 +126,14 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
     <div className="stack fade-in" style={{ gap: 12 }}>
       {cli.kind === "llamacpp" && (
         <div className="well pad stack" style={{ gap: 8 }}>
-          <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Models folder (router mode)</b>{cli.modelsDir ? <span className="chip info">On</span> : <span className="chip">Off · launcher's single model</span>}</div>
+          <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Models folder (router mode)</b>{cli.modelsDir ? <span className="chip info">On</span> : <span className="chip">Off · the server's single model</span>}</div>
           <div className="row" style={{ gap: 8 }}>
             <input className="input mono grow" value={dir} placeholder="D:\models" onChange={(e) => setDir(e.target.value)} aria-label="Models folder" />
             <button className="btn sm" onClick={async () => { const found = await window.api.detectModelsDir(); if (found) setDir(found); else toast("warning", "No models folder found in the launcher settings"); }}>Detect</button>
             <button className="btn sm" disabled={dir.trim() === (cli.modelsDir ?? "")} onClick={() => void saveDir(dir.trim() || null)}>Save</button>
             {cli.modelsDir && <button className="btn ghost sm" onClick={() => void saveDir(null)}>Turn off</button>}
           </div>
-          <span className="hint">With a folder set, the engine starts llama.cpp with --models-dir: the server lists every model in the folder and loads the one the Implementation agent uses. Each subfolder counts as one model. Applies when the engine next starts the server.</span>
+          <span className="hint">With a folder set, Agent Dock starts llama.cpp itself when it is not running (llama-server from PATH, or the launcher script in Settings › Advanced) with --models-dir: the server lists every model in the folder and loads the one the Implementation agent uses. Each subfolder counts as one model. Applies when the server next starts.</span>
         </div>
       )}
       <div className="row" style={{ gap: 10 }}>
@@ -189,6 +189,20 @@ export function ClisPage() {
       setChecking(null);
     }
   };
+  const discover = async () => {
+    setChecking("discover");
+    try {
+      const before = snap.clis.length;
+      const clis = await window.api.discoverClis();
+      setClis(clis);
+      toast(clis.length > before ? "success" : "info", clis.length > before ? `Added ${clis.slice(before).map((c) => c.name).join(", ")}` : "Nothing new found on PATH or local ports");
+      await Promise.all(clis.slice(before).map((c) => window.api.checkCli(c.id)));
+    } catch (e) {
+      toast("error", cleanError(e));
+    } finally {
+      setChecking(null);
+    }
+  };
   const checkAll = async () => {
     setChecking("all");
     await Promise.all(snap.clis.map((c) => window.api.checkCli(c.id)));
@@ -201,6 +215,7 @@ export function ClisPage() {
         <div><h1 className="h1">CLIs and runtimes</h1><div className="sub">Tool connections that agents run through. {healthy} healthy · {list.length - healthy} need attention</div></div>
         <span className="grow" />
         <button className="btn" onClick={checkAll} disabled={checking !== null}>{checking === "all" ? <Spinner /> : <Icon name="refresh" size="sm" />}Check all</button>
+        <button className="btn" onClick={discover} disabled={checking !== null}>{checking === "discover" && <Spinner />}Find installed</button>
         <button className="btn primary" onClick={() => setAdding(true)}><Icon name="plus" size="sm" />Add CLI / runtime</button>
       </div>
       {limited && <div className="banner warnb"><Icon name="warn" className="warn" /><span>The orchestrator reported a usage limit: {limited.limitMessage}</span></div>}
@@ -236,7 +251,7 @@ export function ClisPage() {
                 <div className="row sub" style={{ gap: 6 }}><span>{sel.kind}</span><span>·</span><span className={`row ${h ? connectionMeta[h.state].tone : "mut"}`} style={{ gap: 5 }}><Dot tone="" />{h ? connectionMeta[h.state].label : "Checking…"}</span>{h?.checkedAt && <span>· checked {clock(h.checkedAt)}</span>}</div>
               </div>
               <button className="btn sm" onClick={() => check(sel.id)} disabled={checking !== null}>{checking === sel.id && <Spinner />}Test</button>
-              {!sel.builtIn && <button className="btn sm danger" onClick={() => setRemoving(true)}>Remove…</button>}
+              <button className="btn sm danger" onClick={() => setRemoving(true)}>Remove…</button>
             </div>
             {h && h.state !== "connected" && (
               <div className="banner errb" role="alert"><Icon name="warn" className="err" /><div className="grow"><div style={{ fontWeight: 600 }}>{connectionMeta[h.state].label}</div><div className="sub">{h.detail}</div></div></div>

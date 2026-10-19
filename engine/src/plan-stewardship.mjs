@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { replaceWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 
 // Plan stewardship (Supervisor 0.19.4): the reviewer may propose line edits to IMPLEMENTATION_PLAN.md.

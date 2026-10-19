@@ -1,0 +1,5 @@
+# Agent Dock is written by these people (and its git history has the details).
+
+ProjktRed
+kadono (Linux support, the shared tool guard in engine/src/guard/, the OpenCode worker and the
+        OpenRouter / OpenCode Console providers)

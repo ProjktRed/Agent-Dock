@@ -161,7 +161,11 @@ export function buildEngineArgs(input: {
     const providerId = impl.provider === "openai" && providerConn && /^https:\/\/openrouter\.ai\/api\/v1\/?$/i.test(providerConn.location)
       ? "openrouter"
       : opencodeBaseUrl ? "opencode" : impl.provider;
-    args.push("--provider", providerId, "--model", impl.model);
+    args.push("--provider", providerId);
+    // Local servers have no model everyone has: the agent must name one.
+    if (impl.model.trim()) args.push("--model", impl.model.trim());
+    else problems.push(`Choose a model for ${impl.name} in Agents.`);
+    if ((impl.provider === "llamacpp" || impl.provider === "ollama") && !providerConn) problems.push(`${impl.name} uses ${impl.provider === "ollama" ? "Ollama" : "llama.cpp"}, but no such connection exists. Add it in CLIs.`);
     if (implCli.kind === "opencode") args.push("--worker", "opencode");
     args.push("--cline-context-tokens", String(impl.contextTokens));
     args.push("--cline-max-output-tokens", String(impl.maxOutputTokens));
@@ -172,6 +176,9 @@ export function buildEngineArgs(input: {
       args.push("--provider-base-url", baseUrl, "--provider-api-key-env", "AGENT_DOCK_PROVIDER_KEY");
       if (!providerConn.hasSecret) guard(`Implementation provider “${providerConn.name}” has no saved API key.`);
     }
+    // The connection's address: llama.cpp and Ollama may listen on any port.
+    if (impl.provider === "llamacpp" && providerConn?.location.trim()) args.push("--llamacpp-url", providerConn.location.trim());
+    if (impl.provider === "ollama" && providerConn?.location.trim()) args.push("--ollama-url", providerConn.location.trim().replace(/\/+$/, "").replace(/\/v1$/, ""));
     if (impl.provider === "llamacpp" && providerConn?.modelsDir) args.push("--llamacpp-models-dir", providerConn.modelsDir);
     if (impl.provider === "llamacpp" && settings.advanced.llamaCppLauncher.trim()) args.push("--llamacpp-launcher", settings.advanced.llamaCppLauncher.trim());
     const collected = providerConn?.collected?.models ?? [];

@@ -1,10 +1,10 @@
-# Codex ↔ Cline/GLM loop
+# Agent Dock engine
 
-The dependency-free Node process owns the continuous loop. Codex runs as a fresh,
-one-shot CLI child only for assessment and QA. Cline implements each task.
-The dashboard design and the Ollama model-loading behavior are unchanged.
-llama.cpp is the default implementation backend; Ollama remains available only
-when it is selected explicitly.
+The dependency-free Node process that owns Agent Dock's automation loop. The orchestrator CLI
+(Codex CLI or Claude Code) runs as a fresh, one-shot child for Assessment, QA, Resolver and
+Elevation. The Implementation worker is Cline or OpenCode on a local or OpenAI-compatible model,
+or Codex CLI / Claude Code. Agent Dock launches it per project; it can also run on its own from a
+terminal, with its own dashboard.
 
 ## Start dashboard and loop
 
@@ -24,15 +24,17 @@ Codex must be installed and authenticated. By default the adapter launches the
 Assessment and independent QA use `gpt-6.1-sol` with medium reasoning.
 Elevate/reassessment uses `gpt-6-astra` with medium reasoning.
 
-By default Cline uses llama.cpp at `http://127.0.0.1:8081/v1` with model
-`glm-4.7-flash-ud-q3-k-xl`. The automation maps `--provider llamacpp` to Cline's
+With `--provider llamacpp` (the default) Cline uses llama.cpp at `--llamacpp-url`
+(default `http://127.0.0.1:8080/v1`, llama-server's own port) with the model named by
+`--model`; there is no default model. The automation maps it to Cline's
 `openai-compatible` provider and defaults to a 98,304-token context and 8,192-token
 maximum output. Before every Cline attempt, Node checks `/health` and `/v1/models`
-and requires the exact model identifier. If the endpoint is unavailable and a launcher script
-is set (`--llamacpp-launcher <script>` or the `LLAMACPP_LAUNCHER` variable), it starts that
-script and waits up to 120 seconds; without one it stops with an explanation. A
-startup timeout or model mismatch is logged and stops the attempt. It never causes
-an automatic Ollama fallback.
+and requires the exact model identifier. If the endpoint is unavailable it starts the
+server: a launcher script when one is set (`--llamacpp-launcher <script>` or the
+`LLAMACPP_LAUNCHER` variable), otherwise `llama-server` from PATH in router mode when
+`--llamacpp-models-dir` is set. It waits up to 120 seconds; with neither it stops with an
+explanation. A startup timeout or model mismatch is logged and stops the attempt. It never
+causes an automatic Ollama fallback.
 
 Remote OpenAI-compatible providers include OpenRouter and OpenCode Console (Zen).
 For OpenCode Console, use `--provider opencode` and model `deepseek-v4.1-flash-free`
@@ -40,8 +42,9 @@ by default; its model preflight reads `https://opencode.ai/inference/v1/models`,
 while chat requests use `https://opencode.ai/inference/openai/v1`. Supply the API
 key through `AGENT_DOCK_PROVIDER_KEY` (or `--provider-api-key-env`).
 
-Select the preserved Ollama path explicitly with `--provider ollama`. Unless
-overridden, this continues to use `glm-4.7-flash:q4_K_M` and 98,304 context tokens.
+Select Ollama explicitly with `--provider ollama` (address: `--ollama-url`, default
+`http://127.0.0.1:11434`) and name the model with `--model`; the default context is
+98,304 tokens.
 Node reads the selected Ollama model's `/api/show` metadata; missing context
 metadata or insufficient declared context stops startup without silently reducing
 the request. Both providers write `.state/cline-data/settings/providers.json` and
@@ -61,7 +64,7 @@ Default is `--orchestrator codex` (unchanged behaviour). With `--orchestrator cl
 the Codex roles run through the Claude Code CLI (`claude -p --json-schema`), using the
 same prompts, schemas, PID lock, usage-limit pause/Resume and Node scope checks:
 Assessment, QA and Resolver use **Sonnet**, Elevation uses **Opus**, all at medium effort.
-Implementation is still Cline + local GLM via llama.cpp.
+Implementation keeps its own worker (`--implementation-cli`).
 
 - Prerequisite: the standalone CLI must be logged in (`claude auth status` → `loggedIn: true`).
   Preflight fails before any work if it is not.
@@ -224,7 +227,7 @@ port, and model. `/metrics` is sampled before and after the attempt and a
 `cline-provider-metrics` event records prompt tokens, generated tokens, prompt
 tokens/second, generation tokens/second, and failure state. Metrics-read failures
 are explicit events and do not masquerade as successful measurements. Ollama may
-keep GLM loaded between tasks; no model unload operation is performed.
+keep the model loaded between tasks; no model unload operation is performed.
 
 ## Verification
 

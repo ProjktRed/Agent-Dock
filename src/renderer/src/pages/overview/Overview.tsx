@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../store";
-import { runTone, roleLabel } from "../../lib/format";
+import { engineStageLabel, runTone, roleLabel } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { RunControls } from "../../components/Shell";
 import { Empty, Tabs } from "../../components/ui";
@@ -35,7 +35,7 @@ export function OverviewPage() {
 
   const s = activeStatus;
   const tone = s ? runTone[s.runState] : runTone.idle;
-  const stageText = s?.cycle ? roleLabel[s.cycle === "next" ? "assessment" : s.cycle] ?? s.cycle : s?.stage && s.stage !== "waiting" ? s.stage : "—";
+  const stageText = s?.cycle ? roleLabel[s.cycle === "next" ? "assessment" : s.cycle] ?? s.cycle : s?.stage && s.stage !== "waiting" ? engineStageLabel(s.stage) : "—";
 
   return (
     <>

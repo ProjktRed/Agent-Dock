@@ -6,7 +6,7 @@ import { describeEvent } from "../src/renderer/src/lib/events";
 import type { WorkflowRole } from "@shared/types";
 
 const project: Project = { id: "p", name: "P", path: "C:\\work", repoUrl: null, objective: "Ship", description: "", createdAt: "", archived: false, stateDir: "C:\\state", roleOverrides: {}, workflowOverrides: {} };
-const base = () => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol", elevate: "gpt-6-astra", reasoning: "medium" });
+const base = () => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol", elevate: "gpt-6-astra", reasoning: "medium" }).map((a) => (a.role === "implementation" ? { ...a, model: "local-model" } : a));
 const launch = (agents: Agent[]) => buildEngineArgs({ project, agents, clis: DEFAULT_CLIS, settings: structuredClone(DEFAULT_SETTINGS) });
 const flag = (args: string[], key: string) => args[args.indexOf(key) + 1];
 

@@ -29,7 +29,8 @@ const project = (over: Partial<Project> = {}): Project => ({
   workflowOverrides: {},
   ...over,
 });
-const agents = (): Agent[] => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol", elevate: "gpt-6-astra", reasoning: "medium" });
+// The local Implementation model is one the user picked: there is no default.
+const agents = (): Agent[] => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol", elevate: "gpt-6-astra", reasoning: "medium" }).map((a) => (a.role === "implementation" ? { ...a, model: "glm-4.7-flash-ud-q3-k-xl" } : a));
 const settings = (): Settings => structuredClone(DEFAULT_SETTINGS);
 const clis = (): CliConnection[] => structuredClone(DEFAULT_CLIS);
 
@@ -620,5 +621,16 @@ describe("log tail", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("engine stage labels", () => {
+  it("names stages by role, not by the CLI they were first written for", async () => {
+    const { engineStageLabel } = await import("../src/renderer/src/lib/format");
+    expect(engineStageLabel("codex-qa")).toBe("QA");
+    expect(engineStageLabel("cline-working")).toBe("Implementation");
+    expect(engineStageLabel("WAITING_FOR_CODEX")).toBe("Waiting for usage limit");
+    expect(engineStageLabel("some-new_stage")).toBe("Some new stage");
+    expect(engineStageLabel(null)).toBe("—");
   });
 });

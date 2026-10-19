@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";

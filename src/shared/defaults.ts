@@ -1,9 +1,7 @@
 import type { Agent, CliConnection, Settings } from "@shared/types";
 
-// Mirrors engine/src/loop-options.mjs defaults so a fresh install runs the same configuration.
+// Mirrors engine/src/loop-options.mjs defaults. Local models have none: each agent names its own.
 export const ENGINE_DEFAULTS = {
-  llamacppModel: "glm-4.7-flash-ud-q3-k-xl",
-  ollamaModel: "glm-4.7-flash:q4_K_M",
   contextTokens: 98_304,
   maxOutputTokens: 8_192,
   timeoutSeconds: 1_800,
@@ -24,42 +22,51 @@ const cli = (id: string, kind: CliConnection["kind"], name: string, location: st
   hasSecret: false,
 });
 
+/**
+ * Every connection Agent Dock knows how to use. A fresh install adds only the ones found on this
+ * computer (main/discovery.ts); the rest can be added in CLIs.
+ */
 export const DEFAULT_CLIS: CliConnection[] = [
   cli("codex", "codex", "Codex CLI", "codex"),
   cli("cline", "cline", "Cline CLI", "cline"),
   cli("claude", "claude", "Claude Code", "claude"),
   cli("opencode", "opencode", "OpenCode", "opencode"),
-  cli("llamacpp", "llamacpp", "llama.cpp server", "http://127.0.0.1:8081/v1"),
+  cli("llamacpp", "llamacpp", "llama.cpp server", "http://127.0.0.1:8080/v1"),
   cli("ollama", "ollama", "Ollama", "http://127.0.0.1:11434"),
 ];
 
-/** Public repository the signed releases are published to. The source lives in the private ProjktRed/Agent-Dock-Dev. */
+/** Repository the signed releases are published to (the source repository itself). */
 export const DEFAULT_RELEASE_REPO = "ProjktRed/Agent-Dock";
-/** The source repository's former address, now the public releases repository: never a place to build updates from. */
-export const FORMER_SOURCE = /^https:\/\/github\.com\/ProjktRed\/Agent-Dock(?:\.git)?\/?$/i;
-export const DEV_SOURCE = "https://github.com/ProjktRed/Agent-Dock-Dev.git";
+/** The source repository was briefly named Agent-Dock-Dev; settings and builds from then still record that address. */
+export const FORMER_SOURCE = /^https:\/\/github\.com\/ProjktRed\/Agent-Dock-Dev(?:\.git)?\/?$/i;
+export const SOURCE_URL = "https://github.com/ProjktRed/Agent-Dock.git";
 
 /** Builds made by the release workflow (build-info branch "release") have no source to build from: they always use signed releases. */
 export const updateChannel = (settings: { updates: { channel?: "git" | "release" } }, installedBranch?: string | null): "git" | "release" =>
   installedBranch === "release" ? "release" : settings.updates.channel ?? "git";
 
-export function defaultAgents(models: { qa: string; assessment: string; elevate: string; reasoning: string }): Agent[] {
+/** What first-run discovery found: the planning/QA CLI, and a local model runtime for Cline if there is one. */
+export interface FoundTools {
+  orchestrator: "codex" | "claude" | null;
+  local: "llamacpp" | "ollama" | null;
+}
+
+/**
+ * The first agents, built from what is installed. Planning and QA use the orchestrator CLI on its default
+ * models; Implementation uses Cline on a local runtime when both exist, otherwise the orchestrator CLI.
+ * Nothing found leaves the CLI empty, for setup to fill in.
+ */
+export function defaultAgents(models: { qa: string; assessment: string; elevate: string; reasoning: string }, found: FoundTools = { orchestrator: "codex", local: "llamacpp" }): Agent[] {
   const base = { maxOutputTokens: ENGINE_DEFAULTS.maxOutputTokens, timeoutSeconds: ENGINE_DEFAULTS.timeoutSeconds, skills: ["bounded-task-handoff"], enabled: true };
+  const orch = found.orchestrator ?? "";
+  const impl: Agent = found.local
+    ? { ...base, id: "implementer", name: "Implementer", role: "implementation", cliId: "cline", provider: found.local, model: "", contextTokens: ENGINE_DEFAULTS.contextTokens, instructions: "" }
+    : { ...base, id: "implementer", name: "Implementer", role: "implementation", cliId: orch, model: "", contextTokens: 0, instructions: "" };
   return [
-    {
-      ...base,
-      id: "implementer",
-      name: "Implementer",
-      role: "implementation",
-      cliId: "cline",
-      provider: "llamacpp",
-      model: ENGINE_DEFAULTS.llamacppModel,
-      contextTokens: ENGINE_DEFAULTS.contextTokens,
-      instructions: "",
-    },
-    { ...base, id: "reviewer", name: "Reviewer", role: "qa", cliId: "codex", model: models.qa, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
-    { ...base, id: "assessor", name: "Assessor", role: "assessment", cliId: "codex", model: models.assessment, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
-    { ...base, id: "elevation", name: "Elevation", role: "elevation", cliId: "codex", model: models.elevate, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
+    impl,
+    { ...base, id: "reviewer", name: "Reviewer", role: "qa", cliId: orch, model: models.qa, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
+    { ...base, id: "assessor", name: "Assessor", role: "assessment", cliId: orch, model: models.assessment, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
+    { ...base, id: "elevation", name: "Elevation", role: "elevation", cliId: orch, model: models.elevate, reasoning: models.reasoning, contextTokens: 0, instructions: "" },
   ];
 }
 

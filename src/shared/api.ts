@@ -81,6 +81,8 @@ export interface DesktopApi {
   checkCli(id: string): Promise<CliHealth>;
   healths(): Promise<CliHealth[]>;
   detectOnPath(command: string): Promise<PathDetection>;
+  /** Adds the known CLIs and runtimes found on this computer that are not registered yet. */
+  discoverClis(): Promise<CliConnection[]>;
   testConnection(cli: CliConnection, secret?: string | null): Promise<CliHealth>;
   /** Local providers: ask the provider for its models and store the list on the connection. */
   collectModels(id: string): Promise<CliConnection[]>;

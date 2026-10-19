@@ -1,5 +1,6 @@
 import path from 'node:path';
-import {mkdir,writeFile,rename} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {replaceWithRetry as rename} from '../../fs-retry.mjs';
 import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from '../../dashboard-state.mjs';
 import {createPolicy} from '../policy.mjs';

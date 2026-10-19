@@ -1,0 +1,32 @@
+name: Bug report
+description: Something in Agent Dock does not work as described.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Agent Dock version
+      description: Settings › Updates shows it.
+      placeholder: "0.31.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: clis
+    attributes:
+      label: CLIs and models
+      description: Which CLI each agent uses (for example Claude Code for QA, Cline with llama.cpp for Implementation).
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Attach the zip from Settings › Advanced › Export diagnostics (secrets, project code and prompts are left out).
+  - type: markdown
+    attributes:
+      value: A security problem? Do not file it here; use Report a vulnerability on the Security tab.

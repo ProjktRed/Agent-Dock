@@ -67,7 +67,7 @@ function LocalModelsPrompt() {
 }
 
 export function FirstLaunch() {
-  const { snap, healths, go, saveSettings, setProjects, setActive, setAgents, toast } = useApp();
+  const { snap, healths, go, saveSettings, setProjects, setActive, setAgents, setClis, toast } = useApp();
   const [checking, setChecking] = useState(false);
   const [adding, setAdding] = useState(false);
   const [git, setGit] = useState<string | null | undefined>(undefined);
@@ -143,7 +143,7 @@ export function FirstLaunch() {
           </div>
           <LocalModelsPrompt />
           <div className="row wrap" style={{ gap: 12 }}>
-            <button className="btn" disabled={checking} onClick={async () => { setChecking(true); await Promise.all([detectGit(), ...snap.clis.map((c) => window.api.checkCli(c.id))]); setChecking(false); }}>{checking && <Spinner />}Detect again</button>
+            <button className="btn" disabled={checking} onClick={async () => { setChecking(true); try { const clis = await window.api.discoverClis(); setClis(clis); await Promise.all([detectGit(), ...clis.map((c) => window.api.checkCli(c.id))]); } catch (e) { toast("error", cleanError(e)); } finally { setChecking(false); } }}>{checking && <Spinner />}Detect again</button>
             <button className="btn ghost" onClick={() => go("clis")}>Configure manually…</button>
           </div>
         </div>

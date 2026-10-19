@@ -8,8 +8,6 @@ export const DEFAULT_LLAMACPP_CONTEXT_TOKENS = 98_304;
 // 8K output so a whole small file can be written in one step (piecemeal edits corrupted files).
 export const DEFAULT_LLAMACPP_MAX_OUTPUT_TOKENS = 8_192;
 export const DEFAULT_TIMEOUT_SECONDS = 1_800;
-export const DEFAULT_LLAMACPP_MODEL = "glm-4.7-flash-ud-q3-k-xl";
-export const DEFAULT_OLLAMA_MODEL = "glm-4.7-flash:q4_K_M";
 
 function positiveInteger(value, name, fallback) {
   if (value === undefined) return fallback;
@@ -107,7 +105,8 @@ export function parseLoopOptions(argv) {
   // Assigned skills reach every role prompt through task-handoff-skill.mjs; read once at startup.
   useAssignedSkills(readAssignedSkills(options["skills-file"]));
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;
-  const modelFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_MODEL : provider === "openrouter" ? "z-ai/glm-5.3-flash" : provider === "opencode" ? "deepseek-v4.1-flash-free" : DEFAULT_OLLAMA_MODEL;
+  // Local and OpenAI-compatible servers have no model everyone has: the Implementation agent names one.
+  const modelFallback = provider === "openrouter" ? "z-ai/glm-5.3-flash" : provider === "opencode" ? "deepseek-v4.1-flash-free" : null;
   return {
     ...options,
     provider,
@@ -126,6 +125,8 @@ export function parseLoopOptions(argv) {
     clineThinking: clineThinking(options["cline-thinking"]),
     llamacppModelsDir: options["llamacpp-models-dir"] || null,
     llamacppLauncher: options["llamacpp-launcher"] || null,
+    llamacppUrl: options["llamacpp-url"] || null,
+    ollamaUrl: options["ollama-url"] || null,
     implementation: parseImplementation(options),
     rolesFile: options["roles-file"] || null,
     tuning: parseTuning(options),
