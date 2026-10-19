@@ -42,6 +42,7 @@ const api: DesktopApi = {
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],
+  openPullRequest: invoke("project:openPullRequest") as DesktopApi["openPullRequest"],
   exportRun: invoke("project:exportRun") as DesktopApi["exportRun"],
   exportDiagnostics: invoke("diagnostics:export") as DesktopApi["exportDiagnostics"],
   exportSettings: invoke("settings:export") as DesktopApi["exportSettings"],

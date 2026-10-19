@@ -46,6 +46,7 @@ function WorkflowTab({ project }: { project: Project }) {
         );
       })}
       <ScheduleRow project={project} />
+      <PullRequestRow project={project} />
       <div className="setrow">
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
         <button className="btn sm" onClick={() => window.api.openPath(project.stateDir)}>Open</button>
@@ -73,6 +74,26 @@ function ScheduleRow({ project }: { project: Project }) {
         </div>
       )}
       <Toggle on={schedule.enabled} onChange={(v) => save({ enabled: v })} label="Scheduled runs" />
+    </div>
+  );
+}
+
+/** Pull-request mode: runs work on their own branch; you choose when to push it as a pull request. */
+function PullRequestRow({ project }: { project: Project }) {
+  const { saveProject, toast, statuses } = useApp();
+  const [busy, setBusy] = useState(false);
+  const running = statuses[project.id]?.processAlive === true;
+  const open = async () => {
+    setBusy(true);
+    try { await window.api.openPullRequest(project.id); }
+    catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Pull-request mode<Support kind="app" /></div><div className="ld">Each new run works on its own agent-dock/run-… branch instead of {project.prBase ?? "your current branch"}. Nothing is pushed until you press Open pull request, which pushes the branch and opens the pull request with GitHub CLI (or GitHub's compare page).</div></div>
+      {project.prMode && <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => void open()}>{busy ? "Pushing…" : "Open pull request"}</button>}
+      <Toggle on={project.prMode === true} onChange={(v) => void saveProject({ ...project, prMode: v })} label="Pull-request mode" />
     </div>
   );
 }

@@ -135,6 +135,8 @@ export interface DesktopApi {
   history(projectId: string): Promise<HistoryEntry[]>;
   /** Runs one task from the history again as the next start's first task. */
   rerunTask(projectId: string, taskId: string): Promise<void>;
+  /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
+  openPullRequest(projectId: string): Promise<string>;
   /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
   gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;

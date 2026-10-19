@@ -17,6 +17,7 @@ import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { dueScheduledStart } from "@shared/schedule";
+import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
 import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -296,6 +297,13 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   const starting = ["start", "resume", "resolve", "retry-qa"].includes(action) && !engine.isAlive(id);
   if (starting && check.problems.length) throw new Error(check.problems.join(" "));
   if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
+  // Pull-request mode: a fresh start works on its own branch, never on the branch you had checked out.
+  if (starting && action === "start" && p.prMode) {
+    const run = await ensureRunBranch(p.path, p.prBase ?? null);
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, prBase: run.base } : x));
+    await store.saveProjects();
+    if (run.created) notice({ kind: "info", message: `Pull-request mode: working on ${run.branch} (from ${run.base}).` });
+  }
   // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
   if (starting) {
     const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
@@ -776,6 +784,17 @@ function registerIpc() {
   handle("project:history", async (id: string) => {
     const p = project(id), saved = await savedTaskIds(p.stateDir);
     return taskHistory(await readActivity(p.stateDir, 20_000)).map((h) => ({ ...h, canRerun: canRerun(saved, h.taskId) }));
+  });
+  handle("project:openPullRequest", async (id: string) => {
+    const p = project(id);
+    if (!p.prMode) throw new Error("Turn on pull-request mode for this project first.");
+    if (engine.isAlive(id)) throw new Error("Stop the automation first, so the branch is complete.");
+    const report = (await engine.runs(p))[0];
+    const body = [p.objective.trim(), "", report ? runReportMarkdown(report, p.name) : "", "_Opened by Agent Dock in pull-request mode._"].join("\n");
+    const { url, created } = await openPullRequest(p.path, p.prBase ?? "main", `${p.name}: ${p.objective.trim().split(/\r?\n/)[0].slice(0, 80)}`, body, pickRunnable(await whereAll("gh")));
+    void shell.openExternal(url);
+    notice({ kind: "success", message: created ? `Pull request opened: ${url}` : `Branch pushed; finish the pull request in your browser.` });
+    return url;
   });
   handle("project:rerunTask", async (id: string, taskId: string) => {
     const p = project(id);

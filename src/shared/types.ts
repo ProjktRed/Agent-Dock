@@ -34,6 +34,10 @@ export interface Project {
   schedule?: ProjectSchedule;
   /** The last scheduled start slot (ISO), so each slot starts at most once. */
   lastScheduledStart?: string | null;
+  /** Pull-request mode: runs work on an agent-dock/ branch; Open pull request pushes it. */
+  prMode?: boolean;
+  /** The branch the current run branch was made from (the pull request's base). */
+  prBase?: string | null;
 }
 
 export interface ProjectSchedule {
