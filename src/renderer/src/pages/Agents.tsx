@@ -6,9 +6,9 @@ import { agentForRoleClient } from "../lib/agents";
 import { defaultModelId, effortLabel, useModelCatalog, withModel } from "../lib/models";
 import { Icon } from "../components/Icon";
 import { Disclosure, Dot, Empty, Modal, Spinner, St, Support, Tabs, Toggle } from "../components/ui";
-import { stageLabel } from "./Workflow";
+import { stageLabel } from "../lib/stages";
 import { describeEvent, isHiddenEvent } from "../lib/events";
-import { openSettingsSection } from "./Settings";
+import { openSettingsSection } from "../lib/nav";
 
 const ROLE_EVENTS: Record<string, RegExp> = {
   implementation: /^(cline-|implementation-)/,

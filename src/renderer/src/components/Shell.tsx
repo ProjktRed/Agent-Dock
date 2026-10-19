@@ -4,8 +4,8 @@ import { cleanError, useApp, type Route } from "../store";
 import { runTone } from "../lib/format";
 import { Icon, type IconName } from "./Icon";
 import { Dot, Modal } from "./ui";
-import { useUpdateStatus } from "../pages/Updates";
-import { openSettingsSection } from "../pages/Settings";
+import { useUpdateStatus } from "../lib/updates";
+import { openSettingsSection } from "../lib/nav";
 import { Logo } from "./Logo";
 
 /** Bring the attention card into view: Overview switches to its Progress tab, then the card scrolls in. */

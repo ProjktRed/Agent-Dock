@@ -1,19 +1,11 @@
 import { useEffect, useState } from "react";
+import { useUpdateStatus } from "../lib/updates";
 import { DEFAULT_RELEASE_REPO, updateChannel } from "@shared/defaults";
 import type { UpdateStatus } from "@shared/types";
 import { cleanError, useApp } from "../store";
 import { ago } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { Disclosure, SetRow, Spinner, St, Toggle } from "../components/ui";
-
-export function useUpdateStatus() {
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
-  useEffect(() => {
-    void window.api.updateStatus().then(setStatus);
-    return window.api.onUpdate(setStatus);
-  }, []);
-  return status;
-}
 
 export function Updates() {
   const { snap, saveSettings, toast } = useApp();

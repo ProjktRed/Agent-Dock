@@ -1,13 +1,16 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useApp } from "./store";
 import { Sidebar, StatusBar, TitleBar, Toasts } from "./components/Shell";
 import { OverviewPage } from "./pages/overview/Overview";
-import { ProjectsPage } from "./pages/projects/Projects";
-import { AgentsPage } from "./pages/Agents";
-import { WorkflowPage } from "./pages/Workflow";
-import { ClisPage } from "./pages/clis/Clis";
-import { SettingsPage } from "./pages/Settings";
-import { FirstLaunch } from "./pages/FirstLaunch";
+
+// Overview opens first; the other pages load when first visited.
+const ProjectsPage = lazy(() => import("./pages/projects/Projects").then((m) => ({ default: m.ProjectsPage })));
+const AgentsPage = lazy(() => import("./pages/Agents").then((m) => ({ default: m.AgentsPage })));
+const WorkflowPage = lazy(() => import("./pages/Workflow").then((m) => ({ default: m.WorkflowPage })));
+const ClisPage = lazy(() => import("./pages/clis/Clis").then((m) => ({ default: m.ClisPage })));
+const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
+const FirstLaunch = lazy(() => import("./pages/FirstLaunch").then((m) => ({ default: m.FirstLaunch })));
+const PageLoading = () => <div className="stack" style={{ gap: 12 }}><div className="skel" style={{ width: "40%" }} /><div className="skel" style={{ width: "70%" }} /></div>;
 
 export function App() {
   const app = useApp();
@@ -49,6 +52,7 @@ export function App() {
       <div className="body">
         <Sidebar />
         <main className="main" id="main">
+          <Suspense fallback={<PageLoading />}>
           {firstLaunch && route === "overview" ? (
             <FirstLaunch />
           ) : (
@@ -61,6 +65,7 @@ export function App() {
               {route === "settings" && <SettingsPage />}
             </>
           )}
+          </Suspense>
         </main>
       </div>
       <StatusBar />

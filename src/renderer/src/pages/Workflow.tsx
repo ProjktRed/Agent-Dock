@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { STAGES, stageLabel } from "../lib/stages";
 import type { RoleDraft } from "@shared/api";
 import type { Agent, RoleStage, WorkflowRole } from "@shared/types";
 import { cleanError, useApp } from "../store";
@@ -9,12 +10,6 @@ import { Icon } from "../components/Icon";
 import { Empty, Modal, Support, Toggle } from "../components/ui";
 import { SECOND_OPINION_ROLE_ID, SECOND_OPINION_TEMPLATE } from "@shared/workflow-templates";
 
-export const STAGES: { value: RoleStage; label: string; desc: string }[] = [
-  { value: "before-implementation", label: "Before implementation", desc: "Runs once per task before the worker starts. Its guidance is added to every implementation prompt for that task." },
-  { value: "before-qa", label: "Before QA", desc: "Reviews each finished attempt before QA. QA and Assessment read its findings; as a gate it can send the change back for correction." },
-  { value: "after-pass", label: "After QA passes", desc: "Runs after the task is committed. Writes a report (role-reports.ndjson in the project's state folder); never changes the result." },
-];
-export const stageLabel = (stage: RoleStage) => STAGES.find((s) => s.value === stage)?.label ?? stage;
 
 const TEMPLATES: (RoleDraft & { blurb: string })[] = [
   SECOND_OPINION_TEMPLATE,
