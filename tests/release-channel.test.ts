@@ -181,3 +181,45 @@ describe("Apps list version after an update", () => {
     for (const bad of [undefined, "", "1.2", "1.2.3'; Remove-Item x", "1.2.3 x"]) expect(uninstallVersionScript(String.raw`C:\App`, bad)).toBeNull();
   });
 });
+
+describe("smaller (delta) updates", () => {
+  const write = (dir: string, rel: string, text: string) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
+
+  it("indexes a build, finds changed files, and signs both into the manifest", async () => {
+    const { buildIndex, changedFiles } = await import("../scripts/release-delta.mjs");
+    const oldBuild = await tmp(), newBuild = await tmp();
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "old app"], ["resources/gone.txt", "x"]]) write(oldBuild, rel, text);
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(newBuild, rel, text);
+    const [oldIndex, newIndex] = [await buildIndex(oldBuild), await buildIndex(newBuild)];
+    expect(newIndex.files.map((f: { path: string }) => f.path)).toEqual(["AgentDock.exe", "resources/added.txt", "resources/app.asar"]);
+    expect(changedFiles(newIndex, oldIndex)).toEqual(["resources/added.txt", "resources/app.asar"]);
+    const dir = await tmp();
+    const zip = path.join(dir, "AgentDock-0.34.0-win-x64.zip"), index = path.join(dir, "AgentDock-0.34.0-win-x64.files.json"), delta = path.join(dir, "AgentDock-0.34.0-from-0.33.0-win-x64.zip");
+    writeFileSync(zip, "full"); writeFileSync(index, JSON.stringify(newIndex)); writeFileSync(delta, "changed");
+    await expect(buildManifest({ zip, version: "0.34.0", commit: COMMIT, delta, deltaFrom: "0.33.0" })).rejects.toThrow(/needs the file index/);
+    const manifest = await buildManifest({ zip, version: "0.34.0", commit: COMMIT, index, delta, deltaFrom: "0.33.0" });
+    const m = verifyManifest(manifest, signManifest(manifest, keys.privateKeyPem), keys.publicKeyPem);
+    expect([m.index?.file, m.delta?.from, m.delta?.size]).toEqual([path.basename(index), "0.33.0", 7]);
+    const bad = manifest.replace('"from": "0.33.0"', '"from": "latest"');
+    expect(() => verifyManifest(bad, signManifest(bad, keys.privateKeyPem), keys.publicKeyPem)).toThrow(/malformed/);
+  });
+
+  it("uses a delta only from its exact base version, and rebuilds only files that match the signed index", async () => {
+    const { buildIndex } = await import("../scripts/release-delta.mjs");
+    const { assembleFromDelta, deltaUsable } = await import("../src/main/release-channel");
+    const asset = { file: "a.json", sha256: "a".repeat(64), size: 1 };
+    const info = { manifest: { delta: { ...asset, file: "d.zip", from: "0.33.0" }, index: asset }, indexUrl: "i", deltaUrl: "d" } as unknown as Parameters<typeof deltaUsable>[0];
+    expect([deltaUsable(info, "0.33.0"), deltaUsable(info, "0.32.0"), deltaUsable({ ...info, deltaUrl: undefined }, "0.33.0")]).toEqual([true, false, false]);
+    const installed = await tmp(), target = await tmp(), changed = await tmp(), out = path.join(await tmp(), "rebuilt");
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "old app"], ["Uninstall AgentDock.exe", "u"]]) write(installed, rel, text);
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(target, rel, text);
+    for (const [rel, text] of [["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(changed, rel, text);
+    const index = await buildIndex(target);
+    await assembleFromDelta(index, changed, installed, out);
+    expect(readFileSync(path.join(out, "resources", "app.asar"), "utf8")).toBe("new app");
+    expect(existsSync(path.join(out, "Uninstall AgentDock.exe"))).toBe(false);
+    writeFileSync(path.join(changed, "resources", "app.asar"), "tampered");
+    await expect(assembleFromDelta(index, changed, installed, out)).rejects.toThrow(/app\.asar does not match/);
+    await expect(assembleFromDelta({ files: [{ path: "../evil", sha256: "a".repeat(64), size: 1 }] }, changed, installed, out)).rejects.toThrow(/Unsafe path/);
+  });
+});

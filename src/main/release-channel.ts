@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -12,8 +12,13 @@ import { pipeline } from "node:stream/promises";
 // Linux (0.33): the release also carries a signed AppImage with its own manifest; the app replaces
 // its AppImage file and relaunches.
 
-export interface ReleaseManifest { name: string; version: string; commit: string; platform: string; file: string; sha256: string; size: number; builtAt: string }
-export interface ReleaseInfo { manifest: ReleaseManifest; zipUrl: string; notes: string; tag: string }
+export interface ReleaseAsset { file: string; sha256: string; size: number }
+export interface ReleaseManifest {
+  name: string; version: string; commit: string; platform: string; file: string; sha256: string; size: number; builtAt: string;
+  /** 0.33: every file of the build with its SHA-256 and size, and the files changed since `delta.from`. */
+  index?: ReleaseAsset; delta?: ReleaseAsset & { from: string };
+}
+export interface ReleaseInfo { manifest: ReleaseManifest; zipUrl: string; notes: string; tag: string; indexUrl?: string; deltaUrl?: string }
 const PRODUCT = "agent-dock", MAX_ZIP = 1024 * 1024 * 1024;
 export type ReleasePlatform = "win-x64" | "linux-x64";
 /** This machine's release platform, or null where no signed build exists. */
@@ -40,6 +45,8 @@ export function verifyManifest(manifestText: string, signatureB64: string, publi
   const m = JSON.parse(manifestText) as ReleaseManifest;
   if (m.name !== PRODUCT || m.platform !== platform) throw new Error(`The release is for ${m.name}/${m.platform}, not ${PRODUCT}/${platform}.`);
   if (!/^\d+\.\d+\.\d+$/.test(m.version) || !/^[0-9a-f]{40}$/.test(m.commit) || !/^[0-9a-f]{64}$/.test(m.sha256) || !(m.size > 0 && m.size < MAX_ZIP) || !FILE_PATTERN[platform].test(m.file)) throw new Error("The release manifest is malformed.");
+  const asset = (a: ReleaseAsset | undefined, pattern: RegExp) => !a || (pattern.test(a.file) && /^[0-9a-f]{64}$/.test(a.sha256) && a.size > 0 && a.size < MAX_ZIP);
+  if (!asset(m.index, /^[\w.-]+\.json$/) || !asset(m.delta, /^[\w.-]+\.zip$/) || (m.delta && (!m.index || !/^\d+\.\d+\.\d+$/.test(m.delta.from)))) throw new Error("The release manifest is malformed.");
   return m;
 }
 
@@ -62,35 +69,82 @@ export async function checkRelease(repo: string, installed: string, publicKeyPem
   if (!newerVersion(manifest.version, installed)) return null;
   const zipUrl = asset(manifest.file);
   if (!zipUrl) throw new Error(`Release ${release.tag_name} does not contain ${manifest.file}.`);
-  return { manifest, zipUrl, notes: release.body ?? "", tag: release.tag_name };
+  const indexUrl = manifest.index ? asset(manifest.index.file) : undefined, deltaUrl = manifest.delta ? asset(manifest.delta.file) : undefined;
+  return { manifest, zipUrl, notes: release.body ?? "", tag: release.tag_name, ...(indexUrl ? { indexUrl } : {}), ...(deltaUrl ? { deltaUrl } : {}) };
 }
 
-/** Downloads the zip, checking size and SHA-256 against the signed manifest; returns the file path. */
-export async function downloadRelease(info: ReleaseInfo, dir: string, fetchImpl: Fetch = fetch, onProgress: (bytes: number) => void = () => {}): Promise<string> {
+/** Downloads one release asset, checking size and SHA-256 against the signed manifest; returns the file path. */
+async function downloadVerified(url: string, expected: ReleaseAsset, dir: string, fetchImpl: Fetch, onProgress: (bytes: number) => void): Promise<string> {
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, info.manifest.file);
-  const response = await fetchImpl(info.zipUrl, { headers: { "user-agent": HEADERS["user-agent"] }, signal: AbortSignal.timeout(30 * 60_000) });
+  const file = path.join(dir, expected.file);
+  const response = await fetchImpl(url, { headers: { "user-agent": HEADERS["user-agent"] }, signal: AbortSignal.timeout(30 * 60_000) });
   if (!response.ok || !response.body) throw new Error(`Download failed: HTTP ${response.status}`);
   const hash = createHash("sha256");
   let bytes = 0;
   const counted = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream).map((chunk: Buffer) => {
     bytes += chunk.length;
-    if (bytes > info.manifest.size) throw new Error("The download is larger than the signed manifest says.");
+    if (bytes > expected.size) throw new Error("The download is larger than the signed manifest says.");
     hash.update(chunk);
     onProgress(bytes);
     return chunk;
   });
   try { await pipeline(counted, createWriteStream(file)); }
   catch (error) { rmSync(file, { force: true }); throw error; }
-  if (bytes !== info.manifest.size || hash.digest("hex") !== info.manifest.sha256) {
+  if (bytes !== expected.size || hash.digest("hex") !== expected.sha256) {
     rmSync(file, { force: true });
     throw new Error("The download does not match the signed manifest; it was deleted and nothing was installed.");
   }
   return file;
 }
 
-/** Extracts the verified zip with Windows' own Expand-Archive and returns the folder with AgentDock.exe. */
-export async function extractRelease(zip: string, dir: string): Promise<string> {
+/** Downloads the zip, checking size and SHA-256 against the signed manifest; returns the file path. */
+export function downloadRelease(info: ReleaseInfo, dir: string, fetchImpl: Fetch = fetch, onProgress: (bytes: number) => void = () => {}): Promise<string> {
+  return downloadVerified(info.zipUrl, info.manifest, dir, fetchImpl, onProgress);
+}
+
+/** The delta applies only to the exact version it was made from, and only with its index. */
+export const deltaUsable = (info: ReleaseInfo, installed: string): boolean => Boolean(info.manifest.delta && info.manifest.index && info.deltaUrl && info.indexUrl && info.manifest.delta.from === installed);
+
+const fileSha256 = async (file: string) => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+};
+
+/**
+ * Rebuilds the new version in `outDir`: each indexed file comes from the changed files when present,
+ * otherwise from the installed app, and must match the signed index (SHA-256 and size). Files not in
+ * the index are left out. Throws on the first mismatch, so the caller can fall back to the full zip.
+ */
+export async function assembleFromDelta(index: { files: { path: string; sha256: string; size: number }[] }, changedDir: string, installDir: string, outDir: string): Promise<string> {
+  if (!Array.isArray(index?.files) || !index.files.length) throw new Error("The file index is empty.");
+  if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
+  for (const entry of index.files) {
+    const rel = String(entry.path);
+    if (!rel || rel.startsWith("/") || rel.split("/").some((part) => part === ".." || part === "") || /[\\:]/.test(rel)) throw new Error(`Unsafe path in the file index: ${rel}`);
+    const changed = path.join(changedDir, ...rel.split("/"));
+    const source = existsSync(changed) ? changed : path.join(installDir, ...rel.split("/"));
+    if (!existsSync(source)) throw new Error(`${rel} is missing from the installed app.`);
+    const target = path.join(outDir, ...rel.split("/"));
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    if (statSync(target).size !== entry.size || (await fileSha256(target)) !== entry.sha256) throw new Error(`${rel} does not match the signed file index.`);
+  }
+  if (!existsSync(path.join(outDir, "AgentDock.exe"))) throw new Error("The rebuilt update has no AgentDock.exe.");
+  return outDir;
+}
+
+/** Smaller update: downloads the index and the changed files, verifies both, and rebuilds the app; returns its folder. */
+export async function applyDelta(info: ReleaseInfo, dir: string, installDir: string, fetchImpl: Fetch = fetch): Promise<string> {
+  const indexFile = await downloadVerified(info.indexUrl!, info.manifest.index!, dir, fetchImpl, () => {});
+  const deltaZip = await downloadVerified(info.deltaUrl!, info.manifest.delta!, dir, fetchImpl, () => {});
+  const changedDir = path.join(dir, `${info.manifest.version}-changed`);
+  await expandZip(deltaZip, changedDir);
+  return assembleFromDelta(JSON.parse(readFileSync(indexFile, "utf8")), changedDir, installDir, path.join(dir, info.manifest.version));
+}
+
+/** Expands a verified zip into an empty folder with Windows' own Expand-Archive. */
+async function expandZip(zip: string, dir: string): Promise<void> {
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const quote = (p: string) => `'${p.replaceAll("'", "''")}'`;
@@ -99,6 +153,11 @@ export async function extractRelease(zip: string, dir: string): Promise<string> 
     child.on("error", reject);
     child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Extracting the update failed (exit ${code}).`))));
   });
+}
+
+/** Extracts the verified zip with Windows' own Expand-Archive and returns the folder with AgentDock.exe. */
+export async function extractRelease(zip: string, dir: string): Promise<string> {
+  await expandZip(zip, dir);
   for (const candidate of [dir, path.join(dir, "win-unpacked")]) if (existsSync(path.join(candidate, "AgentDock.exe"))) return candidate;
   throw new Error("The update does not contain AgentDock.exe.");
 }

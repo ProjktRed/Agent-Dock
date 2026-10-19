@@ -6,7 +6,7 @@ import { DEFAULT_RELEASE_REPO, FORMER_SOURCE, SOURCE_URL, updateChannel } from "
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
-import { checkRelease, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
+import { applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
@@ -186,6 +186,26 @@ export class Updater {
     this.set({ state: "building", log: [], error: null });
     try {
       const dir = path.join(STAGING, "release");
+      const installDir = path.dirname(process.execPath);
+      // Smaller update first: only the files changed since this version, rebuilt and checked file by file.
+      let unpacked: string | null = null;
+      if (info.manifest.platform === "win-x64" && deltaUsable(info, this.appVersion)) {
+        this.append(`Downloading the changed files (${Math.max(1, Math.round(info.manifest.delta!.size / 1048576))} MB instead of ${Math.round(info.manifest.size / 1048576)} MB)…`);
+        try {
+          unpacked = await applyDelta(info, dir, installDir);
+          this.append(`Rebuilt ${info.manifest.version}; every file matches the signed index.`);
+        } catch (error) {
+          this.append(`The smaller update could not be used (${(error as Error).message}); downloading the full release.`);
+        }
+      }
+      if (unpacked) {
+        this.set({ state: "ready" });
+        const fd = openSync(path.join(STAGING, "swap.log"), "a");
+        try { launchSwap({ unpacked, installDir, waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
+        finally { closeSync(fd); }
+        onReadyToQuit();
+        return;
+      }
       this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
       const zip = await downloadRelease(info, dir);
       this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
@@ -198,11 +218,11 @@ export class Updater {
         onReadyToQuit(target);
         return;
       }
-      const unpacked = await extractRelease(zip, path.join(dir, info.manifest.version));
-      this.append(`Extracted to ${unpacked}.`);
+      const extracted = await extractRelease(zip, path.join(dir, info.manifest.version));
+      this.append(`Extracted to ${extracted}.`);
       this.set({ state: "ready" });
       const fd = openSync(path.join(STAGING, "swap.log"), "a");
-      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
+      try { launchSwap({ unpacked: extracted, installDir, waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
       finally { closeSync(fd); }
       onReadyToQuit();
     } catch (error) {
