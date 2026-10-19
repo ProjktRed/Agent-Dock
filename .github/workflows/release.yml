@@ -86,12 +86,34 @@ jobs:
             dist/AgentDock-Setup-${{ env.VERSION }}-win-x64.exe
             AgentDock-${{ env.VERSION }}-win-x64.zip
           retention-days: 7
+      - name: File index and the files changed since the previous release
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          index="AgentDock-$VERSION-win-x64.files.json"
+          node scripts/release-delta.mjs index --dir dist/win-unpacked --out "$index"
+          echo "SIGN_EXTRA=--index $index" >> "$GITHUB_ENV"
+          echo "INDEX_FILE=$index" >> "$GITHUB_ENV"
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vx "$GITHUB_REF_NAME" | head -1 || true)
+          from="${previous#v}"
+          # Releases before 0.33 have no index, so deltas start with the release after 0.33.
+          if [ -n "$previous" ] && gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern "AgentDock-$from-win-x64.files.json" --dir previous; then
+            node scripts/release-delta.mjs changed --dir dist/win-unpacked --index "$index" --previous "previous/AgentDock-$from-win-x64.files.json" --out delta
+            if [ -n "$(ls -A delta 2>/dev/null)" ]; then
+              delta="AgentDock-$VERSION-from-$from-win-x64.zip"
+              pwsh -NoProfile -Command "Compress-Archive -Path delta/* -DestinationPath '$delta'"
+              echo "SIGN_EXTRA=--index $index --delta $delta --delta-from $from" >> "$GITHUB_ENV"
+              echo "DELTA_ZIP=$delta" >> "$GITHUB_ENV"
+            fi
+          fi
       - name: Sign
         if: env.DRY_RUN != 'true'
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-        run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out .
+        run: node scripts/sign-release.mjs --zip "AgentDock-$VERSION-win-x64.zip" --version "$VERSION" --commit "$GITHUB_SHA" --out . $SIGN_EXTRA
       - name: Release notes
         if: env.DRY_RUN != 'true'
         shell: bash
@@ -115,7 +137,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig "$INDEX_FILE" ${DELTA_ZIP:+"$DELTA_ZIP"} --title "Agent Dock $VERSION" --notes-file notes.md
 
   linux:
     needs: release
