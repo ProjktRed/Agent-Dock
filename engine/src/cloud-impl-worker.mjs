@@ -140,7 +140,7 @@ export class CloudImplementationWorker {
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
-    noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout));
+    noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout), this.model);
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };
     let summary = "";
     // Both CLIs log every protection decision next to the prompt; refusals show in Activity.

@@ -132,7 +132,7 @@ export async function launchOpenCode({command='opencode',opencodeCommand,workspa
  policy.runtimeReady=false;policy.runtimeHandshake=null;
  await atomicWriteJson(guard.policyPath,policy);
  const result=await collectOpenCodeProcess(command,['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}`,'--agent','agent-dock','--auto',prompt],{cwd:workspace,env:childEnv,spawnProcess,timeoutMs:timeoutSeconds*1000,onStart,onEvent,apiKeyEnv:providerDescriptor.apiKeyEnv});
- noteUsage(openCodeUsage(result.events));
+ noteUsage(openCodeUsage(result.events),guard.model);
  const outcome=await readGuardOutcome(guard.policyPath);
  if(!outcome.runtimeReady||outcome.runtimeHandshake!==guard.handshake)throw Error(FAIL_CLOSED+' (run handshake missing)');
  if(outcome.stopped){

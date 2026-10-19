@@ -148,6 +148,7 @@ or submodule contents.
 - A Cline or OpenCode worker on an OpenAI-compatible cloud provider receives that provider's API key
   in its environment, because the CLI calls the provider itself. Use a key limited to that provider
   and project, with a spending cap at the provider.
-- Local model servers report tokens but no cost, so spend budgets cover only CLIs that report their
-  own cost (Claude Code, OpenCode, and Cline on a cloud provider); token budgets include local
-  tokens from llama.cpp and Ollama.
+- Spend budgets count the cost a CLI reports (Claude Code, OpenCode, and Cline on a cloud provider).
+  Codex reports only tokens, so its spend counts only for models listed in Settings › Workflow rules
+  › Price table, which estimates cost from the tokens. Local model servers (llama.cpp, Ollama) cost
+  nothing and are never priced; token budgets still include their tokens.

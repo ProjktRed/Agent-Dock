@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {RUN,parseRunLimits,useRunLimits,elevationAllowed,trackRunEvent,startDeadline,writeRunReport,listRuns,watchUsage,recordUsage,claudeUsage,codexUsage,openCodeUsage} from '../src/run-budget.mjs';
+import {RUN,parseRunLimits,useRunLimits,elevationAllowed,trackRunEvent,startDeadline,writeRunReport,listRuns,watchUsage,recordUsage,noteUsage,parsePrices,priceFor,estimateCost,claudeUsage,codexUsage,openCodeUsage} from '../src/run-budget.mjs';
 
 const fakeState=()=>{const s={controls:[],events:[],setControl:async a=>{s.controls.push(a);},record:async e=>{s.events.push(e);}};return s;};
 
@@ -110,4 +110,35 @@ test('every run keeps its own report, listed newest first with the tasks it appr
  const runs=await listRuns(dir);
  assert.deepEqual(runs.map(r=>[r.startedAt,r.status,r.tasksApproved]),[['2026-10-18T09:00:00.000Z','done',0],['2026-10-18T08:00:00.000Z','stopped',1]]);
  assert.deepEqual(runs[1].approved.map(a=>[a.taskId,a.name]),[['T1','First']]);
+});
+
+test('the price table estimates spend for CLIs that report no cost, and spend budgets count it',async t=>{
+ t.after(()=>useRunLimits());
+ const dir=await mkdtemp(path.join(os.tmpdir(),'run-prices-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const prices=parsePrices(JSON.stringify([{model:'GPT-5*',input:1,cachedInput:0.1,output:10},{model:'gpt-5-mini',input:0.25,output:2},{model:' ',input:9},{model:'bad',input:-3,output:'x'}]));
+ assert.deepEqual(prices.map(p=>p.model),['gpt-5*','gpt-5-mini','bad']);
+ assert.equal(prices[1].cachedInput,0.25,'cached input defaults to the input price');
+ assert.deepEqual([prices[2].input,prices[2].output],[0,0]);
+ assert.throws(()=>parsePrices('{'),/JSON/);assert.throws(()=>parsePrices('{}'),/list/);
+ assert.equal(priceFor('gpt-5-mini',prices).input,0.25,'an exact match wins over a prefix');
+ assert.equal(priceFor('gpt-5.1-codex',prices).model,'gpt-5*');
+ assert.equal(priceFor('o4',prices),null);
+ // 1M new input at $1, 1M cached at $0.10, 0.1M output at $10.
+ assert.equal(estimateCost({input:2_000_000,cached:1_000_000,output:100_000},'gpt-5',prices),2.1);
+ assert.deepEqual(parseRunLimits({prices:'[]'}).prices,[]);
+ useRunLimits({unattended:true,maxCost:2,prices});
+ const state=fakeState();
+ await watchUsage(state,dir);
+ await recordUsage({input:1_000_000,output:0,model:'unpriced'});
+ assert.equal(RUN.usage.costUsd,0,'models without a price add no spend');
+ await recordUsage({input:10,costUsd:0.5,model:'gpt-5'});
+ assert.equal(RUN.usage.costUsd,0.5,'a reported cost is used as is');
+ await recordUsage({input:1_000_000,output:100_000,model:'gpt-5'});
+ assert.deepEqual(state.controls,['stop']);
+ assert.match(state.events[0].message,/Spend budget reached: \$2\.50 of \$2\.00/);
+ const report=await writeRunReport(dir,{status:'stopped'});
+ assert.deepEqual([report.usage.costUsd,report.usage.estimatedUsd],[2.5,2]);
+ assert.match(await readFile(path.join(dir,'run-report.md'),'utf8'),/\$2\.00 estimated from the price table/);
+ noteUsage({input:1_000_000,output:0},'gpt-5');await new Promise(r=>setTimeout(r,50));
+ assert.equal(RUN.usage.estimatedUsd,3,'noteUsage passes the model on');
 });

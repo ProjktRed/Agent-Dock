@@ -11,6 +11,14 @@ export function effectiveWorkflow(settings: Settings, project: Project): Workflo
 }
 
 /** The agent filling a workflow role for a project: project override first, then the first enabled agent with that role. */
+/** --prices JSON for the engine: valid rows only, or null when the table is empty. */
+export function pricesArg(prices: WorkflowSettings["prices"]): string | null {
+  const usd = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
+  const rows = (prices ?? []).filter((p) => p && typeof p.model === "string" && p.model.trim())
+    .map((p) => ({ model: p.model.trim(), input: usd(p.input), cachedInput: usd(p.cachedInput), output: usd(p.output) }));
+  return rows.length ? JSON.stringify(rows) : null;
+}
+
 export function agentForRole(role: EngineRole, project: Project, agents: Agent[]): Agent | null {
   const overrideId = project.roleOverrides[role];
   if (overrideId) {
@@ -342,6 +350,8 @@ export function buildEngineArgs(input: {
       "--max-tokens", String(Math.round(whole(limits.maxMillionTokens) * 1_000_000)), "--max-cost", String(whole(limits.maxCostUsd)),
       "--max-tokens-day", String(Math.round(whole(limits.maxMillionTokensDay) * 1_000_000)), "--max-cost-day", String(whole(limits.maxCostUsdDay)));
   }
+  const prices = pricesArg(workflow.prices);
+  if (prices) args.push("--prices", prices);
 
   return {
     args,

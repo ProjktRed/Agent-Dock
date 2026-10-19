@@ -127,14 +127,19 @@ export interface WorkflowSettings {
   /** Unattended mode: guards locked on, automatic continuation, and run-wide limits the engine enforces. */
   unattended: boolean;
   /** 0 = no limit, except corrections, which always need a limit when unattended. Token budgets are in millions;
-   *  spend budgets in USD count only what the CLIs report (Claude Code, OpenCode). */
+   *  spend budgets in USD count what the CLIs report, plus estimates from `prices` for CLIs that report none (Codex). */
   unattendedLimits: {
     maxTasks: number; maxHours: number; maxCorrections: number; maxElevations: number;
     maxMillionTokens?: number; maxCostUsd?: number; maxMillionTokensDay?: number; maxCostUsdDay?: number;
   };
+  /** Price table for spend: USD per million tokens. A model ending in * matches by prefix. */
+  prices?: ModelPrice[];
   /** Supervisor v1: deterministic monitors; may alert, and pause or stop when allowed. */
   supervisor?: SupervisorSettings;
 }
+
+/** One model's price in USD per million tokens; cachedInput is for input read from a prompt cache. */
+export interface ModelPrice { model: string; input: number; cachedInput: number; output: number }
 
 export interface SupervisorSettings {
   /** off: no monitors · alert: alerts only · pause / stop: alerts, and serious ones pause or stop the run at the next safe point. */

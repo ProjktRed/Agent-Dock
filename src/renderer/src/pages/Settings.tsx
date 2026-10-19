@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { takeSettingsSection, type SettingsSection } from "../lib/nav";
-import type { Agent, EngineTuning, LibraryPreview, NotifyChannel, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -446,7 +446,7 @@ function Safety() {
               ["maxCorrections", "Corrections per task", "then stop for you (at least 1)"],
               ["maxElevations", "Automatic Elevations per run", "0 = no limit"],
               ["maxMillionTokens", "Token budget per run (millions)", "cache reads not counted; 0 = no limit"],
-              ["maxCostUsd", "Spend budget per run (USD)", "Claude Code and OpenCode report cost; 0 = no limit"],
+              ["maxCostUsd", "Spend budget per run (USD)", "reported cost, or the price table below; 0 = no limit"],
               ["maxMillionTokensDay", "Token budget per day (millions)", "this project, all runs today"],
               ["maxCostUsdDay", "Spend budget per day (USD)", "this project, all runs today"],
             ] as const).map(([key, label, hint]) => {
@@ -462,6 +462,7 @@ function Safety() {
           </div>
         )}
       </section>
+      <PriceTableCard />
       <SupervisorCard />
       <StopAllCard />
       <section className="card pad stack" style={{ gap: 12 }}>
@@ -507,6 +508,43 @@ const NOTIFY_ROWS: { kind: NotifyChannel; title: string; help: string; fields: {
   { kind: "telegram", title: "Telegram", help: "A bot from @BotFather and the chat it writes to. Send your bot a message first, then use your numeric chat ID (for example from @userinfobot).", fields: [{ key: "token", label: "bot token", placeholder: "123456789:ABC…", secret: true }, { key: "chatId", label: "chat ID", placeholder: "chat ID" }] },
   { kind: "email", title: "Email (AgentMail)", help: "Sent from your AgentMail inbox with its API key. Only what needs you, never routine alerts or digests.", fields: [{ key: "apiKey", label: "API key", placeholder: "AgentMail API key", secret: true }, { key: "inbox", label: "from inbox", placeholder: "you@agentmail.to" }, { key: "to", label: "send to", placeholder: "me@example.com" }] },
 ];
+
+/** Prices for CLIs that report tokens but no cost (Codex), so spend budgets and reports cover them. */
+function PriceTableCard() {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const [rows, setRows] = useState<ModelPrice[]>(snap.settings.workflow.prices ?? []);
+  useEffect(() => setRows(snap.settings.workflow.prices ?? []), [snap.settings.workflow.prices]);
+  const save = (next: ModelPrice[]) => { setRows(next); void patch("workflow", { prices: next.filter((p) => p.model.trim()) }); };
+  const edit = (i: number, model: string) => setRows(rows.map((r, j) => (j === i ? { ...r, model } : r)));
+  const commit = (i: number, key: keyof ModelPrice, raw: string) => {
+    if (key === "model") return save(rows.map((r, j) => (j === i ? { ...r, model: raw.trim() } : r)));
+    const v = Number(raw);
+    save(rows.map((r, j) => (j === i ? { ...r, [key]: Number.isFinite(v) && v >= 0 ? v : 0 } : r)));
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Price table</h2>
+      <div className="sub">USD per million tokens. Claude Code, OpenCode and Cline report their own cost; Codex reports only tokens, so its spend counts toward budgets and run reports only for models listed here. A model ending in * matches every model that starts with it (for example gpt-5*). Check your provider's current prices.</div>
+      {rows.length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
+          {rows.map((r, i) => (
+            <div className="grid-4" key={i} style={{ alignItems: "end" }}>
+              <label className="field"><span>Model</span>
+                <input className="input mono" value={r.model} aria-label="Model" placeholder="gpt-5*" onChange={(e) => edit(i, e.target.value)} onBlur={(e) => commit(i, "model", e.target.value)} /></label>
+              {([["input", "Input"], ["cachedInput", "Cached input"], ["output", "Output"]] as const).map(([key, label]) => (
+                <label className="field" key={key}><span>{label}</span>
+                  <input className="input mono" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
+              ))}
+              <div><button className="btn sm" onClick={() => save(rows.filter((_, j) => j !== i))}>Remove</button></div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div><button className="btn" onClick={() => setRows([...rows, { model: "", input: 0, cachedInput: 0, output: 0 }])}>Add model</button></div>
+    </section>
+  );
+}
 
 /** Supervisor v1 (monitors, what it may do) and the remote notification channels. */
 function SupervisorCard() {

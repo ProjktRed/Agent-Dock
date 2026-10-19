@@ -695,7 +695,8 @@ export class ClineCliWorker {
         } else {
           // No llama.cpp counters (Ollama, cloud providers): use the usage Cline reports at the end.
           const usage = clineUsage(result?.runResult ?? failure?.runResult);
-          noteUsage(usage);
+          // Local providers cost nothing; a cloud model without a reported cost is priced from the table.
+          noteUsage(usage, ["ollama", "llamacpp"].includes(identity.requestedProvider ?? identity.provider) ? null : identity.model);
           if (usage) {
             const local = ["ollama", "llamacpp"].includes(identity.requestedProvider ?? identity.provider);
             await onEvent({ type: "cline-provider-metrics", runStartedAt, requestedProvider: identity.requestedProvider, provider: identity.provider, baseUrl: identity.baseUrl, model: identity.model, promptTokens: usage.input, cachedTokens: usage.cached, generatedTokens: usage.output, costUsd: usage.costUsd, local, source: "run-result", failed: Boolean(failure || result?.exitCode !== 0) });

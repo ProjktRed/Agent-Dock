@@ -99,6 +99,13 @@ describe("engine launch args", () => {
     expect(noLimit.problems).toContain("Unattended mode needs a correction limit of at least 1.");
     expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--unattended");
   });
+  it("passes the price table only when it has rows, dropping rows without a model", () => {
+    const base = settings();
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: base }).args).not.toContain("--prices");
+    const s = { ...base, workflow: { ...base.workflow, prices: [{ model: " gpt-5* ", input: 1.25, cachedInput: 0.125, output: 10 }, { model: "", input: 3, cachedInput: 0, output: 0 }, { model: "x", input: -1, cachedInput: Number.NaN, output: 2 }] } };
+    const args = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(JSON.parse(args[args.indexOf("--prices") + 1])).toEqual([{ model: "gpt-5*", input: 1.25, cachedInput: 0.125, output: 10 }, { model: "x", input: 0, cachedInput: 0, output: 2 }]);
+  });
   it("passes the Supervisor's mode and thresholds, and only the mode when it is off", () => {
     const base = settings();
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, mode: "pause", millionTokensPerTask: 1.5, digestHours: 2 } } } });

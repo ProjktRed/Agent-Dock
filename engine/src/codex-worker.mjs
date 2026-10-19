@@ -323,7 +323,7 @@ export class CodexWorker {
       this.activeCount--;
       output ||= [stdoutOutput, stderrOutput].filter(Boolean).join("\n");
       await writeFile(path.join(invocation, "events.ndjson"), output);
-      noteUsage(codexUsage(stdoutOutput));
+      noteUsage(codexUsage(stdoutOutput), model);
     }
     return parse(await readFile(outputFile, "utf8"));
   }
