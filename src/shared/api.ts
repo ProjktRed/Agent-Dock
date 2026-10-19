@@ -137,6 +137,10 @@ export interface DesktopApi {
   rerunTask(projectId: string, taskId: string): Promise<void>;
   /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
   openPullRequest(projectId: string): Promise<string>;
+  /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
+  addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
+  /** Removes a lane's worktree and its project entry; its branch and commits stay. */
+  removeLane(projectId: string, force: boolean): Promise<Project[]>;
   /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
   gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;

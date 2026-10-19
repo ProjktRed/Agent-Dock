@@ -38,6 +38,9 @@ export interface Project {
   prMode?: boolean;
   /** The branch the current run branch was made from (the pull request's base). */
   prBase?: string | null;
+  /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
+  parentId?: string | null;
+  laneBranch?: string | null;
 }
 
 export interface ProjectSchedule {

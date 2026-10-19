@@ -18,6 +18,7 @@ import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramC
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { dueScheduledStart } from "@shared/schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
+import { addLaneWorktree, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -784,6 +785,33 @@ function registerIpc() {
   handle("project:history", async (id: string) => {
     const p = project(id), saved = await savedTaskIds(p.stateDir);
     return taskHistory(await readActivity(p.stateDir, 20_000)).map((h) => ({ ...h, canRerun: canRerun(saved, h.taskId) }));
+  });
+  handle("project:addLane", async (parentId: string, name: string, objective: string) => {
+    const parent = project(parentId);
+    if (parent.parentId) throw new Error("Add lanes to the main project, not to another lane.");
+    const lane = await addLaneWorktree(parent.path, String(name));
+    try {
+      const p = await addProject({ mode: "local", path: lane.path, name: `${parent.name} · ${String(name).trim()}`, objective: String(objective).trim() || parent.objective }, store.data.projects, stateRoot);
+      store.data.projects.push({ ...p, parentId, laneBranch: lane.branch, roleOverrides: { ...parent.roleOverrides }, workflowOverrides: { ...parent.workflowOverrides } });
+    } catch (error) {
+      await removeLaneWorktree(parent.path, lane.path, true).catch(() => {});
+      throw error;
+    }
+    await store.saveProjects();
+    return store.data.projects;
+  });
+  handle("project:removeLane", async (id: string, force: boolean) => {
+    const lane = project(id);
+    if (!lane.parentId) throw new Error("This project is not a parallel lane.");
+    if (engine.isAlive(id)) throw new Error("Stop the lane's automation first.");
+    const parent = store.data.projects.find((x) => x.id === lane.parentId);
+    try { await removeLaneWorktree(parent?.path ?? lane.path, lane.path, force === true); }
+    catch (error) { throw new Error(`${(error as Error).message} Commit or discard the lane's changes in its folder first.`); }
+    store.data.projects = store.data.projects.filter((x) => x.id !== id);
+    if (store.data.settings.activeProjectId === id) store.data.settings.activeProjectId = lane.parentId;
+    await Promise.all([store.saveProjects(), store.saveSettings()]);
+    lastStatus.delete(id);
+    return store.data.projects;
   });
   handle("project:openPullRequest", async (id: string) => {
     const p = project(id);
