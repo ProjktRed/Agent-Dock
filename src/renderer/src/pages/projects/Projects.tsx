@@ -48,6 +48,7 @@ function WorkflowTab({ project }: { project: Project }) {
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
       {!project.parentId && <LanesRow project={project} />}
+      <WslRow project={project} />
       <div className="setrow">
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
         <button className="btn sm" onClick={() => window.api.openPath(project.stateDir)}>Open</button>
@@ -133,6 +134,34 @@ function LanesRow({ project }: { project: Project }) {
           <button className="btn sm" disabled={busy || !name.trim()} onClick={() => void act(() => window.api.addLane(project.id, name, objective), "Lane added as its own project")}>Add lane</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Opt-in WSL isolation: the engine and its agent CLIs run inside a WSL distro. */
+function WslRow({ project }: { project: Project }) {
+  const { saveProject, toast, statuses } = useApp();
+  const wsl = project.wsl ?? { enabled: false, distro: "" };
+  const [distro, setDistro] = useState(wsl.distro);
+  const [check, setCheck] = useState<{ ok: boolean; lines: string[] } | null>(null);
+  const running = statuses[project.id]?.processAlive === true;
+  const save = (next: Partial<typeof wsl>) => void saveProject({ ...project, wsl: { ...wsl, ...next } });
+  const runCheck = async () => {
+    try { const result = await window.api.checkWsl(distro.trim()); setCheck(result); if (result.ok) save({ distro: distro.trim() }); }
+    catch (error) { toast("error", cleanError(error)); }
+  };
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div className="grow" style={{ minWidth: 260 }}>
+        <div className="lt row" style={{ gap: 8 }}>WSL isolation (opt-in)<Support kind="engine" /></div>
+        <div className="ld">Runs the engine, and every agent CLI and command it starts, inside a WSL distro instead of Windows. Node.js, git and your agent CLIs must be installed and signed in inside the distro. Windows drives stay reachable under /mnt unless automount is off in the distro's /etc/wsl.conf; for the strongest separation keep the project in the distro (\\wsl$\…). Takes effect at the next start.</div>
+        <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+          <input className="input mono" style={{ width: 180 }} placeholder="Distro, e.g. Ubuntu" aria-label="WSL distro" value={distro} onChange={(e) => setDistro(e.target.value)} />
+          <button className="btn sm" disabled={!distro.trim()} onClick={() => void runCheck()}>Check distro</button>
+        </div>
+        {check && <div className={`mono sub ${check.ok ? "ok" : "err"}`} style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{check.lines.join("\n") || "No answer from WSL."}</div>}
+      </div>
+      <Toggle on={wsl.enabled} onChange={(v) => { if (v && !(wsl.distro || distro.trim())) return toast("warning", "Enter and check a distro first."); save({ enabled: v, distro: wsl.distro || distro.trim() }); }} label="WSL isolation" danger={running} />
     </div>
   );
 }

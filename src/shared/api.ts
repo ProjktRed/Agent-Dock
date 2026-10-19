@@ -141,6 +141,8 @@ export interface DesktopApi {
   addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
   /** Removes a lane's worktree and its project entry; its branch and commits stay. */
   removeLane(projectId: string, force: boolean): Promise<Project[]>;
+  /** WSL isolation: what the distro has (Node.js, git, agent CLIs). */
+  checkWsl(distro: string): Promise<{ ok: boolean; lines: string[] }>;
   /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
   gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;

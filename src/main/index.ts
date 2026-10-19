@@ -25,7 +25,7 @@ import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from ".
 import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
-import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
+import { ownerFixCommand, run, sharedGitOwnerProblem } from "./lib/git";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { interruptedWork } from "./lib/status";
 import { STAGING, Updater } from "./updater";
@@ -300,10 +300,10 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
   // Pull-request mode: a fresh start works on its own branch, never on the branch you had checked out.
   if (starting && action === "start" && p.prMode) {
-    const run = await ensureRunBranch(p.path, p.prBase ?? null);
-    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, prBase: run.base } : x));
+    const runBranch = await ensureRunBranch(p.path, p.prBase ?? null);
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, prBase: runBranch.base } : x));
     await store.saveProjects();
-    if (run.created) notice({ kind: "info", message: `Pull-request mode: working on ${run.branch} (from ${run.base}).` });
+    if (runBranch.created) notice({ kind: "info", message: `Pull-request mode: working on ${runBranch.branch} (from ${runBranch.base}).` });
   }
   // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
   if (starting) {
@@ -812,6 +812,13 @@ function registerIpc() {
     await Promise.all([store.saveProjects(), store.saveSettings()]);
     lastStatus.delete(id);
     return store.data.projects;
+  });
+  handle("wsl:check", async (distro: string) => {
+    if (process.platform !== "win32") return { ok: false, lines: ["WSL isolation is for Windows."] };
+    if (!/^[\w.-]{1,64}$/.test(String(distro))) return { ok: false, lines: ["Enter the distro's name (wsl -l shows them)."] };
+    const r = await run("wsl.exe", ["-d", String(distro), "--exec", "sh", "-lc", "for c in node git codex claude cline opencode; do p=$(command -v $c) && echo \"$c: $p\" || echo \"$c: not found\"; done; node --version 2>/dev/null"], { timeoutMs: 60_000 });
+    const lines = (r.stdout || r.stderr).replace(/\0/g, "").trim().split(/\r?\n/).filter(Boolean);
+    return { ok: r.code === 0 && lines.some((l) => /^node: \//.test(l)) && lines.some((l) => /^git: \//.test(l)), lines };
   });
   handle("project:openPullRequest", async (id: string) => {
     const p = project(id);

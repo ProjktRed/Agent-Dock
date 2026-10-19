@@ -41,6 +41,8 @@ export interface Project {
   /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
   parentId?: string | null;
   laneBranch?: string | null;
+  /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
+  wsl?: { enabled: boolean; distro: string };
 }
 
 export interface ProjectSchedule {
