@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useState } from "react";
-import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus } from "@shared/types";
+import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
 import { useApp } from "../../store";
-import { clock, duration, engineStageLabel } from "../../lib/format";
+import { clock, duration, engineStageLabel, tokens } from "../../lib/format";
+import { planEstimate } from "../../lib/estimate";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
@@ -198,7 +199,14 @@ export function ProgressTab() {
   const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" || implCli?.kind === "opencode" ? `${implCli.name} · ${providerName ?? "provider"}${impl.model ? ` · ${impl.model}` : ""}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
   const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunReport[]>([]);
   const [, tick] = useState(0);
+  useEffect(() => {
+    if (!activeProject) return;
+    let live = true;
+    window.api.runs(activeProject.id).then((r) => live && setRuns(r), () => {});
+    return () => { live = false; };
+  }, [activeProject, s?.processAlive]);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
@@ -242,6 +250,12 @@ export function ProgressTab() {
             <span className="grow" />
             {plan.total ? <span>{plan.total - plan.completed} remaining</span> : null}
           </div>
+          {(() => {
+            const est = plan.total ? planEstimate(plan.total - plan.completed, runs) : null;
+            if (!est) return null;
+            const hrs = est.hours < 1 ? `${Math.max(1, Math.round(est.hours * 60))} min` : `${est.hours.toFixed(1)} h`;
+            return <div className="sub" title={`At this project's pace over its last ${est.basisTasks} approved task(s); each plan item counted as one task.`}>Estimate for the rest: about {hrs} · {tokens(Math.round(est.tokens))} tokens{est.costUsd ? ` · ${est.costUsd.toFixed(2)}` : ""}</div>;
+          })()}
         </div>
         <div className="stack">
           <div className="row sub">
