@@ -109,8 +109,9 @@ let models: ModelsService;
 async function applyUpdate() {
   const running = store.data.projects.filter((p) => engine.isAlive(p.id));
   if (running.length) throw new Error(`Stop the automation first (${running.map((p) => p.name).join(", ")}). Updating replaces the engine files.`);
-  await updater.apply(store.data.settings, () => {
+  await updater.apply(store.data.settings, (relaunch) => {
     quitting = true;
+    if (relaunch) app.relaunch({ execPath: relaunch, args: [] });
     app.quit();
   });
 }

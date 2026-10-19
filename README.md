@@ -59,6 +59,9 @@ review steps (workflow roles), such as a second-opinion QA on another CLI.
 2. The installer is not code-signed yet, so Windows SmartScreen may warn about an unknown publisher.
    Choose **More info › Run anyway**. Each release's notes list the installer's SHA-256 if you want
    to check the file first.
+3. **Linux (preview):** download `AgentDock-<version>-linux-x86_64.AppImage` from the same release,
+   make it executable (`chmod +x`) and run it. It updates itself from signed releases like the
+   Windows app. Windows remains the main platform.
 
 **You need:** Windows 10 or 11, [Git](https://git-scm.com/download/win), and at least one agent CLI,
 installed and signed in: [Codex CLI](https://github.com/openai/codex) or

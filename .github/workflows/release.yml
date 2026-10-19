@@ -2,6 +2,9 @@
 # installer and a zip, signs a manifest of the zip with the RELEASE_SIGNING_KEY secret (Ed25519) and
 # publishes a GitHub Release in this repository with the workflow's own token. Installed apps verify
 # the signature before updating.
+# Then (0.33) a Linux job builds the AppImage, signs its own manifest (manifest-linux-x64.json/.sig)
+# and adds them to the same release. It runs after the Windows release, so a Linux build problem
+# never holds back the Windows update.
 # Run it by hand (Actions › Release › Run workflow, once this file is on the default branch) or push a
 # tag ending in -dry (v0.24.2-dry) for a dry run: the same checks and build, with the
 # installer and zip attached to the run as an artifact; nothing is signed or published.
@@ -113,3 +116,48 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md
+
+  linux:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Icon
+        run: node -e "import('./scripts/logo.mjs').then(m=>{require('fs').mkdirSync('build',{recursive:true});require('fs').writeFileSync('build/icon.png',m.logoPng(256))})"
+      - name: Build AppImage
+        env:
+          AGENT_DOCK_BUILD_SOURCE: https://github.com/${{ github.repository }}
+          AGENT_DOCK_BUILD_BRANCH: release
+        run: npm run package:appimage
+      - name: Packaged security (fuses, bundled Node, debug switches refused)
+        # Headless runner: a virtual display, and no Chromium sandbox (unprivileged namespaces are off there).
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
+        run: xvfb-run -a node scripts/verify-packaged-security.mjs dist/linux-unpacked/AgentDock
+      - name: Dry run artifact
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: AgentDock-${{ env.VERSION }}-linux-dry-run
+          path: dist/AgentDock-${{ env.VERSION }}-linux-x86_64.AppImage
+          retention-days: 7
+      - name: Sign
+        if: env.DRY_RUN != 'true'
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: node scripts/sign-release.mjs --platform linux-x64 --zip "dist/AgentDock-$VERSION-linux-x86_64.AppImage" --version "$VERSION" --commit "$GITHUB_SHA" --out .
+      - name: Add to the release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-$VERSION-linux-x86_64.AppImage" manifest-linux-x64.json manifest-linux-x64.sig

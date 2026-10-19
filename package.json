@@ -17,6 +17,7 @@
     "package": "electron-vite build && electron-builder --win --dir --publish never",
     "package:installer": "electron-vite build && electron-builder --win nsis --publish never",
     "package:linux": "electron-vite build && electron-builder --linux --dir",
+    "package:appimage": "electron-vite build && electron-builder --linux AppImage --publish never",
     "release:local": "node scripts/release-local.mjs --launch"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }, { "from": "scripts", "to": "scripts", "filter": ["swap.mjs"] }],
     "win": { "target": "dir", "icon": "build/icon.png" },
     "nsis": { "oneClick": true, "perMachine": false, "include": "scripts/installer.nsh", "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}", "shortcutName": "Agent Dock", "uninstallDisplayName": "Agent Dock", "deleteAppDataOnUninstall": false },
-    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" }
+    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" },
+    "appImage": { "artifactName": "AgentDock-${version}-linux-x86_64.${ext}" }
   }
 }

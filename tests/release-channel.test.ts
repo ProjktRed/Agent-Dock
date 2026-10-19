@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkRelease, downloadRelease, newerVersion, verifyManifest } from "../src/main/release-channel";
+import { checkRelease, downloadRelease, installAppImage, newerVersion, releasePlatform, verifyManifest } from "../src/main/release-channel";
 import { buildManifest, generateKeyPair, signManifest } from "../scripts/sign-release.mjs";
 import { isUninstaller, swap, uninstallVersionScript } from "../scripts/swap.mjs";
 import { stagingDir } from "../src/main/updater";
@@ -71,6 +71,44 @@ describe("signed releases", () => {
     await expect(checkRelease("not a repo", "0.22.1", keys.publicKeyPem, gh.fetchImpl)).rejects.toThrow(/owner\/name/);
     const missing = (async () => new Response("", { status: 404 })) as unknown as typeof fetch;
     await expect(checkRelease("ProjktRed/Agent-Dock", "0.22.1", keys.publicKeyPem, missing)).rejects.toThrow(/No published release/);
+  });
+
+  it("Linux: a signed AppImage has its own manifest, and neither platform accepts the other's", async () => {
+    expect([releasePlatform("win32"), releasePlatform("linux"), releasePlatform("darwin")]).toEqual(["win-x64", "linux-x64", null]);
+    const dir = await tmp();
+    const appImage = path.join(dir, "AgentDock-0.33.0-linux-x86_64.AppImage");
+    writeFileSync(appImage, Buffer.from("ELF fake AppImage"));
+    await expect(buildManifest({ zip: appImage, version: "0.33.0", commit: COMMIT })).rejects.toThrow(/must end in .zip/);
+    const manifest = await buildManifest({ zip: appImage, version: "0.33.0", commit: COMMIT, platform: "linux-x64" });
+    const sig = signManifest(manifest, keys.privateKeyPem);
+    expect(verifyManifest(manifest, sig, keys.publicKeyPem, "linux-x64").file).toBe(path.basename(appImage));
+    expect(() => verifyManifest(manifest, sig, keys.publicKeyPem)).toThrow(/not agent-dock\/win-x64/);
+    const win = await signedRelease();
+    expect(() => verifyManifest(win.manifest, win.sig, keys.publicKeyPem, "linux-x64")).toThrow(/not agent-dock\/linux-x64/);
+    const fetchImpl = (async (url: string) => {
+      if (String(url).endsWith("/releases/latest")) return new Response(JSON.stringify({ tag_name: "v0.33.0", assets: [
+        { name: "manifest.json", browser_download_url: "https://dl/manifest.json" }, { name: "manifest.sig", browser_download_url: "https://dl/manifest.sig" },
+        { name: "manifest-linux-x64.json", browser_download_url: "https://dl/manifest-linux-x64.json" }, { name: "manifest-linux-x64.sig", browser_download_url: "https://dl/manifest-linux-x64.sig" },
+        { name: path.basename(appImage), browser_download_url: "https://dl/appimage" }] }), { status: 200 });
+      if (String(url).endsWith("manifest-linux-x64.json")) return new Response(manifest);
+      if (String(url).endsWith("manifest-linux-x64.sig")) return new Response(sig);
+      if (String(url).endsWith("manifest.json")) return new Response(win.manifest);
+      if (String(url).endsWith("manifest.sig")) return new Response(win.sig);
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    const info = await checkRelease("o/r", "0.32.0", keys.publicKeyPem, fetchImpl, "linux-x64");
+    expect([info?.manifest.platform, info?.zipUrl]).toEqual(["linux-x64", "https://dl/appimage"]);
+  });
+
+  it("Linux: the AppImage is replaced whole and stays executable; a missing AppImage path is refused", async () => {
+    const dir = await tmp();
+    const target = path.join(dir, "Agent Dock.AppImage"), downloaded = path.join(dir, "new.AppImage");
+    writeFileSync(target, "old"); writeFileSync(downloaded, "new");
+    installAppImage(downloaded, target);
+    expect(readFileSync(target, "utf8")).toBe("new");
+    expect(existsSync(`${target}.update`)).toBe(false);
+    expect(() => installAppImage(downloaded, "")).toThrow(/not running from an AppImage/);
+    expect(() => installAppImage(downloaded, path.join(dir, "missing.AppImage"))).toThrow(/not running from an AppImage/);
   });
 
   it("keeps a download only when its size and SHA-256 match the signed manifest", async () => {
