@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
 import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
-import { discoverClis, foundTools, systemProbes } from "./discovery";
+import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
 import { checkCli, detectOnPath, pickRunnable, whereAll } from "./lib/clis";
@@ -904,7 +904,7 @@ app.whenReady().then(async () => {
     await store.saveClis();
   }
   if (!store.data.agents) {
-    const found = foundTools(store.data.clis);
+    const found = foundTools(store.data.clis, await runningLocal(store.data.clis, systemProbes(whereAll)));
     const m = found.orchestrator ? engineInfo.orchestratorModels[found.orchestrator] : {};
     store.data.agents = defaultAgents({ qa: m.qa ?? "", assessment: m.assessment ?? "", elevate: m.elevate ?? "", reasoning: m.reasoning ?? "" }, found);
     await store.saveAgents();

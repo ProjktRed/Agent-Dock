@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus } from "@shared/types";
 import { useApp } from "../../store";
-import { clock, duration } from "../../lib/format";
+import { clock, duration, engineStageLabel } from "../../lib/format";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
@@ -9,7 +9,7 @@ import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../componen
 
 const CYCLE = [
   { key: "assessment", name: "Assessment", agent: "Plans one bounded task" },
-  { key: "implementation", name: "Implementation", agent: "Cline · local model" },
+  { key: "implementation", name: "Implementation", agent: "Makes the change" },
   { key: "qa", name: "QA", agent: "Verifies, commits on pass" },
   { key: "correction", name: "Correction / Elevation", agent: "Only after a failed QA" },
   { key: "next", name: "Next task", agent: "Back to Assessment" },
@@ -289,10 +289,10 @@ export function ProgressTab() {
           <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
         </div>
         <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: 12 }}>
-          <span><span className="sub">Stage</span> {s.stage}</span>
+          <span><span className="sub">Stage</span> {engineStageLabel(s.stage)}</span>
           <span><span className="sub">Agent</span> {s.activeRole ?? "—"}</span>
           <span><span className="sub">Status</span> <span className={s.processAlive ? "ok" : "mut"}>{s.label}</span></span>
-          <span><span className="sub">Cline elapsed</span> <span className="mono">{duration(elapsedMs)}</span></span>
+          <span><span className="sub">Implementation elapsed</span> <span className="mono">{duration(elapsedMs)}</span></span>
           <span className="grow ellipsis" style={{ minWidth: 240 }}><span className="sub">Latest outcome</span> {s.latestQa ? s.latestQa.split(/\r?\n/)[0] : "—"}</span>
         </div>
       </section>

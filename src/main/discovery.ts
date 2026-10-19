@@ -27,9 +27,19 @@ export async function discoverClis(registered: CliConnection[], probes: Probes):
   return found.filter((c): c is CliConnection => c !== null);
 }
 
-/** What the first agents can use: Codex before Claude Code for planning and QA, and Cline with a local runtime. */
-export function foundTools(clis: CliConnection[]): FoundTools {
-  const has = (kind: CliConnection["kind"]) => clis.some((c) => c.kind === kind);
+/** The local model servers that answer right now (installed is not enough to implement with). */
+export async function runningLocal(clis: CliConnection[], probes: Probes): Promise<CliConnection["kind"][]> {
+  const local = clis.filter((c) => c.kind === "llamacpp" || c.kind === "ollama");
+  const up = await Promise.all(local.map((c) => probes.answers(c.kind === "llamacpp" ? `${base(c.location)}/health` : `${base(c.location)}/api/version`).catch(() => false)));
+  return local.filter((_, i) => up[i]).map((c) => c.kind);
+}
+
+/**
+ * What the first agents can use: Codex before Claude Code for planning and QA, and Cline on a local
+ * runtime that is running (all registered ones when `running` is not given).
+ */
+export function foundTools(clis: CliConnection[], running?: CliConnection["kind"][]): FoundTools {
+  const has = (kind: CliConnection["kind"]) => clis.some((c) => c.kind === kind) && (!running || !["llamacpp", "ollama"].includes(kind) || running.includes(kind));
   return {
     orchestrator: has("codex") ? "codex" : has("claude") ? "claude" : null,
     local: has("cline") ? (has("llamacpp") ? "llamacpp" : has("ollama") ? "ollama" : null) : null,

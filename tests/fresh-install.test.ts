@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { discoverClis, foundTools, type Probes } from "../src/main/discovery";
+import { discoverClis, foundTools, runningLocal, type Probes } from "../src/main/discovery";
 import { buildEngineArgs } from "../src/main/lib/engine-args";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, ENGINE_DEFAULTS, defaultAgents } from "../src/shared/defaults";
 import type { Project } from "../src/shared/types";
@@ -22,6 +22,10 @@ describe("a fresh install", () => {
     expect(local.map((c) => c.kind).sort()).toEqual(["cline", "llamacpp", "ollama"]);
   });
 
+  it("knows which local model servers answer", async () => {
+    expect(await runningLocal(DEFAULT_CLIS, probes([], ["http://127.0.0.1:11434/api/version"]))).toEqual(["ollama"]);
+  });
+
   it("adds nothing already registered when discovery runs again", async () => {
     const first = await discoverClis([], probes(["codex"]));
     expect(await discoverClis(first, probes(["codex", "claude"]))).toMatchObject([{ kind: "claude" }]);
@@ -34,6 +38,10 @@ describe("a fresh install", () => {
     expect([impl.model, impl.provider]).toEqual(["", undefined]);
     const local = defaultAgents(models, foundTools(DEFAULT_CLIS.filter((c) => ["codex", "cline", "ollama"].includes(c.kind))));
     expect(local.find((a) => a.role === "implementation")).toMatchObject({ cliId: "cline", provider: "ollama", model: "" });
+    // Ollama installed but not running: implement with the cloud CLI rather than a server that is down.
+    const installed = DEFAULT_CLIS.filter((c) => ["codex", "cline", "ollama"].includes(c.kind));
+    expect(foundTools(installed, []).local).toBeNull();
+    expect(foundTools(installed, ["ollama"]).local).toBe("ollama");
     const nothing = defaultAgents(models, foundTools([]));
     expect(nothing.every((a) => a.cliId === "")).toBe(true);
   });

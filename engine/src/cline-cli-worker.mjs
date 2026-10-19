@@ -8,7 +8,7 @@ import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
-import { noteUsage } from "./run-budget.mjs";
+import { clineUsage, noteUsage } from "./run-budget.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -692,6 +692,9 @@ export class ClineCliWorker {
           } catch (metricsError) {
             await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
           }
+        } else {
+          // No llama.cpp counters (Ollama, cloud providers): use the usage Cline reports at the end.
+          noteUsage(clineUsage(result?.runResult ?? failure?.runResult));
         }
       } finally {
         if (this.cleanupAfterRun) {

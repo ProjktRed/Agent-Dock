@@ -67,3 +67,29 @@ export const roleLabel: Record<string, string> = {
 export function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+/** The engine's internal stage ids (some still named after Codex and Cline) in words for any CLI. */
+const STAGE_LABELS: Record<string, string> = {
+  waiting: "Waiting",
+  "current-task": "Assessment",
+  "cline-working": "Implementation",
+  "cline-complete": "Implementation finished",
+  "codex-qa": "QA",
+  fail: "QA failed",
+  retry: "Correction",
+  pass: "QA passed",
+  complete: "Plan complete",
+  elevating: "Elevation",
+  resolving: "Resolver",
+  USER_ATTENTION: "Needs your attention",
+  BLOCKED: "Blocked",
+  WAITING_FOR_CODEX: "Waiting for usage limit",
+  paused: "Paused",
+  stopped: "Stopped",
+  "manual-review": "Manual review",
+};
+
+export function engineStageLabel(stage: string | null | undefined): string {
+  if (!stage) return "—";
+  return STAGE_LABELS[stage] ?? stage.replace(/[-_]+/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}

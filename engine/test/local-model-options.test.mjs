@@ -107,9 +107,10 @@ test("llama.cpp that is not running, with no models folder or launcher, says how
 });
 
 test("llama-server is found on PATH and its direct arguments carry thinking", () => {
-  const dirs = ["C:\\tools", "C:\\llama"].join(path.delimiter);
+  const tools = path.resolve("tools"), llama = path.resolve("llama");
+  const dirs = [tools, llama].join(path.delimiter);
   const exe = process.platform === "win32" ? "llama-server.exe" : "llama-server";
-  assert.equal(findLlamaServer({ PATH: dirs }, process.platform, (p) => p === path.join("C:\\llama", exe)), path.join("C:\\llama", exe));
+  assert.equal(findLlamaServer({ PATH: dirs }, process.platform, (p) => p === path.join(llama, exe)), path.join(llama, exe));
   assert.equal(findLlamaServer({ PATH: dirs }, process.platform, () => false), null);
   assert.deepEqual(llamaServerArgs({ baseUrl: "http://localhost:8080/v1", modelsDir: "m", thinking: "high" }), ["--models-dir", "m", "--host", "localhost", "--port", "8080", "--metrics", "--reasoning", "on", "--reasoning-effort", "high"]);
 });

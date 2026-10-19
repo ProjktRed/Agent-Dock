@@ -137,6 +137,17 @@ export function openCodeUsage(events) {
   return found ? total : null;
 }
 
+/**
+ * cline --json: the final run_result's usage (any provider, Ollama included). Cache reads are not
+ * part of inputTokens, as with Claude.
+ */
+export function clineUsage(runResult) {
+  const u = runResult?.aggregateUsage ?? runResult?.usage;
+  if (!u) return null;
+  const cached = Number(u.cacheReadTokens) || 0;
+  return { input: (Number(u.inputTokens) || 0) + (Number(u.cacheWriteTokens) || 0) + cached, cached, output: Number(u.outputTokens) || 0, costUsd: Number(u.totalCost) || 0 };
+}
+
 /** Automatic Elevation stays available until the run's Elevation limit is used. */
 export function elevationAllowed() {
   return !RUN.maxElevations || RUN.elevations < RUN.maxElevations;

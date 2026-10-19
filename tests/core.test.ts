@@ -623,3 +623,14 @@ describe("log tail", () => {
     }
   });
 });
+
+describe("engine stage labels", () => {
+  it("names stages by role, not by the CLI they were first written for", async () => {
+    const { engineStageLabel } = await import("../src/renderer/src/lib/format");
+    expect(engineStageLabel("codex-qa")).toBe("QA");
+    expect(engineStageLabel("cline-working")).toBe("Implementation");
+    expect(engineStageLabel("WAITING_FOR_CODEX")).toBe("Waiting for usage limit");
+    expect(engineStageLabel("some-new_stage")).toBe("Some new stage");
+    expect(engineStageLabel(null)).toBe("—");
+  });
+});

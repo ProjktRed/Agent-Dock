@@ -93,6 +93,22 @@ test("Cline context and timeout overrides reach the isolated CLI invocation", as
   } finally { await rm(stateDir, { recursive: true, force: true }); }
 });
 
+test("without llama.cpp counters (Ollama), Cline's final usage counts toward budgets", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "cline-ollama-usage-"));
+  try {
+    const worker = new ClineCliWorker({
+      stateDir, workspace: stateDir, provider: "ollama", model: "qwen", checkExternalBusy: async () => false,
+      launch: async () => ({ exitCode: 0, output: "done", runResult: { finishReason: "completed", usage: { inputTokens: 900, outputTokens: 120, cacheReadTokens: 100, totalCost: 0 } } }),
+    });
+    const { RUN, clineUsage } = await import("../src/run-budget.mjs");
+    const before = { ...RUN.usage };
+    await worker.run("task", { onEvent: async () => {} });
+    assert.deepEqual([RUN.usage.input - before.input, RUN.usage.cached - before.cached, RUN.usage.output - before.output], [1000, 100, 120]);
+    assert.equal(clineUsage({ finishReason: "completed" }), null);
+    assert.equal(clineUsage({ usage: { inputTokens: 1, outputTokens: 1 }, aggregateUsage: { inputTokens: 5, outputTokens: 2, totalCost: 0.25 } }).costUsd, 0.25);
+  } finally { await rm(stateDir, { recursive: true, force: true }); }
+});
+
 test("llama.cpp readiness and metrics are checked around every Cline attempt", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "cline-llamacpp-attempt-"));
   const events = [];
