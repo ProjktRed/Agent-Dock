@@ -149,6 +149,6 @@ or submodule contents.
   in its environment, because the CLI calls the provider itself. Use a key limited to that provider
   and project, with a spending cap at the provider.
 - Spend budgets count the cost a CLI reports (Claude Code, OpenCode, and Cline on a cloud provider).
-  Codex reports only tokens, so its spend counts only for models listed in Settings › Workflow rules
+  Codex reports only tokens, so its spend counts only for models listed in Settings › Execution & safety
   › Price table, which estimates cost from the tokens. Local model servers (llama.cpp, Ollama) cost
   nothing and are never priced; token budgets still include their tokens.
