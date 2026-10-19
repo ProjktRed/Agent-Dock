@@ -7,7 +7,8 @@ test in a supervised loop, and monitor progress, usage limits and token consumpt
 
 The loop runs in the engine in [`engine/`](engine/), with per-role models, reasoning effort and
 speed, a choice of implementation CLI, custom workflow roles and adjustable loop limits. The app
-launches it as a separate process per project and reads the engine's `.state` files.
+launches it as a separate process per project and reads the engine's `.state` files. The engine's
+own flags and behaviour are described in [engine/ENGINE_README.md](engine/ENGINE_README.md).
 
 ## Getting started
 
@@ -23,9 +24,10 @@ signature matches the release key built into the app.
 installed and signed in. Agent Dock never handles their logins. Optional: Cline CLI with
 llama.cpp or Ollama, to implement with a local model instead of a cloud CLI.
 
-1. **Setup** opens on first launch. Step 1 checks Git, the CLI for planning and QA, and the
-   Implementation agent's CLI. If only Codex or only Claude Code is installed, one button points
-   the agents at it, on its default model; change models later in **Agents**.
+1. **Setup** opens on first launch. A new install registers only the CLIs and local model servers
+   it finds on this computer (PATH and local ports) and points the agents at them, on each CLI's
+   default model. Step 1 checks Git and those CLIs; **Detect again** picks up anything installed
+   later. A local model has no default: choose it in **Agents**.
 2. **Add a project:** an existing Git repository, a GitHub clone, or a new folder. Give it an
    objective (what the loop should build), or let **Create plan with a model** write an
    `IMPLEMENTATION_PLAN.md` for you to review.
@@ -59,6 +61,9 @@ npm install
 ```bash
 npm run dev
 ```
+
+Development runs keep their own settings, projects and secrets in `%APPDATA%\Agent Dock Dev`, apart
+from an installed copy.
 
 Other scripts: `npm run build` (production bundle into `out/`), `npm start` (run the built app),
 `npm test` (app unit tests), `npm run test:engine` (the engine's own suite), `npm run typecheck`,
@@ -149,10 +154,11 @@ or quitting the app can leave it running safely; the app reattaches on the next 
   offers it; CLIs › Models › Refresh updates it). Ollama: `/api/tags` + `/api/show` (context and
   the `thinking` capability); needs Ollama running. llama.cpp: `/v1/models`. With a models folder
   set, llama.cpp runs in router mode (`--models-dir`): it lists every model in the folder (one per
-  subfolder) and loads the Implementation agent's model on demand, with the launcher's tuning. If
-  the server isn't running, Refresh starts the launcher in router mode just for the listing (no
-  model is loaded) and stops it again. Router mode is opt-in; without a folder the launcher serves
-  its single configured model as before.
+  subfolder) and loads the Implementation agent's model on demand. When the server isn't running,
+  Agent Dock starts it: `llama-server` from PATH on the connection's address, or a launcher script
+  set in Settings › Advanced. Refresh starts it just for the listing (no model is loaded) and stops
+  it again. Without a folder, start llama.cpp yourself with the model you want. The engine always
+  uses the connection's address (`--llamacpp-url`, `--ollama-url`).
 - **Thinking (Implementation)**: passed to Cline `--thinking`. For llama.cpp, a level other than
   Off also starts the server with `--reasoning on --reasoning-effort <level>` (only when the
   engine starts it; a running server keeps its setting). Speed tiers do not apply to local models.
@@ -271,24 +277,30 @@ debugging switches. It does not replace live-provider integration testing or an 
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file
   lock, usually antivirus or indexing). It can intermittently fail an engine test under parallel
-  load or interrupt a run. Excluding the engine state folders from real-time
-  scanning is the usual fix.
+  load or interrupt a run. The engine retries a blocked rename for about five seconds; if a lock
+  lasts longer, excluding the engine state folders from real-time scanning is the usual fix.
+- A Cline or OpenCode worker on an OpenAI-compatible cloud provider receives that provider's API
+  key in its environment, because the CLI calls the provider itself. Use a key limited to that
+  provider and project, with a spending cap at the provider.
+- Local model servers report tokens but no cost, so spend budgets cover only CLIs that report
+  their own cost (Claude Code, OpenCode); token budgets include local tokens from llama.cpp.
 
 ## Releases (maintainers)
 
 Pushing a tag `vX.Y.Z` that matches `package.json` runs `.github/workflows/release.yml`: checks and
 tests, the per-user installer (`npm run package:installer`, electron-builder NSIS), the packaged
 security check, a zip of the app, and a manifest of that zip signed with Ed25519. It publishes the
-installer, zip, `manifest.json` and `manifest.sig` to the public releases repository. Setup, once:
+installer, zip, `manifest.json` and `manifest.sig` as a GitHub Release of this repository, using the
+workflow's own token. Release notes come from `docs/release-notes/<version>.md` when that file exists,
+otherwise from the commit titles. Setup, once:
 
 1. `node scripts/sign-release.mjs --generate-key release-key.pem`, add the file's contents as the
    repository secret `RELEASE_SIGNING_KEY`, delete the file, and put the printed public key in
    `src/main/release-key.ts`.
-2. Create the public releases repository with one commit (a README). If it is not the default in
-   `release.yml`, set it as the repository variable `RELEASE_REPO`.
-3. Add the secret `RELEASES_TOKEN`: a fine-grained token with Contents read/write on the releases
-   repository only.
 
-## License
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull requests, and [SECURITY.md](SECURITY.md)
+to report a vulnerability privately. Contributors are listed in [AUTHORS](AUTHORS).
 
 [MIT](LICENSE)

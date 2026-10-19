@@ -7,7 +7,7 @@ import { checkRelease, downloadRelease, newerVersion, verifyManifest } from "../
 import { buildManifest, generateKeyPair, signManifest } from "../scripts/sign-release.mjs";
 import { isUninstaller, swap } from "../scripts/swap.mjs";
 import { stagingDir } from "../src/main/updater";
-import { DEFAULT_RELEASE_REPO, DEFAULT_SETTINGS, DEV_SOURCE, FORMER_SOURCE, updateChannel } from "../src/shared/defaults";
+import { DEFAULT_RELEASE_REPO, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL, updateChannel } from "../src/shared/defaults";
 
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
@@ -115,16 +115,16 @@ describe("signed releases", () => {
     expect(stagingDir(path.join(programs, "AgentDock", "AgentDock.exe"), local)).toBe(path.join(local, "Agent Dock", "Updates"));
   });
 
-  it("release builds always update from signed releases, in the public releases repository by default", () => {
+  it("release builds always update from signed releases, published in the source repository by default", () => {
     const git = { updates: { ...DEFAULT_SETTINGS.updates, channel: "git" as const } };
     expect(updateChannel(git, "release")).toBe("release");
     expect(updateChannel(git, "dev")).toBe("git");
     expect(updateChannel({ updates: { channel: "release" } }, "dev")).toBe("release");
     expect(DEFAULT_SETTINGS.updates.releaseRepo).toBe(DEFAULT_RELEASE_REPO);
     expect(DEFAULT_RELEASE_REPO).toBe("ProjktRed/Agent-Dock");
-    // The source moved to Agent-Dock-Dev; its old address (now the public repository) is never built from.
-    for (const old of ["https://github.com/ProjktRed/Agent-Dock.git", "https://github.com/ProjktRed/Agent-Dock", "https://github.com/projktred/agent-dock.git"]) expect(FORMER_SOURCE.test(old)).toBe(true);
-    for (const other of [DEV_SOURCE, "https://github.com/ProjktRed/Agent-Dock-Dev", "E:\GitHub repos\Agent-Dock"]) expect(FORMER_SOURCE.test(other)).toBe(false);
+    // The repository was briefly named Agent-Dock-Dev; that address maps back to the real one.
+    for (const old of ["https://github.com/ProjktRed/Agent-Dock-Dev.git", "https://github.com/ProjktRed/Agent-Dock-Dev", "https://github.com/projktred/agent-dock-dev.git"]) expect(FORMER_SOURCE.test(old)).toBe(true);
+    for (const other of [SOURCE_URL, "https://github.com/ProjktRed/Agent-Dock", "C:\\src\\Agent-Dock"]) expect(FORMER_SOURCE.test(other)).toBe(false);
   });
 });
 

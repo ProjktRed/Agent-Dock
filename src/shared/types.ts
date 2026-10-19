@@ -544,7 +544,7 @@ export interface SkillInfo {
 export interface EngineInfo {
   dir: string;
   orchestratorModels: { codex: Record<string, string>; claude: Record<string, string> };
-  defaults: { llamacppModel: string; ollamaModel: string; contextTokens: number; maxOutputTokens: number; timeoutSeconds: number };
+  defaults: { contextTokens: number; maxOutputTokens: number; timeoutSeconds: number };
 }
 
 export interface AppSnapshot {

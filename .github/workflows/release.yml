@@ -1,8 +1,7 @@
 # Signed release: pushing a tag vX.Y.Z (matching package.json) builds the Windows app, the per-user
 # installer and a zip, signs a manifest of the zip with the RELEASE_SIGNING_KEY secret (Ed25519) and
-# publishes a GitHub Release in the public releases repository (repository variable RELEASE_REPO,
-# default ProjktRed/Agent-Dock; the source is the private ProjktRed/Agent-Dock-Dev), using the RELEASES_TOKEN secret: a fine-grained token with
-# Contents read/write on that repository only. Installed apps verify the signature before updating.
+# publishes a GitHub Release in this repository with the workflow's own token. Installed apps verify
+# the signature before updating.
 # Run it by hand (Actions › Release › Run workflow, once this file is on the default branch) or push a
 # tag ending in -dry (v0.24.2-dry) for a dry run: the same checks and build, with the
 # installer and zip attached to the run as an artifact; nothing is signed or published.
@@ -14,7 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # gh release create in this repository
 
 env:
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-dry') }}
@@ -45,10 +44,8 @@ jobs:
         shell: bash
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           test -n "$RELEASE_SIGNING_KEY" || { echo "::error::Add the repository secret RELEASE_SIGNING_KEY (see scripts/sign-release.mjs)"; exit 1; }
-          test -n "$RELEASES_TOKEN" || { echo "::error::Add the repository secret RELEASES_TOKEN (fine-grained token, Contents read/write on the releases repository)"; exit 1; }
           # A build without the public key could never verify, and so never install, its own updates.
           grep -q 'BEGIN PUBLIC KEY' src/main/release-key.ts || { echo "::error::Put the release public key in src/main/release-key.ts before tagging"; exit 1; }
           [ "v$VERSION" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1; }
@@ -106,12 +103,13 @@ jobs:
             echo "SHA-256 of $installer: $(sha256sum "dist/$installer" | cut -d' ' -f1)"
             echo
             echo "## Changes"
-            git log --no-merges --format='- %s' ${previous:+"$previous..$GITHUB_REF_NAME"} | head -100
+            # Hand-written notes in docs/release-notes/<version>.md when present; otherwise the commit titles.
+            if [ -f "docs/release-notes/$VERSION.md" ]; then cat "docs/release-notes/$VERSION.md"
+            else git log --no-merges --format='%s' ${previous:+"$previous..$GITHUB_REF_NAME"} | sed -E 's/^Beta [0-9.]+: //; s/^/- /' | head -30; fi
           } > notes.md
       - name: Publish
         if: env.DRY_RUN != 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          RELEASE_REPO: ${{ vars.RELEASE_REPO || 'ProjktRed/Agent-Dock' }}
-        run: gh release create "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-Setup-$VERSION-win-x64.exe" "AgentDock-$VERSION-win-x64.zip" manifest.json manifest.sig --title "Agent Dock $VERSION" --notes-file notes.md

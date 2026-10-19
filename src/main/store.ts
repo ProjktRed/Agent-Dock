@@ -1,7 +1,7 @@
 import path from "node:path";
 import { safeStorage } from "electron";
 import type { Agent, CliConnection, Project, Settings } from "@shared/types";
-import { DEFAULT_CLIS, DEFAULT_SETTINGS, DEV_SOURCE, FORMER_SOURCE } from "./defaults";
+import { DEFAULT_CLIS, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL } from "./defaults";
 import { readJson, writeJson } from "./lib/json-file";
 
 interface Persisted {
@@ -24,8 +24,8 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     usage: { ...DEFAULT_SETTINGS.usage, ...(s.usage ?? {}) },
     advanced: { ...DEFAULT_SETTINGS.advanced, ...(s.advanced ?? {}) },
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },
-    // The source repository was renamed to Agent-Dock-Dev and its old name now holds the public releases.
-    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}), ...(FORMER_SOURCE.test(s.updates?.source ?? "") ? { source: DEV_SOURCE } : {}) },
+    // The source repository was briefly named Agent-Dock-Dev; a source saved then points back at its real name.
+    updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}), ...(FORMER_SOURCE.test(s.updates?.source ?? "") ? { source: SOURCE_URL } : {}) },
     tuning: { ...DEFAULT_SETTINGS.tuning, ...(s.tuning ?? {}) },
   };
 }
@@ -34,6 +34,8 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
 export class AppStore {
   readonly dir: string;
   data!: Persisted;
+  /** No saved connections or agents: a first launch, which discovers what this computer has. */
+  fresh = false;
   private secrets: Record<string, string> = {};
 
   constructor(userData: string) {
@@ -52,10 +54,14 @@ export class AppStore {
       readJson<Partial<Settings> | null>(this.file("settings"), null),
       readJson<Record<string, string>>(this.file("secrets"), {}),
     ]);
-    // Built-in connections are always present; saved edits win.
-    const savedClis = clis ?? [];
-    const mergedClis = [...DEFAULT_CLIS.map((d) => savedClis.find((c) => c.id === d.id) ?? d), ...savedClis.filter((c) => !c.builtIn)];
-    this.data = { projects, agents, clis: mergedClis, settings: mergeSettings(settings) };
+    // Saved connections are used as they are: removed ones stay removed. A first launch starts empty and
+    // discovers what is installed. Agents saved before connections were (older versions kept every known
+    // connection without saving it) keep that full list, so they still find their CLIs.
+    this.fresh = clis === null && agents === null;
+    // Those older versions also put llama.cpp on port 8081, not llama-server's own 8080.
+    const legacy = () => structuredClone(DEFAULT_CLIS).map((c) => (c.kind === "llamacpp" ? { ...c, location: "http://127.0.0.1:8081/v1" } : c));
+    const savedClis = clis ?? (agents === null ? [] : legacy());
+    this.data = { projects, agents, clis: savedClis, settings: mergeSettings(settings) };
     this.secrets = secrets;
   }
 

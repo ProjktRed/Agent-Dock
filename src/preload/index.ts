@@ -18,6 +18,7 @@ const api: DesktopApi = {
   checkCli: invoke("cli:check") as DesktopApi["checkCli"],
   healths: invoke("cli:healths") as DesktopApi["healths"],
   detectOnPath: invoke("cli:detect") as DesktopApi["detectOnPath"],
+  discoverClis: invoke("cli:discover") as DesktopApi["discoverClis"],
   testConnection: invoke("cli:test") as DesktopApi["testConnection"],
   collectModels: invoke("cli:collectModels") as DesktopApi["collectModels"],
   detectModelsDir: invoke("cli:detectModelsDir") as DesktopApi["detectModelsDir"],

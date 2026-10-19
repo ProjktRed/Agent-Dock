@@ -55,13 +55,15 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
   const list = cloud && kind ? catalog?.[kind] ?? null : null;
   const current = list?.models.find((m) => m.id === draft.model);
   const refreshing = kind ? catalog?.refreshing[kind] : false;
+  // A local runtime has no default model: offer the first one collected from it, if any.
+  const firstLocalModel = (provider: string) => snap.clis.find((c) => c.kind === provider)?.collected?.models[0]?.id ?? "";
   const changeCli = (cliId: string) => {
     const next = snap.clis.find((c) => c.id === cliId);
     const nextKind = next?.kind === "claude" || next?.kind === "codex" ? next.kind : null;
     if (implementation && next?.kind === "cline") {
       // Back to a local provider: the cloud model, effort and speed don't apply.
       const provider = draft.provider ?? "llamacpp";
-      return setDraft({ ...draft, cliId, provider, ...(kind ? { model: provider === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel, reasoning: "none", fast: false } : {}) });
+      return setDraft({ ...draft, cliId, provider, ...(kind ? { model: firstLocalModel(provider), reasoning: "none", fast: false } : {}) });
     }
     if (implementation && next?.kind === "opencode") {
       const provider = snap.clis.find((c) => c.kind === "openai");
@@ -137,7 +139,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
                 const selected = e.target.value;
                 const remote = selected.startsWith("connection:") ? snap.clis.find((c) => c.id === selected.slice("connection:".length)) : undefined;
                 const provider = selected === "ollama" ? "ollama" : "llamacpp";
-                setDraft({ ...draft, provider: remote ? "openai" : provider, providerCliId: remote?.id, model: remote?.defaultModel ?? (provider === "ollama" ? snap.engine.defaults.ollamaModel : snap.engine.defaults.llamacppModel) });
+                setDraft({ ...draft, provider: remote ? "openai" : provider, providerCliId: remote?.id, model: remote?.defaultModel ?? firstLocalModel(provider) });
               }}>
                 <option value="llamacpp">llama.cpp (OpenAI-compatible)</option>
                 <option value="ollama">Ollama</option>
@@ -188,7 +190,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           ) : local && discovered.length && !manual ? (
             <>
               <select className="sel" value={draft.model} onChange={(e) => set("model", e.target.value)}>
-                {!localModel && <option value={draft.model}>{draft.model} (not listed by {providerCli?.name})</option>}
+                {!localModel && <option value={draft.model}>{draft.model ? `${draft.model} (not listed by ${providerCli?.name})` : "Choose a model…"}</option>}
                 {discovered.map((m) => <option key={m.id} value={m.id}>{m.id}{m.detail ? ` · ${m.detail}` : ""}</option>)}
               </select>
               <span className="hint">
@@ -420,16 +422,18 @@ export function AgentsPage() {
     }
   };
   const addAgent = async (role: Role) => {
-    const cli = snap.clis.find((c) => c.kind === (role === "implementation" ? "cline" : "codex"));
+    const orchestrator = snap.clis.find((c) => c.kind === "codex") ?? snap.clis.find((c) => c.kind === "claude");
+    const cline = role === "implementation" ? snap.clis.find((c) => c.kind === "cline") : undefined;
+    const cli = cline ?? orchestrator;
     const agent: Agent = {
       id: uid("agent"),
       name: role === "custom" ? "Workflow role agent" : `New ${roleLabel[role]} agent`,
       role,
       customRole: role === "custom" ? snap.roles[0]?.id ?? "" : undefined,
-      cliId: cli?.id ?? snap.clis[0].id,
-      provider: role === "implementation" ? "llamacpp" : undefined,
-      model: role === "implementation" ? snap.engine.defaults.llamacppModel : "",
-      contextTokens: role === "implementation" ? snap.settings.tuning.defaultContextTokens ?? snap.engine.defaults.contextTokens : 0,
+      cliId: cli?.id ?? snap.clis[0]?.id ?? "",
+      provider: cline ? (snap.clis.some((c) => c.kind === "llamacpp") || !snap.clis.some((c) => c.kind === "ollama") ? "llamacpp" : "ollama") : undefined,
+      model: "",
+      contextTokens: cline ? snap.settings.tuning.defaultContextTokens ?? snap.engine.defaults.contextTokens : 0,
       maxOutputTokens: snap.settings.tuning.defaultMaxOutputTokens ?? snap.engine.defaults.maxOutputTokens,
       timeoutSeconds: snap.engine.defaults.timeoutSeconds,
       instructions: "",

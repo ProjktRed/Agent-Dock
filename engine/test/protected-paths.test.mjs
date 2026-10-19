@@ -53,6 +53,22 @@ test('protected paths override approved edit scope and follow junctions, includi
   assert.equal(await approvedPath(policy,'src/ok.txt'),true);
 });
 
+test("an allowed file spelled with a Windows 8.3 short name or other casing is still the same allowed file",{skip:process.platform!=="win32"},async t=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),"dock-short-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const workspace=path.join(root,"a long workspace name");
+  await mkdir(path.join(workspace,"src"),{recursive:true}); await writeFile(path.join(workspace,"src","ok.txt"),"ok");
+  const policy=await createPolicy({id:"T",allowedPaths:["src/"],qaCommand:"npm test"},workspace);
+  const short=execFileSync("cmd.exe",["/d","/s","/c",`"for %I in ("${workspace}") do @echo %~sI"`],{encoding:"utf8",windowsVerbatimArguments:true}).trim();
+  assert.equal(await approvedPath(policy,path.join(workspace.toUpperCase(),"src","ok.txt")),true);
+  assert.equal(await approvedPath(policy,path.join(workspace,"src","new.txt")),true);
+  assert.equal(await approvedPath(policy,path.join(workspace,"other.txt")),false);
+  if(short.toLowerCase()===workspace.toLowerCase())return t.diagnostic("8.3 names are off on this volume");
+  assert.equal(await approvedPath(policy,path.join(short,"src","ok.txt")),true);
+  assert.equal(await approvedPath(policy,path.join(short,"src","new.txt")),true);
+  assert.equal(await approvedPath(policy,path.join(short,"other.txt")),false);
+});
+
 for(const [adapter,event] of [
   [cline,p=>({hookName:'tool_call',tool_call:{name:'read_files',input:{files:[{path:p}]}}})],
   [opencode,p=>({tool:'read',input:{path:p}})],

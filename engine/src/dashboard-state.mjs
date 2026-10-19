@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { replaceWithRetry } from "./fs-retry.mjs";
 import path from "node:path";
 import { diagnostic } from "./diagnostics.mjs";
 import { elevateAvailability, loadElevateCase } from "./elevate-case.mjs";
@@ -25,13 +26,7 @@ async function replaceJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
-  for (let attempt = 0;; attempt++) {
-    try { await rename(temporary, file); break; }
-    catch (error) {
-      if (!['EPERM', 'EACCES'].includes(error.code) || attempt === 49) throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(25, 5 * (attempt + 1))));
-    }
-  }
+  await replaceWithRetry(temporary, file);
   diagnostic("STATE_WRITTEN", { file });
 }
 
@@ -362,12 +357,6 @@ export class DashboardState {
     await mkdir(this.stateDir, { recursive: true });
     const temporary = `${this.activityPath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, "");
-    for (let attempt = 0;; attempt++) {
-      try { await rename(temporary, this.activityPath); break; }
-      catch (error) {
-        if (!["EPERM", "EACCES"].includes(error.code) || attempt === 49) throw error;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(25, 5 * (attempt + 1))));
-      }
-    }
+    await replaceWithRetry(temporary, this.activityPath);
   }
 }

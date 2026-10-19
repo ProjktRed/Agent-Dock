@@ -744,7 +744,7 @@ function Advanced() {
         <SetRow title="Node runtime" desc="Runs engine/src/cli.mjs. System Node is used when found on PATH; otherwise Electron's bundled runtime" support="app">
           <select className="sel" value={ad.nodeRuntime} onChange={(e) => patch("advanced", { nodeRuntime: e.target.value as typeof ad.nodeRuntime })} aria-label="Node runtime"><option value="system">System Node (PATH)</option><option value="electron">Electron's bundled Node</option></select>
         </SetRow>
-        <SetRow title="llama.cpp launcher" desc="Script the engine runs to start llama.cpp when it is unreachable (and for router-mode model lists). Empty: start llama.cpp yourself." support="engine">
+        <SetRow title="llama.cpp launcher" desc="Optional script that starts llama.cpp instead of llama-server from PATH. Empty: with a models folder set (CLIs › llama.cpp), Agent Dock starts llama-server itself; otherwise start llama.cpp yourself." support="engine">
           <input
             className="input mono"
             style={{ width: 300 }}

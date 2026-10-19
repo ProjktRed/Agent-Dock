@@ -2,5 +2,5 @@
   "name": "codex-cline-engine",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test" }
+  "scripts": { "test": "node --test --test-timeout=120000" }
 }

@@ -1,11 +1,13 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { createProviderDescriptor } from "./runtime/provider.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
-const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8081/v1";
+// llama-server's own default port.
+const DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8080/v1";
 // Script that starts llama.cpp when it is unreachable: --llamacpp-launcher, or the LLAMACPP_LAUNCHER variable.
 const DEFAULT_LLAMACPP_LAUNCHER = process.env.LLAMACPP_LAUNCHER || null;
 
@@ -38,11 +40,50 @@ export function llamaCppLauncherArgs({ modelsDir = null, thinking = "none" } = {
   return args;
 }
 
-function startLlamaCppServer(launcher, launcherArgs = []) {
+/** llama-server on PATH, or null. */
+export function findLlamaServer(env = process.env, platform = process.platform, exists = existsSync) {
+  const names = platform === "win32" ? ["llama-server.exe"] : ["llama-server"];
+  for (const dir of String(env.PATH ?? env.Path ?? "").split(path.delimiter).filter(Boolean)) {
+    for (const name of names) if (exists(path.join(dir, name))) return path.join(dir, name);
+  }
+  return null;
+}
+
+/**
+ * Arguments for starting llama-server directly (no launcher script): router mode over the models folder,
+ * on the connection's host and port, with metrics for token counts and the context the worker is told.
+ */
+export function llamaServerArgs({ baseUrl, modelsDir, contextTokens = null, thinking = "none" }) {
+  const url = new URL(baseUrl);
+  const args = ["--models-dir", modelsDir, "--host", url.hostname, "--port", url.port || "80", "--metrics"];
+  if (contextTokens) args.push("--ctx-size", String(contextTokens));
+  if (thinking && thinking !== "none") args.push("--reasoning", "on", "--reasoning-effort", thinking);
+  return args;
+}
+
+function spawnDetached(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      detached: true,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ pid: child.pid ?? null });
+    });
+  });
+}
+
+/** Starts llama.cpp through a launcher script (.cmd/.bat/.ps1 shim) or llama-server itself. */
+function startLlamaCppServer(launcher, launcherArgs = [], { direct = false } = {}) {
+  // The server outlives the engine: start it in its own folder, never the engine's working directory
+  // (which may sit inside an app install that then cannot be updated).
+  if (direct) return spawnDetached(launcher, launcherArgs, path.dirname(launcher));
   return new Promise((resolve, reject) => {
     const child = spawn("cmd.exe", ["/d", "/c", launcher, ...launcherArgs], {
-      // The server outlives the engine: start it in the launcher's own folder, never the engine's
-      // working directory (which may sit inside an app install that then cannot be updated).
       cwd: path.dirname(launcher),
       detached: true,
       windowsHide: true,
@@ -127,6 +168,7 @@ export async function prepareClineRuntime({
   llamaCppLauncher = DEFAULT_LLAMACPP_LAUNCHER,
   maxOutputTokens = 8_192,
   startServerImpl = startLlamaCppServer,
+  findServerImpl = findLlamaServer,
   sleepImpl = sleep,
   startupAttempts = 240,
   startupPollMs = 500,
@@ -144,8 +186,11 @@ export async function prepareClineRuntime({
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
-        if (!llamaCppLauncher) throw new Error(`${error.message}. Start llama.cpp, or set a launcher script (--llamacpp-launcher) so the engine can start it.`);
-        await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
+        // A launcher script wins; otherwise llama-server from PATH serves the models folder directly.
+        const server = llamaCppLauncher ? null : llamaCppModelsDir ? findServerImpl() : null;
+        if (llamaCppLauncher) await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
+        else if (server) await startServerImpl(server, llamaServerArgs({ baseUrl, modelsDir: llamaCppModelsDir, contextTokens, thinking }), { direct: true });
+        else throw new Error(`${error.message}. Start llama.cpp, or set its models folder (with llama-server on PATH) or a launcher script so Agent Dock can start it.`);
         startedServer = true;
         let lastError = error;
         for (let attempt = 0; attempt < startupAttempts; attempt++) {

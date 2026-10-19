@@ -120,8 +120,12 @@ test("llama.cpp readiness and metrics are checked around every Cline attempt", a
       launch: async () => ({ exitCode: 0, output: "done", runResult: { finishReason: "completed" } }),
     });
 
+    const { RUN } = await import("../src/run-budget.mjs");
+    const usageBefore = { ...RUN.usage };
     await worker.run("first", { onEvent: async (event) => events.push(event) });
     await worker.run("second", { onEvent: async (event) => events.push(event) });
+    // Local tokens count toward token budgets: 200 prompt and 100 generated tokens per attempt.
+    assert.deepEqual([RUN.usage.input - usageBefore.input, RUN.usage.output - usageBefore.output], [400, 200]);
 
     assert.equal(readyChecks, 2);
     assert.equal(metricReads, 4);

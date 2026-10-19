@@ -1,24 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("loop defaults select llama.cpp with its measured context and output budget", async () => {
+test("loop defaults select llama.cpp with its measured context and output budget, and no model", async () => {
   const { parseLoopOptions } = await import("../src/loop-options.mjs");
   const options = parseLoopOptions(["--workspace", "repo", "--objective", "bounded"]);
 
   assert.equal(options.provider, "llamacpp");
-  assert.equal(options.model, "glm-4.7-flash-ud-q3-k-xl");
+  assert.equal(options.model, null);
   assert.equal(options.clineContextTokens, 98_304);
   assert.equal(options.clineMaxOutputTokens, 8_192);
   assert.equal(options.timeoutSeconds, 1_800);
   assert.equal(options.solReassessment, true);
 });
 
-test("explicit Ollama selection preserves its existing model and 98K context defaults", async () => {
+test("explicit Ollama selection keeps the 98K context default and assumes no model", async () => {
   const { parseLoopOptions } = await import("../src/loop-options.mjs");
   const options = parseLoopOptions(["--provider", "ollama"]);
 
   assert.equal(options.provider, "ollama");
-  assert.equal(options.model, "glm-4.7-flash:q4_K_M");
+  assert.equal(options.model, null);
   assert.equal(options.clineContextTokens, 98_304);
 });
 

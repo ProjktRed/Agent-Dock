@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises";
+import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 

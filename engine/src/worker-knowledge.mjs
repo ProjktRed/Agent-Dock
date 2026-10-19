@@ -1,4 +1,5 @@
-import {readFile,writeFile,rename,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {replaceWithRetry as rename} from './fs-retry.mjs';
 import path from 'node:path';import {randomUUID} from 'node:crypto';
 const header='# Local Worker Issues\n\nThis file contains verified recurring issues that may help avoid repeated debugging.\nOnly verified fixes should be recorded.\n';
 async function contents(file){try{return await readFile(file,'utf8');}catch(e){if(e.code==='ENOENT')return header;throw e;}}

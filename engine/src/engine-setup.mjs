@@ -54,6 +54,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
   }
 
   const initialize = async () => {
+    if (!options.model) throw new Error(`Choose the Implementation agent's model (--model): ${options.provider} has no default model.`);
     if (implCli === "opencode") {
       let providerDescriptor;
       let runtime = null;
@@ -63,6 +64,8 @@ export async function createImplementationWorker(options, { stateDir, workspace,
           contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
           timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
           ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
+          ...(options.llamacppUrl ? { llamaCppUrl: options.llamacppUrl } : {}),
+          ...(options.ollamaUrl ? { ollamaUrl: options.ollamaUrl } : {}),
           thinking: options.clineThinking,
         });
         providerDescriptor = {
@@ -97,6 +100,8 @@ export async function createImplementationWorker(options, { stateDir, workspace,
       contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
       timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
       ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
+      ...(options.llamacppUrl ? { llamaCppUrl: options.llamacppUrl } : {}),
+      ...(options.ollamaUrl ? { ollamaUrl: options.ollamaUrl } : {}),
       providerBaseUrl: options.providerBaseUrl, providerApiKeyEnv: options.providerApiKeyEnv,
       thinking: options.clineThinking,
     });

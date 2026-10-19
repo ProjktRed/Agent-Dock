@@ -8,6 +8,7 @@ import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
+import { noteUsage } from "./run-budget.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -459,7 +460,7 @@ export async function launchCline({
   clineJs = DEFAULT_CLINE_JS,
   workspace,
   provider = "ollama",
-  model = "glm-4.7-flash:q4_K_M",
+  model,
   timeoutSeconds = 1_800,
   contextTokens = 98_304,
   dataDir,
@@ -514,7 +515,7 @@ export class ClineCliWorker {
     workspace,
     clineJs = DEFAULT_CLINE_JS,
     provider = "ollama",
-    model = "glm-4.7-flash:q4_K_M",
+    model,
     timeoutSeconds = 1_800,
     contextTokens = 98_304,
     dataDir,
@@ -684,7 +685,10 @@ export class ClineCliWorker {
         if (this.readMetrics && before) {
           try {
             const after = await this.readMetrics();
-            await onEvent(metricsEvent(after, { failed: Boolean(failure || result?.exitCode !== 0) }));
+            const final = metricsEvent(after, { failed: Boolean(failure || result?.exitCode !== 0) });
+            // Local model tokens count toward the run and daily token budgets like cloud tokens (no cost).
+            noteUsage({ input: final.promptTokens, output: final.generatedTokens });
+            await onEvent(final);
           } catch (metricsError) {
             await onEvent({ type: "cline-provider-metrics-failed", ...identity, error: metricsError.message, failed: Boolean(failure || result?.exitCode !== 0) });
           }

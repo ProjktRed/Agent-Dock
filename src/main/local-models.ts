@@ -58,11 +58,18 @@ export async function collectOllama(base: string, timeoutMs = 8000): Promise<Col
   }
 }
 
+/** llama-server arguments for a listing-only start: router mode over the folder, on the connection's address. */
+export function llamaServerListArgs(conn: CliConnection): string[] {
+  const url = new URL(conn.location);
+  return ["--models-dir", conn.modelsDir ?? "", "--host", url.hostname, "--port", url.port || "80"];
+}
+
 /**
- * llama.cpp: ask the running server. When it is not running and a models folder is set, start the
- * launcher in router mode just for the listing (no model is loaded), read /v1/models, stop it again.
+ * llama.cpp: ask the running server. When it is not running and a models folder is set, start it in
+ * router mode just for the listing (no model is loaded), read /v1/models, stop it again. The launcher
+ * script starts it when one is set; otherwise llama-server from PATH (`server`).
  */
-export async function collectLlamaCpp(conn: CliConnection, launcher: string, timeoutMs = 60_000): Promise<CollectedModels> {
+export async function collectLlamaCpp(conn: CliConnection, launcher: string, timeoutMs = 60_000, server: string | null = null): Promise<CollectedModels> {
   const base = conn.location.replace(/\/$/, "");
   const root = base.replace(/\/v1$/, "");
   const source = conn.modelsDir ? `llama.cpp router · ${conn.modelsDir}` : "llama.cpp · /v1/models";
@@ -77,17 +84,19 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
     // not running
   }
   if (!conn.modelsDir) return done([], "llama.cpp is not running. Set the models folder so Agent Dock can ask it for the models there, or start the server and refresh.");
-  if (!launcher.trim()) return done([], "llama.cpp is not running and no launcher is set (Settings › Advanced › llama.cpp launcher). Start llama.cpp, then refresh.");
-  if (!existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
-  const child = process.platform === "win32"
-    ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore" })
-    : spawn(launcher, ["-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), stdio: "ignore", detached: true });
+  if (!launcher.trim() && !server) return done([], "llama.cpp is not running and llama-server is not on PATH. Install llama.cpp (or set a launcher in Settings › Advanced), or start the server and refresh.");
+  if (launcher.trim() && !existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
+  const child = !launcher.trim()
+    ? spawn(server!, llamaServerListArgs(conn), { cwd: path.dirname(server!), windowsHide: true, stdio: "ignore", detached: process.platform !== "win32" })
+    : process.platform === "win32"
+      ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore" })
+      : spawn(launcher, ["-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), stdio: "ignore", detached: true });
   child.on("error", () => { /* not executable: exitCode stays null, the wait below times out */ });
   try {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await sleep(1000);
-      if (child.exitCode !== null) return done([], `The launcher exited (code ${child.exitCode}) before llama.cpp answered. Is the port in use?`);
+      if (child.exitCode !== null) return done([], `${launcher.trim() ? "The launcher" : "llama-server"} exited (code ${child.exitCode}) before llama.cpp answered. Is the port in use?`);
       try {
         const health = await getJson(`${root}/health`, 2000);
         if (health?.status !== "ok") continue;

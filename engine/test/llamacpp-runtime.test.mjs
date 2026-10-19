@@ -31,10 +31,10 @@ test("healthy llama.cpp writes an isolated OpenAI-compatible Cline profile", asy
 
     assert.equal(starts, 0);
     // /props is the slot-context check; this fake server does not report it, so it is skipped.
-    assert.deepEqual(requests, ["http://127.0.0.1:8081/health", "http://127.0.0.1:8081/v1/models", "http://127.0.0.1:8081/props"]);
+    assert.deepEqual(requests, ["http://127.0.0.1:8080/health", "http://127.0.0.1:8080/v1/models", "http://127.0.0.1:8080/props"]);
     assert.equal(runtime.requestedProvider, "llamacpp");
     assert.equal(runtime.provider, "openai-compatible");
-    assert.equal(runtime.baseUrl, "http://127.0.0.1:8081/v1");
+    assert.equal(runtime.baseUrl, "http://127.0.0.1:8080/v1");
     assert.equal(runtime.model, "glm-4.7-flash-ud-q3-k-xl");
 
     const stored = JSON.parse(await readFile(path.join(runtime.dataDir, "settings", "providers.json"), "utf8"));
@@ -45,7 +45,7 @@ test("healthy llama.cpp writes an isolated OpenAI-compatible Cline profile", asy
       protocol: "openai-chat",
       apiKey: "local-no-key",
       model: "glm-4.7-flash-ud-q3-k-xl",
-      baseUrl: "http://127.0.0.1:8081/v1",
+      baseUrl: "http://127.0.0.1:8080/v1",
       contextWindow: 24_576,
       maxTokens: 4_096,
       timeout: 1_800_000,
