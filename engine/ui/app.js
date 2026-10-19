@@ -22,7 +22,7 @@ const eventLabels = {
   "task-loaded": "Task loaded", "codex-assessing": "Codex assessing next task", "codex-finished": "Codex assessment finished",
   "cline-started": "Cline started", "cline-process-started": "Cline process started", "cline-running": "Cline implementing",
   "cline-finished": "Cline finished", "qa-evidence-started": "Deterministic QA started", "qa-evidence-finished": "Deterministic QA finished",
-  "codex-qa-started": "Codex QA started", "codex-qa-finished": "Codex QA finished", "qa-running": "Codex QA running", "qa-pass": "QA passed", "qa-fail": "QA failed",
+  "codex-qa-started": "QA started", "codex-qa-finished": "QA finished", "qa-running": "QA running", "qa-pass": "QA passed", "qa-fail": "QA failed",
   retry: "Correction attempt queued", paused: "Automation paused", stopped: "Automation stopped", "manual-review": "User Attention", 'user-attention':'User Attention', blocked:'Blocked',
   "codex-usage-limit": "Codex usage limit reached", "waiting-for-codex": "Waiting for Codex availability",
   "sol-reassessment-started": "Elevate reassessment started", "sol-reassessment-finished": "Elevate reassessment finished", "elevate-result": "Elevate result",
@@ -123,7 +123,7 @@ function render(status) {
   document.querySelectorAll("[data-step]").forEach((element) => { const active = element.dataset.step === view.activeStep; element.classList.toggle("active", active); element.toggleAttribute("aria-current", active); });
   set("#cline-started", fields.clineStarted); set("#cline-elapsed", fields.clineElapsed); set("#cline-pid", fields.clinePid); set("#activity-elapsed", fields.clineElapsed); set("#cline-model", status.cline?.model ? `Model: ${status.cline.model}` : "Model: —"); set("#task-model", status.cline?.model ? `Model: ${status.cline.model}` : "Model: —");
   const clineLabel = titleCase(status.clineStatus || "idle"); set("#cline-state-pill", clineLabel); $("#cline-state-pill").className = `pill ${tone(clineLabel)}`;
-  const qaLabel = status.stage === "WAITING_FOR_CODEX" && status.interruptedOperation === "qa" ? "Waiting for Codex" : titleCase(status.qaStatus || "waiting"); set("#qa-state-pill", qaLabel); $("#qa-state-pill").className = `pill ${tone(qaLabel)}`;
+  const qaLabel = status.stage === "WAITING_FOR_LIMIT" && status.interruptedOperation === "qa" ? "Waiting for usage limit" : titleCase(status.qaStatus || "waiting"); set("#qa-state-pill", qaLabel); $("#qa-state-pill").className = `pill ${tone(qaLabel)}`;
   for (const [key, id] of Object.entries({ tests: "qa-tests", typecheck: "qa-typecheck", lint: "qa-lint", scopeCheck: "qa-scope" })) { const element = $("#" + id); element.textContent = view.qaChecks[key]; element.className = `state-text ${tone(view.qaChecks[key])}`; }
   set("#progress-label", view.progress.label); set("#progress-symbol", view.activeStep === "complete" ? "✓" : view.activeStep === "qa" ? "◉" : "↻");
   set("#current-action", view.activity.currentAction); set("#last-command", view.activity.lastCommand); set("#last-file-read", view.activity.lastFileRead); set("#last-file-modified", view.activity.lastFileModified); set("#latest-message", view.activity.latestMessage);
@@ -141,7 +141,7 @@ function render(status) {
   $('#elevation-result').classList.toggle('hidden',!status.elevateResult);
   const er=status.elevateResult;
   set('#elevation-result-text',er?`${er.model||'gpt-6-astra'} · Medium\n${er.label||er.kind}\nRoot problem: ${er.rootProblem||er.reason||'—'}\nPreserve: ${(er.preserve||[]).join('; ')||'—'}\nNew strategy: ${er.newStrategy||'—'}\nNext: ${er.nextWorkerInstructions||(er.neededEvidence||[]).join('; ')||'—'}`:'');
-  const limited = status.stage === "WAITING_FOR_CODEX"; $("#codex-limit").classList.toggle("hidden", !limited); set("#codex-limit-stage", titleCase(status.interruptedOperation || "operation")); set("#codex-limit-message", status.codexLimitMessage || "Codex usage limit reached."); set("#codex-reset", status.codexRetryAt || "");
+  const limited = status.stage === "WAITING_FOR_LIMIT"; $("#codex-limit").classList.toggle("hidden", !limited); set("#codex-limit-stage", titleCase(status.interruptedOperation || "operation")); set("#codex-limit-message", status.codexLimitMessage || "Codex usage limit reached."); set("#codex-reset", status.codexRetryAt || "");
   const elevate = $("#elevate-control");
   const showElevate = (attention||status.elevateRunning) && !blocked && Boolean(status.task) && Boolean(status.latestQa);
   elevate.classList.toggle("hidden", !showElevate);

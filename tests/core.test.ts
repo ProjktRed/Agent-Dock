@@ -70,6 +70,11 @@ describe("run state", () => {
     expect(cycleStage({ stage: "cline-working", clineStatus: "running" })).toBe("implementation");
     expect(cycleStage({ stage: "codex-qa", qaStatus: "running" })).toBe("qa");
     expect(cycleStage({ stage: "retry" })).toBe("correction");
+    // Current stage names (the old ones above come from state saved before 0.32).
+    expect(cycleStage({ stage: "implementing" })).toBe("implementation");
+    expect(cycleStage({ stage: "implemented" })).toBe("implementation");
+    expect(cycleStage({ stage: "qa" })).toBe("qa");
+    expect(deriveRunState({ stage: "WAITING_FOR_LIMIT" }, {}, true).runState).toBe("waiting-limit");
   });
   it("computes elapsed only while Cline runs", () => {
     const base = { projectId: "p", control: {}, processAlive: true, pid: 1, events: [], git: { isRepo: true, branch: "main", head: null, remote: null, ahead: 0, behind: 0, changedFiles: [] }, plan: parseImplementationPlan(""), elevate: { available: false, reason: null }, resolver: { available: false, reason: null } };

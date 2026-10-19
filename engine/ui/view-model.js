@@ -37,16 +37,16 @@ export function dashboardEvents(events = []) {
 
 function workflowStep(status) {
   if (status.stage === "pass" || status.stage === "complete") return "complete";
-  if (["codex-qa", "fail", "manual-review"].includes(status.stage)) return "qa";
-  if (status.stage === "WAITING_FOR_CODEX" && status.interruptedOperation === "assessment") return "implement";
-  if (status.stage === "WAITING_FOR_CODEX") return "qa";
+  if (["qa", "fail", "manual-review"].includes(status.stage)) return "qa";
+  if (status.stage === "WAITING_FOR_LIMIT" && status.interruptedOperation === "assessment") return "implement";
+  if (status.stage === "WAITING_FOR_LIMIT") return "qa";
   return "implement";
 }
 
 function primaryLabel(status) {
   if(status.resolverRunning||status.stage==='resolving')return 'Resolving';
   if(status.stage==='BLOCKED')return 'Blocked';
-  if (status.stage === "WAITING_FOR_CODEX") return "Waiting for Codex";
+  if (status.stage === "WAITING_FOR_LIMIT") return "Waiting for usage limit";
   if(status.elevateRunning || status.stage==='elevating')return 'Elevating';
   if(status.assessmentRunning)return 'Assessment';
   if(status.stage==='USER_ATTENTION'||status.manualReview||status.stage==='manual-review')return 'User Attention';
@@ -55,7 +55,7 @@ function primaryLabel(status) {
   if (status.stage === "retry") return "Retrying";
   if (status.stage === "pass" || status.stage === "complete") return "Complete";
   if (status.stage === "fail") return "Failed";
-  if (status.clineStatus === "running" || status.qaStatus === "running" || ["current-task", "codex-qa"].includes(status.stage)) return "Running";
+  if (status.clineStatus === "running" || status.qaStatus === "running" || ["current-task", "qa"].includes(status.stage)) return "Running";
   return "Waiting";
 }
 
@@ -63,13 +63,13 @@ function currentAction(status, events = []) {
   const activity = lastEventWith(events, (event) => event.type?.startsWith("cline-") && (event.action || event.message));
   if(status.resolverRunning)return 'GPT-6.1 Sol resolving the blocked case';
   if(status.stage==='BLOCKED')return 'Blocked — user action required';
-  if (status.stage === "WAITING_FOR_CODEX") return `Waiting to resume Codex ${status.interruptedOperation || "operation"}`;
+  if (status.stage === "WAITING_FOR_LIMIT") return `Waiting to resume ${status.interruptedOperation || "the operation"} after the usage limit`;
   if(status.elevateRunning)return 'GPT-6 Astra reassessing strategy';
   if(status.assessmentRunning)return 'GPT-6.1 Sol preparing a bounded task/correction';
   if(status.stage==='USER_ATTENTION')return 'Recoverable problem — development continues automatically';
   if (status.stage === "paused") return "Automation paused at a safe boundary";
   if (status.stage === "retry") return "Preparing the next Cline correction attempt";
-  if (status.qaStatus === "running" || status.stage === "codex-qa") return "Codex is reviewing deterministic QA evidence";
+  if (status.qaStatus === "running" || status.stage === "qa") return "QA is reviewing deterministic evidence";
   if (status.clineStatus === "running") return activity?.action || activity?.message || "Cline is implementing the current task";
   if (status.stage === "pass" || status.stage === "complete") return "Task completed";
   if (status.stage === "fail") return "QA found issues";
@@ -87,9 +87,9 @@ export function dashboardView(status = {}) {
   const task = status.task ?? {};
   const label = primaryLabel(status);
   const progressLabels = {
-    "cline-working": "Implementation in progress", "cline-complete": "Implementation finished",
-    "codex-qa": "QA review in progress", pass: "Task complete", complete: "Phase complete",
-    fail: "QA failed", retry: "Correction attempt", WAITING_FOR_CODEX: "Waiting for Codex",
+    implementing: "Implementation in progress", implemented: "Implementation finished",
+    qa: "QA review in progress", pass: "Task complete", complete: "Phase complete",
+    fail: "QA failed", retry: "Correction attempt", WAITING_FOR_LIMIT: "Waiting for usage limit",
     paused: "Paused", "manual-review": "User Attention", USER_ATTENTION:'User Attention', BLOCKED:'Blocked', elevating:'Elevating', stopped: "Stopped",
   };
   return {

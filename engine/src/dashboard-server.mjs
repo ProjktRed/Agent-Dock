@@ -51,7 +51,7 @@ export function primaryStatus(live, control) {
   if(live?.stage==='BLOCKED')return 'blocked';
   if (live?.stage === "stopped") return "stopped";
   if (live?.stage === "paused") return "paused";
-  if (live?.stage === "WAITING_FOR_CODEX") return "waiting for codex";
+  if (live?.stage === "WAITING_FOR_LIMIT") return "waiting for usage limit";
   if(live?.elevateRunning)return 'elevating';
   if(live?.assessmentRunning)return 'assessment';
   if(live?.userAttention && live?.clineStatus!=='running' && live?.qaStatus!=='running')return 'user attention';

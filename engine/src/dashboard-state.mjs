@@ -170,20 +170,20 @@ export class DashboardState {
     const transitions = {
       "codex-assessing": ["current-task", "idle", "waiting", false],
       "codex-finished": ["current-task", "idle", "waiting", false],
-      "cline-started": ["cline-working", "running", "waiting", false],
-      "cline-finished": ["cline-complete", "idle", "waiting", false],
-      "codex-qa-started": ["codex-qa", "idle", "running", false],
-      "codex-qa-finished": ["codex-qa", "idle", "waiting", false],
+      "cline-started": ["implementing", "running", "waiting", false],
+      "cline-finished": ["implemented", "idle", "waiting", false],
+      "codex-qa-started": ["qa", "idle", "running", false],
+      "codex-qa-finished": ["qa", "idle", "waiting", false],
       "loop-complete": ["complete", "idle", "pass", false],
       queued: ["waiting", "idle", "waiting", false],
       "task-start": ["current-task", "idle", "waiting", false],
-      "cline-running": ["cline-working", "running", "waiting", false],
-      "cline-complete": ["cline-complete", "idle", "waiting", false],
-      "qa-running": ["codex-qa", "idle", "running", false],
-      "qa-evidence-started": ["codex-qa", "idle", "running", false],
-      "qa-evidence-finished": ["codex-qa", "idle", "running", false],
+      "cline-running": ["implementing", "running", "waiting", false],
+      "cline-complete": ["implemented", "idle", "waiting", false],
+      "qa-running": ["qa", "idle", "running", false],
+      "qa-evidence-started": ["qa", "idle", "running", false],
+      "qa-evidence-finished": ["qa", "idle", "running", false],
       "qa-fail": ["fail", "idle", "fail", false],
-      "qa-retry": ["codex-qa", "idle", "running", false],
+      "qa-retry": ["qa", "idle", "running", false],
       "role-gate-failed": ["fail", "idle", "fail", false],
       retry: ["retry", "idle", "waiting", false],
       "qa-pass": ["pass", "idle", "pass", false],
@@ -196,8 +196,8 @@ export class DashboardState {
       "resolver-started": ["resolving", "idle", "waiting", false],
       "resolver-finished": ["BLOCKED", "idle", "waiting", false],
       "resolver-error": ["BLOCKED", "idle", "fail", false],
-      "codex-usage-limit": ["WAITING_FOR_CODEX", "idle", "waiting-for-codex", false],
-      "waiting-for-codex": ["WAITING_FOR_CODEX", "idle", "waiting-for-codex", false],
+      "codex-usage-limit": ["WAITING_FOR_LIMIT", "idle", "waiting-for-codex", false],
+      "waiting-for-codex": ["WAITING_FOR_LIMIT", "idle", "waiting-for-codex", false],
       paused: ["paused", "idle", next.qaStatus, next.manualReview],
       stopped: ["stopped", "idle", next.qaStatus, next.manualReview],
     };
@@ -349,7 +349,7 @@ export class DashboardState {
 
   async clearActivityHistory() {
     const live = await this.readLive();
-    const idleStage = ["USER_ATTENTION", "BLOCKED", "manual-review", "paused", "stopped", "WAITING_FOR_CODEX"].includes(live?.stage);
+    const idleStage = ["USER_ATTENTION", "BLOCKED", "manual-review", "paused", "stopped", "WAITING_FOR_LIMIT"].includes(live?.stage);
     const codexProcess = await readJson(path.join(this.stateDir, "codex-process.json"), null);
     if (!idleStage || live?.clineStatus === "running" || live?.qaStatus === "running" || live?.elevateRunning || codexProcess) {
       throw new Error("Activity history can only be cleared at an idle safe point");

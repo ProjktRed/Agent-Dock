@@ -35,7 +35,7 @@ test("status API displays a running fake task and changed-file count", async () 
 
   assert.equal(response.status, 200);
   assert.equal(status.task.id, "server-task");
-  assert.equal(status.stage, "cline-working");
+  assert.equal(status.stage, "implementing");
   assert.equal(status.clineStatus, "running");
   assert.equal(status.qaStatus, "waiting");
   assert.equal(status.attempt, 1);

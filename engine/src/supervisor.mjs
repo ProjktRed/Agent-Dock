@@ -22,7 +22,7 @@ const REVIEW_GAP_MS = 10 * 60_000;
 const DEFAULTS = { ...SUPERVISOR };
 const REFUSAL_WINDOW_MS = 10 * 60_000;
 const MODES = new Set(["off", "alert", "pause", "stop"]);
-const WAITING = new Set(["paused", "stopped", "USER_ATTENTION", "BLOCKED", "manual-review", "WAITING_FOR_CODEX", "waiting-for-codex", "usage-limit"]);
+const WAITING = new Set(["paused", "stopped", "USER_ATTENTION", "BLOCKED", "manual-review", "WAITING_FOR_LIMIT", "WAITING_FOR_CODEX", "waiting-for-codex", "usage-limit"]);
 
 let S = null; // per-run tracking
 

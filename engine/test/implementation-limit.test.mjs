@@ -33,7 +33,7 @@ test('a usage limit during implementation waits for Resume, then continues from 
     return{exitCode:0};
   }});
   assert.equal(result.status,'passed');assert.equal(prompts.length,2);
-  assert.equal(waitingStage,'WAITING_FOR_CODEX');
+  assert.equal(waitingStage,'WAITING_FOR_LIMIT');
   assert.doesNotMatch(prompts[0],/stopped by a usage limit/);
   assert.match(prompts[1],/stopped by a usage limit before it finished\. Its partial changes are still in the working tree/);
   const waiting=events.find(e=>e.type==='waiting-for-codex');

@@ -29,13 +29,17 @@ export interface EngineControl {
   stopAfterSafePoint?: boolean;
 }
 
+/** live.json stage names from before 0.32 (engine/src/stage-names.mjs). */
+const LEGACY_STAGES: Record<string, string> = { "cline-working": "implementing", "cline-complete": "implemented", "codex-qa": "qa", WAITING_FOR_CODEX: "WAITING_FOR_LIMIT" };
+const stageOf = (live: EngineLive | null) => (live?.stage ? LEGACY_STAGES[live.stage] ?? live.stage : undefined);
+
 /** Mirrors the engine dashboard's primary status (dashboard-server.mjs primaryStatus + view-model labels). */
 export function deriveRunState(live: EngineLive | null, control: EngineControl, processAlive: boolean): { runState: RunState; label: string } {
   if (!live) return { runState: processAlive ? "running" : "idle", label: processAlive ? "Starting" : "Idle" };
-  const stage = live.stage ?? "waiting";
+  const stage = stageOf(live) ?? "waiting";
   if (live.resolverRunning || stage === "resolving") return { runState: "running", label: "Resolving block" };
   if (stage === "BLOCKED") return { runState: "blocked", label: "Blocked" };
-  if (stage === "WAITING_FOR_CODEX") return { runState: "waiting-limit", label: "Waiting: usage limit" };
+  if (stage === "WAITING_FOR_LIMIT") return { runState: "waiting-limit", label: "Waiting: usage limit" };
   if (live.elevateRunning || stage === "elevating") return { runState: "running", label: "Running · Elevation" };
   if (stage === "USER_ATTENTION" || live.manualReview || stage === "manual-review") return { runState: "attention", label: "Attention required" };
   if (stage === "paused") return { runState: "paused", label: "Paused" };
@@ -57,8 +61,9 @@ export function cycleStage(live: EngineLive | null): "assessment" | "implementat
   if (!live) return null;
   if (live.assessmentRunning || live.stage === "current-task") return "assessment";
   if (live.elevateRunning || live.resolverRunning || live.stage === "elevating" || live.stage === "resolving") return "correction";
-  if (live.clineStatus === "running" || live.stage === "cline-working" || live.stage === "cline-complete") return "implementation";
-  if (live.qaStatus === "running" || live.stage === "codex-qa") return "qa";
+  const stage = stageOf(live);
+  if (live.clineStatus === "running" || stage === "implementing" || stage === "implemented") return "implementation";
+  if (live.qaStatus === "running" || stage === "qa") return "qa";
   if (live.stage === "retry" || live.stage === "fail") return "correction";
   if (live.stage === "pass" || live.stage === "complete") return "next";
   return null;
@@ -96,7 +101,7 @@ export function buildStatus(args: {
     label,
     processAlive: args.processAlive,
     pid: args.pid,
-    stage: live?.stage ?? "waiting",
+    stage: stageOf(live) ?? "waiting",
     cycle: args.processAlive || live?.stage === "pass" ? cycleStage(live) : null,
     task: live?.task ? { id: live.task.id, name: live.task.name ?? live.task.id, prompt: live.task.prompt ?? "", qaCommand: live.task.qaCommand, allowedPaths: live.task.allowedPaths } : null,
     attempt: live?.attempt ?? 0,

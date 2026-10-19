@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { currentStage } from './stage-names.mjs';
 
 export const unsafeCauses = new Set(['out-of-scope','unexpected-head','malformed-state','unsafe-commit','missing-permissions','security-policy','policy','corrupted-state','destructive-action']);
 export function recoveryClassification(decision = {}) {
@@ -9,6 +10,7 @@ export function recoveryClassification(decision = {}) {
   return 'recoverable';
 }
 export function migrateRecoveryState(live) {
+  if (live && currentStage(live.stage) !== live.stage) live = {...live, stage: currentStage(live.stage)};
   if (!live || live.stage !== 'manual-review') return live;
   const blocked = recoveryClassification({output:live.latestQa, manualReviewCause:live.manualReviewCause}) === 'blocked';
   return {...live, stage:blocked?'BLOCKED':'USER_ATTENTION', manualReview:false,
