@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shared/schedule";
 import type { HistoryEntry } from "@shared/api";
-import type { Project, WorkflowSettings } from "@shared/types";
+import type { Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
 import { cleanError, useApp } from "../../store";
 import { ago, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
@@ -44,10 +45,34 @@ function WorkflowTab({ project }: { project: Project }) {
           </div>
         );
       })}
+      <ScheduleRow project={project} />
       <div className="setrow">
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
         <button className="btn sm" onClick={() => window.api.openPath(project.stateDir)}>Open</button>
       </div>
+    </div>
+  );
+}
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Scheduled runs: start this project automatically at a set time on chosen days (while Agent Dock is open). */
+function ScheduleRow({ project }: { project: Project }) {
+  const { saveProject } = useApp();
+  const schedule: ProjectSchedule = project.schedule ?? { enabled: false, time: "02:00", days: [1, 2, 3, 4, 5] };
+  const save = (next: Partial<ProjectSchedule>) => void saveProject({ ...project, schedule: { ...schedule, ...next } });
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap" }}>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Scheduled runs<Support kind="app" /></div><div className="ld">{describeSchedule(project.schedule)}. Starts the automation at this local time while Agent Dock is open; a start missed by more than {SCHEDULE_GRACE_MINUTES} minutes is skipped. Combine with Unattended mode for overnight runs.</div></div>
+      {schedule.enabled && (
+        <div className="row wrap" style={{ gap: 6 }}>
+          <input className="input mono" type="time" style={{ width: 110 }} value={schedule.time} aria-label="Scheduled start time" onChange={(e) => scheduleMinutes(e.target.value) !== null && save({ time: e.target.value })} />
+          {DAY_NAMES.map((name, day) => (
+            <button key={name} className={`btn sm${schedule.days.includes(day) ? " primary" : ""}`} aria-pressed={schedule.days.includes(day)} onClick={() => save({ days: schedule.days.includes(day) ? schedule.days.filter((d) => d !== day) : [...schedule.days, day].sort() })}>{name}</button>
+          ))}
+        </div>
+      )}
+      <Toggle on={schedule.enabled} onChange={(v) => save({ enabled: v })} label="Scheduled runs" />
     </div>
   );
 }

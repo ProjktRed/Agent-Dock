@@ -16,6 +16,7 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
+import { dueScheduledStart } from "@shared/schedule";
 import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -272,6 +273,23 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
 }
 
 /** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
+/** Scheduled runs: once a minute, start each project whose scheduled slot is due and that is not running. */
+async function runSchedules(now = new Date()) {
+  for (const p of store.data.projects.filter((x) => !x.archived && x.schedule?.enabled)) {
+    const slot = dueScheduledStart(p.schedule, now, p.lastScheduledStart);
+    if (!slot) continue;
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot } : x));
+    await store.saveProjects();
+    if (engine.isAlive(p.id)) continue;
+    try {
+      await runControl(p.id, "start", "schedule");
+      notice({ kind: "info", message: `Scheduled run started on ${p.name}.` });
+    } catch (error) {
+      notice({ kind: "error", message: `Scheduled run on ${p.name} could not start: ${(error as Error).message}` });
+    }
+  }
+}
+
 async function runControl(id: string, action: ControlAction, source = "app") {
   const p = project(id);
   const check = launchCheck(p);
@@ -734,7 +752,8 @@ function registerIpc() {
   handle("planner:cancel", (projectId: string) => { planners.get(projectId)?.abort(); });
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? p : x));
+    // The scheduler owns lastScheduledStart; a window's older copy never resets it.
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, lastScheduledStart: x.lastScheduledStart ?? null } : x));
     await store.saveProjects();
     return store.data.projects;
   });
@@ -945,6 +964,7 @@ app.whenReady().then(async () => {
   setTimeout(() => void resumeAfterRestart(), 2500);
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);
   setTimeout(() => limits.schedule(store.data.settings), 3000);
+  setInterval(() => void runSchedules().catch(() => {}), 60_000);
   // Model lists are free to read; refresh once a day or when missing.
   setTimeout(() => void models.refreshStale(24 * 60 * 60_000), 6000);
 });

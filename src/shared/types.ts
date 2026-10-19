@@ -30,6 +30,18 @@ export interface Project {
   workflowOverrides: Partial<WorkflowSettings>;
   /** Optional first task (engine --task JSON). Used once, then cleared. */
   pendingTaskFile?: string | null;
+  /** Scheduled runs: start automatically at a local time on chosen weekdays while the app is open. */
+  schedule?: ProjectSchedule;
+  /** The last scheduled start slot (ISO), so each slot starts at most once. */
+  lastScheduledStart?: string | null;
+}
+
+export interface ProjectSchedule {
+  enabled: boolean;
+  /** "HH:MM", 24-hour local time. */
+  time: string;
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[];
 }
 
 export interface Agent {
