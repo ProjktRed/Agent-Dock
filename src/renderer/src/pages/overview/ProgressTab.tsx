@@ -191,10 +191,11 @@ function checkKind(value: string): StatusKind {
 
 export function ProgressTab() {
   const { activeProject, activeStatus: s, snap } = useApp();
-  // Implementation runs on Cline (local model), Codex or Claude Code; label the step with the agent's CLI.
+  // Implementation runs on Cline or OpenCode (local or cloud provider), Codex or Claude Code; label the step with the agent's CLI.
   const impl = agentForRoleClient("implementation", activeProject, snap.agents);
   const implCli = snap.clis.find((c) => c.id === impl?.cliId);
-  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" ? `Cline · ${impl.provider === "ollama" ? "Ollama" : "llama.cpp"}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
+  const providerName = impl?.providerCliId ? snap.clis.find((c) => c.id === impl.providerCliId)?.name : impl?.provider === "ollama" ? "Ollama" : impl?.provider === "openai" ? "OpenAI-compatible" : "llama.cpp";
+  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" || implCli?.kind === "opencode" ? `${implCli.name} · ${providerName ?? "provider"}${impl.model ? ` · ${impl.model}` : ""}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
   const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
   const [, tick] = useState(0);
@@ -322,7 +323,7 @@ export function ProgressTab() {
                   <div className="mono log selectable">{s.task.prompt}</div>
                 </Disclosure>
                 <dl className="kv two">
-                  <div><dt>Implementation</dt><dd>{s.clineModel ? `Cline · ${s.clineModel}` : "Cline"}</dd></div>
+                  <div><dt>Implementation</dt><dd>{implLabel}</dd></div>
                   <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "None")}</dd></div>
                   <div><dt>QA command</dt><dd className="mono" title={s.task.qaCommand}>{s.task.qaCommand ?? "—"}</dd></div>
                   <div><dt>Context</dt><dd>{s.contextTokens ? `${s.contextTokens.toLocaleString()} tokens` : "—"}</dd></div>

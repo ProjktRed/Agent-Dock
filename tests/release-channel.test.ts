@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkRelease, downloadRelease, newerVersion, verifyManifest } from "../src/main/release-channel";
 import { buildManifest, generateKeyPair, signManifest } from "../scripts/sign-release.mjs";
-import { isUninstaller, swap } from "../scripts/swap.mjs";
+import { isUninstaller, swap, uninstallVersionScript } from "../scripts/swap.mjs";
 import { stagingDir } from "../src/main/updater";
 import { DEFAULT_RELEASE_REPO, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL, updateChannel } from "../src/shared/defaults";
 
@@ -133,3 +133,13 @@ function generateKeyPairRsa(): string {
   const { generateKeyPairSync } = require("node:crypto") as typeof import("node:crypto");
   return generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 }
+
+describe("Apps list version after an update", () => {
+  it("targets the uninstall entry whose uninstaller is in the install folder, with a plain version only", () => {
+    const script = uninstallVersionScript(String.raw`C:\Users\A\AppData\Local\Programs\AgentDock\ `.trim(), "0.31.2")!;
+    expect(script).toContain(String.raw`Contains('c:\users\a\appdata\local\programs\agentdock\')`);
+    expect(script).toContain("DisplayVersion '0.31.2'");
+    expect(uninstallVersionScript(String.raw`C:\App`, "0.31.2-beta.1")).toContain("'0.31.2-beta.1'");
+    for (const bad of [undefined, "", "1.2", "1.2.3'; Remove-Item x", "1.2.3 x"]) expect(uninstallVersionScript(String.raw`C:\App`, bad)).toBeNull();
+  });
+});

@@ -468,7 +468,7 @@ function Safety() {
         <ul className="list">
           {[
             "Each task declares its allowed paths; edits elsewhere fail the scope check",
-            "Cline never commits; QA makes exactly one commit per approved task",
+            "Implementation agents never commit; QA makes exactly one commit per approved task",
             "A non-PASS result must leave HEAD unchanged",
             "Failed work is left in place for inspection, never reset or committed automatically",
             "A dirty baseline after a crash blocks automatic restart",
@@ -490,7 +490,7 @@ function Safety() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Processes</h2>
-        <SetRow title="Timeout handling" desc="Each Cline attempt is bounded by the Implementation agent's timeout" support="engine"><span className="chip mut">Per agent</span></SetRow>
+        <SetRow title="Timeout handling" desc="Each implementation attempt is bounded by the Implementation agent's timeout" support="engine"><span className="chip mut">Per agent</span></SetRow>
         <SetRow title="Process termination" desc="Stop now terminates the engine's process tree (taskkill /T /F); the engine recovers from saved state" support="app"><span className="chip mut">On request</span></SetRow>
         <SetRow title="Crash recovery" desc="Interrupted orchestrator operations are saved and replayed with identical inputs on Resume" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
       </section>

@@ -191,7 +191,7 @@ export class Updater {
       this.append(`Extracted to ${unpacked}.`);
       this.set({ state: "ready" });
       const fd = openSync(path.join(STAGING, "swap.log"), "a");
-      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd }); }
+      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
       finally { closeSync(fd); }
       onReadyToQuit();
     } catch (error) {

@@ -22,7 +22,7 @@ function WorkflowTab({ project }: { project: Project }) {
   const rows: { key: keyof WorkflowSettings; label: string; desc: string; support: "engine" | "app" }[] = [
     { key: "autoContinue", label: "Automatic continuation", desc: "Start the next task as soon as one is approved. Off: pause at each task boundary.", support: "app" },
     { key: "automaticElevation", label: "Automatic elevation", desc: "One automatic Elevation reassessment on a manual-review case (--sol-reassessment)", support: "engine" },
-    { key: "toolGuard", label: "Worker tool guard", desc: "Restrict Cline to approved tools, paths and commands (--tool-guard)", support: "engine" },
+    { key: "toolGuard", label: "Worker tool guard", desc: "Restrict Cline and OpenCode to approved tools, paths and commands (--tool-guard)", support: "engine" },
   ];
   const set = (key: keyof WorkflowSettings, value: boolean | undefined) => {
     const next = { ...project.workflowOverrides } as Record<string, unknown>;

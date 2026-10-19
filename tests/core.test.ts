@@ -634,3 +634,14 @@ describe("engine stage labels", () => {
     expect(engineStageLabel(null)).toBe("—");
   });
 });
+
+describe("implementation usage records", () => {
+  it("keeps Cline's cloud-provider usage apart from local usage", () => {
+    const records = implementationUsage([
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:00:00Z", runStartedAt: "a", requestedProvider: "ollama", model: "qwen", promptTokens: 10, generatedTokens: 5, local: true },
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:01:00Z", runStartedAt: "b", requestedProvider: "openai", model: "glm", promptTokens: 30, cachedTokens: 20, generatedTokens: 7, local: false },
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:02:00Z", runStartedAt: "c", requestedProvider: "llamacpp", promptTokens: 1, generatedTokens: 1 },
+    ] as EngineEvent[], "p");
+    expect(records.map((r) => [r.provider, r.local, r.cached])).toEqual([["ollama · local", true, 0], ["openai · cloud", false, 20], ["llamacpp · local", true, 0]]);
+  });
+});

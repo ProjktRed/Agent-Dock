@@ -182,7 +182,7 @@ function PromptBar() {
                 ))}
               </select>
             </label>
-            <span className="sub" data-tip="The engine always runs the full cycle: Assessment plans a bounded task, Cline implements it, QA verifies and commits. Single-agent runs are not supported by the engine.">Runs the full workflow</span>
+            <span className="sub" data-tip="The engine always runs the full cycle: Assessment plans a bounded task, the Implementation agent makes the change, QA verifies and commits. Single-agent runs are not supported by the engine.">Runs the full workflow</span>
             <button className="btn sm" onClick={async () => setTaskFile(await window.api.pickTaskFile())} title="Optional first task (JSON with id, prompt, qaCommand, allowedPaths)">
               <Icon name="clip" size="sm" />
               {taskFile ? taskFile.split(/[\\/]/).pop() : "Attach task file"}
@@ -233,7 +233,7 @@ export function RunControls({ status, projectId, size = "sm" }: { status: Projec
           </button>
           <button className="opt" onClick={() => { setStopOpen(false); void control(projectId, "stop", "Will stop at the next safe point"); }}>
             <span className="st paused" style={{ marginTop: 2 }} />
-            <span><b style={{ fontWeight: 600, display: "block" }}>Stop at next safe point</b><span className="sub">Let the current Cline attempt or QA run reach a safe boundary, then exit.</span></span>
+            <span><b style={{ fontWeight: 600, display: "block" }}>Stop at next safe point</b><span className="sub">Let the current implementation attempt or QA run reach a safe boundary, then exit.</span></span>
           </button>
           <button className="opt" onClick={() => { setStopOpen(false); void control(projectId, "stop-now", "Engine process terminated"); }}>
             <span className="st blocked" style={{ marginTop: 2 }} />

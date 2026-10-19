@@ -95,10 +95,10 @@ export async function extractRelease(zip: string, dir: string): Promise<string> 
 }
 
 /** Hands off to the new app's swap script (resources/scripts/swap.mjs), run by the new exe in Node mode. */
-export function launchSwap({ unpacked, installDir, waitPid, resultFile, logFd }: { unpacked: string; installDir: string; waitPid: number; resultFile: string; logFd: number }) {
+export function launchSwap({ unpacked, installDir, waitPid, resultFile, logFd, version }: { unpacked: string; installDir: string; waitPid: number; resultFile: string; logFd: number; version?: string }) {
   const script = path.join(unpacked, "resources", "scripts", "swap.mjs");
   if (!existsSync(script)) throw new Error("The update has no swap script; it cannot install itself.");
-  spawn(path.join(unpacked, "AgentDock.exe"), [script, "--from", unpacked, "--install-dir", installDir, "--wait-pid", String(waitPid), "--relaunch", "--result", resultFile], {
+  spawn(path.join(unpacked, "AgentDock.exe"), [script, "--from", unpacked, "--install-dir", installDir, "--wait-pid", String(waitPid), "--relaunch", "--result", resultFile, ...(version ? ["--version", version] : [])], {
     cwd: path.dirname(unpacked), detached: true, windowsHide: true, stdio: ["ignore", logFd, logFd], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   }).unref();
 }

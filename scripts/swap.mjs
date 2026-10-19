@@ -3,9 +3,9 @@
 // Node.js on PATH: the downloaded app's own executable runs it with ELECTRON_RUN_AS_NODE=1, from the
 // staging folder, outside the folder being replaced.
 //
-//   swap.mjs --from <new win-unpacked> --install-dir <App> [--wait-pid N] [--relaunch] [--result <json>]
+//   swap.mjs --from <new win-unpacked> --install-dir <App> [--wait-pid N] [--relaunch] [--result <json>] [--version X.Y.Z]
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,16 @@ export const SHORTCUT_NAME = "Agent Dock";
 /** The per-user installer's uninstaller (electron-builder NSIS) lives in the install folder but not in a release zip. */
 export const isUninstaller = (name) => /^Uninstall .+\.exe$/i.test(name);
 const log = (msg) => console.log(`[swap] ${msg}`);
+
+/**
+ * PowerShell that sets DisplayVersion on the per-user uninstall entry whose uninstaller lives in
+ * installDir, so Windows' Apps list shows the updated version. Null for an unusable version.
+ */
+export function uninstallVersionScript(installDir, version) {
+  if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(String(version ?? ""))) return null;
+  const dir = String(installDir).replace(/[\\/]+$/, "").toLowerCase().replaceAll("'", "''");
+  return `Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | Where-Object { $u = (Get-ItemProperty $_.PSPath).UninstallString; $u -and $u.ToLower().Contains('${dir}\\') } | ForEach-Object { Set-ItemProperty $_.PSPath DisplayVersion '${version}' }`;
+}
 
 function run(cmd, args) {
   log(`$ ${cmd} ${args.join(" ")}`);
@@ -39,7 +49,7 @@ function shortcut(target, linkPath) {
 }
 
 /** Replace the installed files with a fresh build (robocopy /MIR), add shortcuts, optionally relaunch. */
-export async function swap({ from, installDir, waitPid, relaunch, shortcuts = true }) {
+export async function swap({ from, installDir, waitPid, relaunch, shortcuts = true, version }) {
   if (!existsSync(path.join(from, EXE_NAME))) throw new Error(`${from} does not contain ${EXE_NAME}`);
   if (waitPid) {
     log(`waiting for app process ${waitPid} to exit…`);
@@ -89,6 +99,13 @@ export async function swap({ from, installDir, waitPid, relaunch, shortcuts = tr
     if (!existsSync(startMenu)) shortcut(exe, startMenu);
     if (!existsSync(desktop)) shortcut(exe, desktop);
   }
+  // An installer-made install: keep the Apps list's version in step (best effort).
+  // Older apps do not pass --version; the new build's package.json says it (asar reads work in Electron's Node mode).
+  if (uninstallers.length && !version) {
+    try { version = JSON.parse(readFileSync(path.join(installDir, "resources", "app.asar", "package.json"), "utf8")).version; } catch { /* plain Node or no asar */ }
+  }
+  const versionScript = uninstallers.length && process.platform === "win32" ? uninstallVersionScript(installDir, version) : null;
+  if (versionScript) spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", versionScript], { windowsHide: true });
   log(`installed to ${installDir}`);
   if (relaunch) spawn(exe, [], { detached: true, stdio: "ignore", env: appEnv() }).unref();
 }
@@ -97,9 +114,9 @@ export async function swap({ from, installDir, waitPid, relaunch, shortcuts = tr
  * The swap stage as the updater runs it: record the outcome for the app to show on its next launch,
  * and always relaunch, so a failed swap never leaves the user with no app and no explanation.
  */
-export async function swapStage({ from, installDir, waitPid, relaunch, result }) {
+export async function swapStage({ from, installDir, waitPid, relaunch, result, version }) {
   try {
-    await swap({ from, installDir, waitPid, relaunch });
+    await swap({ from, installDir, waitPid, relaunch, version });
     if (result) writeFileSync(result, JSON.stringify({ ok: true, at: new Date().toISOString() }));
   } catch (error) {
     if (result) writeFileSync(result, JSON.stringify({ ok: false, error: error.message, at: new Date().toISOString() }));
@@ -118,6 +135,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     else { args[key] = next; i++; }
   }
   if (!args.from || !args["install-dir"]) { console.error("usage: swap.mjs --from <dir> --install-dir <dir> [--wait-pid N] [--relaunch] [--result <json>]"); process.exit(2); }
-  swapStage({ from: args.from, installDir: args["install-dir"], waitPid: args["wait-pid"], relaunch: Boolean(args.relaunch), result: typeof args.result === "string" ? args.result : null })
+  swapStage({ from: args.from, installDir: args["install-dir"], waitPid: args["wait-pid"], relaunch: Boolean(args.relaunch), result: typeof args.result === "string" ? args.result : null, version: typeof args.version === "string" ? args.version : undefined })
     .catch((error) => { console.error(`[swap] ${error.message}`); process.exitCode = 1; });
 }
