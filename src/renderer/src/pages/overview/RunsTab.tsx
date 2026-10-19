@@ -9,7 +9,11 @@ const hours = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` :
 
 /** Finished runs: what each achieved, why it ended, what it cost, and whether its action log verified. */
 export function RunsTab() {
-  const { activeProject, activeStatus } = useApp();
+  const { activeProject, activeStatus, toast } = useApp();
+  const exportRun = async (startedAt: string, format: "md" | "html") => {
+    try { const file = await window.api.exportRun(activeProject!.id, startedAt, format); if (file) toast("success", `Saved ${file}`); }
+    catch (error) { toast("error", (error as Error).message); }
+  };
   const [runs, setRuns] = useState<RunReport[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const alive = activeStatus?.processAlive;
@@ -52,6 +56,7 @@ export function RunsTab() {
                         <span className="sub">{new Date(r.startedAt).toLocaleString()} → {new Date(r.endedAt).toLocaleString()} · corrections {r.corrections} · Elevations {r.elevations} · stops for attention {r.needsAttention} · Supervisor alerts {r.supervisorAlerts} · {r.usage?.calls ?? 0} model call(s), {tokens(r.usage?.cached ?? 0)} more tokens read from prompt caches</span>
                         {r.approved?.length ? <span className="sub">Approved: {r.approved.map((a) => a.taskId ?? "task").join(", ")}</span> : null}
                         {r.reason && r.reason.includes("\n") ? <div className="mono log" style={{ maxHeight: 120 }}>{r.reason}</div> : null}
+                        <div className="row" style={{ gap: 8 }}><button className="btn sm" onClick={() => void exportRun(r.startedAt, "md")}>Export Markdown</button><button className="btn sm" onClick={() => void exportRun(r.startedAt, "html")}>Export HTML</button></div>
                       </div>
                     </td>
                   </tr>

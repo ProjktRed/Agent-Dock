@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runReportHtml, runReportMarkdown } from "./lib/run-export";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
@@ -561,6 +562,18 @@ async function usage(projectId: string | null): Promise<UsageSummary> {
   return { records: records.sort((a, b) => a.timestamp.localeCompare(b.timestamp)), compactions, sessionStartedAt: alive?.startedAt ?? null, limit };
 }
 
+/** Overview › Runs › Export: one run's report as Markdown or HTML, saved where the user picks. */
+async function exportRunReport(projectId: string, startedAt: string, format: "md" | "html"): Promise<string | null> {
+  const p = project(projectId);
+  const report = (await engine.runs(p)).find((r) => r.startedAt === startedAt);
+  if (!report) throw new Error("That run's report was not found.");
+  const name = `${p.name.replace(/[^\w.-]+/g, "-")}-run-${startedAt.slice(0, 16).replace(/[:T]/g, "-")}.${format}`;
+  const result = await dialog.showSaveDialog(win!, { title: "Export run report", defaultPath: path.join(app.getPath("documents"), name), filters: [format === "md" ? { name: "Markdown", extensions: ["md"] } : { name: "Web page", extensions: ["html"] }] });
+  if (result.canceled || !result.filePath) return null;
+  await writeFile(result.filePath, format === "md" ? runReportMarkdown(report, p.name) : runReportHtml(report, p.name));
+  return result.filePath;
+}
+
 /** Settings › Advanced › Export settings: agents, roles, connections and settings, without secrets or projects. */
 async function exportSettingsFile(): Promise<string | null> {
   const result = await dialog.showSaveDialog(win!, { title: "Export settings", defaultPath: path.join(app.getPath("documents"), `agent-dock-settings-${new Date().toISOString().slice(0, 10)}.json`), filters: [{ name: "Agent Dock settings", extensions: ["json"] }] });
@@ -769,6 +782,7 @@ function registerIpc() {
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
   handle("project:runs", (id: string) => engine.runs(project(id)));
+  handle("project:exportRun", (id: string, startedAt: string, format: "md" | "html") => exportRunReport(id, String(startedAt), format === "html" ? "html" : "md"));
   handle("diagnostics:export", exportDiagnostics);
   handle("settings:export", exportSettingsFile);
   handle("settings:import", importSettingsFile);
