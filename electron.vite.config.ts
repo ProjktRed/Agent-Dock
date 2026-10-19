@@ -8,5 +8,6 @@ const shared = { "@shared": resolve(__dirname, "src/shared") };
 export default defineConfig({
   main: { plugins: [buildInfoPlugin(__dirname), externalizeDepsPlugin()], resolve: { alias: shared } },
   preload: { plugins: [externalizeDepsPlugin()], resolve: { alias: shared } },
-  renderer: { plugins: [react()], resolve: { alias: shared } },
+  // electron-vite 5 no longer minifies the renderer by default.
+  renderer: { plugins: [react()], resolve: { alias: shared }, build: { minify: "esbuild" } },
 });

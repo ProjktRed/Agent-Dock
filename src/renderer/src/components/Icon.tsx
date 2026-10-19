@@ -1,4 +1,4 @@
-import type { SVGProps } from "react";
+import type { JSX, SVGProps } from "react";
 
 const paths: Record<string, JSX.Element> = {
   overview: (
