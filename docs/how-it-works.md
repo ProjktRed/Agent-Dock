@@ -146,6 +146,31 @@ packet. **Retry QA** explicitly collects fresh checks and reruns before-QA gates
 tracked and non-ignored repository files; use Retry QA after changing ignored/external dependencies
 or submodule contents.
 
+## Running, repeating and sharing work
+
+All per project in Projects › Workflow, unless noted.
+
+- **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
+  open. A start missed by more than 30 minutes (the app was closed) is skipped. Pair with Unattended
+  mode for overnight runs.
+- **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
+  branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
+  the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
+- **Parallel lanes**: run another objective at the same time in a linked git worktree
+  (`<project>-lanes/<name>`) on its own `agent-dock/lane-…` branch. Each lane is its own project with
+  its own engine and state folder; merge its branch when you are happy with it. Removing a lane keeps
+  its branch.
+- **WSL isolation (opt-in)**: the engine and every agent CLI and command it starts run inside a WSL
+  distro. Node.js, git and the agent CLIs must be installed and signed in there (**Check distro**
+  lists them). Windows drives stay reachable under `/mnt` unless automount is off in the distro's
+  `/etc/wsl.conf`; keep the project inside the distro (`\\wsl$\…`) for the strongest separation.
+  Prefer Stop over Stop now for these runs.
+- **Run again** (Task history): runs one earlier task again, with the same prompt, files and check,
+  as the next start's first task. Tasks are kept from 0.34 on (`<state>/tasks`).
+- **Estimate** (Overview): the plan's remaining items at this project's own pace over its recent
+  approved tasks (time, tokens, spend). Each plan item counts as one task, so it is a rough guide.
+- **Export** (Overview › Runs): one run's report as Markdown or a self-contained HTML page.
+
 ## Known limitations
 
 - Workflow roles are read-only reviewers and planners; they cannot edit files.
