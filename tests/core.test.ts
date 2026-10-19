@@ -447,6 +447,20 @@ describe("provider limits", () => {
     const result = parseClaudeUsage({ subscription_type: "max", rate_limits: { five_hour: { utilization: 100, resets_at: null, locked_reason: "rate_limited" } } });
     expect([result.plan, result.status, result.statusText]).toEqual(["Claude Max", "limited", "Limited: rate limited"]);
   });
+  it("uses the newest recent plan limits an engine run saved, across projects, before calling Claude Code", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const os = await import("node:os");
+    const { readRunLimits } = await import("../src/main/limits");
+    const [a, b, empty] = [0, 1, 2].map(() => mkdtempSync(path.join(os.tmpdir(), "run-limits-")));
+    const now = Date.parse("2026-10-19T08:00:00.000Z");
+    const save = (dir: string, minutesAgo: number, utilization: number) => writeFileSync(path.join(dir, "claude-rate-limit.json"), JSON.stringify({ fetchedAt: new Date(now - minutesAgo * 60_000).toISOString(), info: { status: "allowed", unifiedWindows: { five_hour: { utilization, resetsAt: 1792310400 } } } }));
+    save(a, 10, 0.4); save(b, 3, 0.55);
+    const limits = await readRunLimits([a, b, empty, path.join(empty, "missing")], 15 * 60_000, now);
+    expect([limits?.windows[0].usedPercent, limits?.source]).toEqual([55, "Claude Code · reported during the latest run"]);
+    expect(await readRunLimits([a, b], 2 * 60_000, now)).toBeNull();
+    writeFileSync(path.join(empty, "claude-rate-limit.json"), "{broken");
+    expect(await readRunLimits([empty], 15 * 60_000, now)).toBeNull();
+  });
   it("parses a real Codex account/rateLimits/read result", async () => {
     const { parseCodexLimits } = await import("../src/main/lib/limits-parse");
     const snap = { limitId: "codex", primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1791815431 }, secondary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: 1792299024 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "plus", rateLimitReachedType: null, spendControlReached: false };

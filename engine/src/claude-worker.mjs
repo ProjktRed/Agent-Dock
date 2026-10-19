@@ -8,6 +8,7 @@ import { redactText } from "./redact.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
+import { saveClaudeRateLimit } from "./claude-limits.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -65,7 +66,7 @@ export class ClaudeWorker extends CodexWorker {
     if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
     const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
-    const args = [...this.prefixArgs, "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
+    const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
@@ -118,6 +119,7 @@ export class ClaudeWorker extends CodexWorker {
       this.activeCount--;
       await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
       noteUsage(claudeUsage(stdout));
+      await saveClaudeRateLimit(this.stateDir, stdout);
     }
     return parse(await readFile(path.join(invocation, "result.json"), "utf8"));
   }

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { shellLine, stopAndClean } from "./proc";
 import type { LimitsState, ProviderLimits, Settings } from "@shared/types";
-import { lastRateLimitEvent, parseClaudeRateLimit, parseClaudeUsage, parseCodexLimits, type ClaudeUsageResponse, type CodexRateLimitsResult } from "./lib/limits-parse";
+import { lastRateLimitEvent, parseClaudeRateLimit, parseClaudeUsage, parseCodexLimits, type ClaudeRateLimitInfo, type ClaudeUsageResponse, type CodexRateLimitsResult } from "./lib/limits-parse";
 import { readJson, writeJson } from "./lib/json-file";
 
 const quote = (p: string) => (/[\s&()]/.test(p) && !p.startsWith('"') ? `"${p}"` : p);
@@ -164,6 +164,25 @@ export function probeClaudeLimits(claudePath: string, timeoutMs = 90_000): Promi
   });
 }
 
+/** How old an engine run's plan-limit report may be and still stand in for a fresh read. */
+export const RUN_LIMITS_MAX_AGE_MS = { scheduled: 15 * 60_000, manual: 2 * 60_000 };
+
+/**
+ * The newest plan-limit report an engine run saved across projects (<state>/claude-rate-limit.json,
+ * from Claude Code's own rate_limit_event), as limits, when it is recent enough; otherwise null.
+ */
+export async function readRunLimits(stateDirs: string[], maxAgeMs: number, now = Date.now()): Promise<ProviderLimits | null> {
+  let newest: { fetchedAt: string; info: ClaudeRateLimitInfo } | null = null;
+  for (const dir of stateDirs) {
+    const saved = await readJson<{ fetchedAt?: string; info?: ClaudeRateLimitInfo } | null>(path.join(dir, "claude-rate-limit.json"), null).catch(() => null);
+    if (!saved?.info || typeof saved.fetchedAt !== "string" || !Number.isFinite(Date.parse(saved.fetchedAt))) continue;
+    if (!newest || Date.parse(saved.fetchedAt) > Date.parse(newest.fetchedAt)) newest = { fetchedAt: saved.fetchedAt, info: saved.info };
+  }
+  if (!newest || now - Date.parse(newest.fetchedAt) > maxAgeMs) return null;
+  const limits = parseClaudeRateLimit(newest.info, newest.fetchedAt);
+  return limits.windows.length ? { ...limits, source: "Claude Code · reported during the latest run" } : null;
+}
+
 /** Caches the last snapshot per provider (shown with its timestamp) and refreshes on a schedule. */
 export class LimitsService {
   state: LimitsState = { codex: null, claude: null, refreshing: { codex: false, claude: false } };
@@ -173,6 +192,8 @@ export class LimitsService {
     private readonly cacheFile: string,
     private readonly resolveCli: (kind: "codex" | "claude") => Promise<string | null>,
     private readonly emit: (state: LimitsState) => void,
+    /** Project state folders, where engine runs save the plan limits Claude Code reported. */
+    private readonly stateDirs: () => string[] = () => [],
   ) {}
 
   async load() {
@@ -203,7 +224,13 @@ export class LimitsService {
     return this.state;
   }
 
+  /**
+   * First the limits Claude Code reported during a recent engine run (no extra call); then the
+   * get_usage control request; on a manual refresh only, the paid Haiku probe as a last resort.
+   */
   private async readClaude(cli: string, manual: boolean): Promise<ProviderLimits> {
+    const fromRun = await readRunLimits(this.stateDirs(), manual ? RUN_LIMITS_MAX_AGE_MS.manual : RUN_LIMITS_MAX_AGE_MS.scheduled).catch(() => null);
+    if (fromRun) return fromRun;
     const usage = await readClaudeUsage(cli);
     if (usage.ok || !manual || /not signed in|no plan limits/.test(usage.error ?? "")) return usage;
     const probe = await probeClaudeLimits(cli);

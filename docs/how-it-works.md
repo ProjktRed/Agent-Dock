@@ -10,7 +10,10 @@ All **Reported** by the provider's own CLI, with an "as of" time.
   stdio, `initialize` + one read). Plan, 5-hour and weekly windows (used %, reset time), credits and
   reset-credit count. Read-only and free; refreshed every 5 minutes by default. The reset-credit
   *consume* method is never called.
-- **Claude Code**: the SDK control request `get_usage` (`skip_behaviors: true`, after `initialize`)
+- **Claude Code**: first the limits Claude Code itself reported during a recent engine run (every
+  engine call reads its `rate_limit_event` and saves it as `claude-rate-limit.json` in the project's
+  state folder; used when under 15 minutes old, or 2 minutes for a manual Refresh). No extra call is
+  made then. Otherwise, the SDK control request `get_usage` (`skip_behaviors: true`, after `initialize`)
   over `claude -p --input-format stream-json`. Claude Code fetches the numbers itself, so no prompt
   is sent and Agent Dock never handles its login token. Plan, 5-hour and weekly windows (plus
   per-model weekly windows when the plan has them), extra usage and this week's split by product.

@@ -892,7 +892,7 @@ app.whenReady().then(async () => {
     const conn = store.data.clis.find((c) => c.kind === kind);
     return conn ? pickRunnable(await whereAll(conn.location)) : null;
   };
-  limits = new LimitsService(path.join(store.dir, "limits.json"), resolveOrchestrator, (s) => send("limits", s));
+  limits = new LimitsService(path.join(store.dir, "limits.json"), resolveOrchestrator, (s) => send("limits", s), () => store.data.projects.filter((p) => !p.archived).map((p) => p.stateDir));
   await limits.load();
   models = new ModelsService(path.join(store.dir, "models.json"), resolveOrchestrator, (s) => send("models", s));
   await models.load();
