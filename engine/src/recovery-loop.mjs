@@ -14,7 +14,7 @@ import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadR
 import {TUNING} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
-import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
+import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -33,7 +33,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
   readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
-  knowledgeFile,roles=[],runRole=null,
+  knowledgeFile,roles=[],runRole=null,fixWorkers={},
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
   const stageRoles=stage=>runRole?roles.filter(role=>role.stage===stage):[];
@@ -299,12 +299,31 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             // Reviews travel with the packet: QA and Assessment read them.
             r.qaPacket.roleReviews=reviews.results.map(x=>({role:x.name,gate:x.gate,...x.result}));
             const gate=reviews.results.find(x=>x.gate&&x.result.verdict==='changes-needed');
+            // A fixer makes its own requested fix once per attempt; the result goes through evidence and review again.
+            if(gate&&roles.find(role=>role.id===gate.id)?.fix&&fixWorkers[gate.id]&&!r.fixes?.[r.attempt]) {
+              (r.fixes??={})[r.attempt]={attempt:r.attempt,roleId:gate.id,roleName:gate.name,text:gateFailureText(gate),started:false};
+              r.phase='fixing';await save();continue;
+            }
             if(gate) {
               r.failure={status:'fail',output:gateFailureText(gate),correction:'',commit:'',manualReviewCause:null,gateRole:gate.name};
               await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
               r.history.push({attempt:r.attempt,prompt:r.prompt,workerResult:r.workerResult,qa:r.failure});
               r.phase='decision';await save();await emit('role-gate-failed',{attempt:r.attempt,roleName:gate.name,qa:r.failure.output});
             } else {r.phase='qa';await save();}
+          }
+          if(r.phase==='fixing') {
+            const fix=r.fixes[r.attempt],fixer=fixWorkers[fix.roleId];
+            // Resumed after a crash mid-fix: never rerun it; whatever it left is checked like any change.
+            if(!fix.started&&fixer) {
+              if(codex.activeCount!==0)throw new Error('Cannot launch the fixer while Codex is alive');
+              await codex.assertIdle?.();
+              fix.started=true;await save();
+              const started=Date.now();await emit('role-fix-started',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName});
+              try{const result=await fixer.run(fixPromptText(task,fix,{workspace}),{task,onEvent:async({type,...event})=>{await emit(type,{...event,attempt:r.attempt});}});fix.exitCode=result.exitCode;}
+              catch(error){fix.error=String(error?.message??error).slice(0,500);}
+              await emit('role-fix-finished',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName,exitCode:fix.exitCode??null,error:fix.error??null,durationMs:Date.now()-started});
+            }
+            r.forceFreshQa=true;r.phase='evidence';await save();continue;
           }
           if(r.phase==='qa') {
             if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');

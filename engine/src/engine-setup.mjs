@@ -147,7 +147,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
 /** Custom workflow roles (--roles-file) and the runner for them; each CLI a role needs is preflighted once. */
 export async function createRoles(options, { stateDir, workspace }) {
   const roles = await readRolesFile(options.rolesFile);
-  if (!roles.length) return { roles, runRole: null };
+  if (!roles.length) return { roles, runRole: null, fixWorkers: {} };
   const needed = new Set(roles.map((role) => role.cli));
   const workers = {};
   if (needed.has("codex")) {
@@ -160,7 +160,14 @@ export async function createRoles(options, { stateDir, workspace }) {
     await preflightClaude(claudeCommand);
     workers.claude = new ClaudeWorker({ stateDir, workspace, claudeCommand });
   }
-  return { roles, runRole: createRoleRunner(workers) };
+  // Fixers edit through a guarded implementation run on their own CLI; the tool guard is always on.
+  const fixWorkers = {};
+  for (const role of roles.filter((r) => r.fix)) {
+    const command = role.cli === "codex" ? workers.codex.command : options["claude-command"] ?? "claude";
+    const prefixArgs = role.cli === "codex" ? workers.codex.prefixArgs : [];
+    fixWorkers[role.id] = new CloudImplementationWorker({ cli: role.cli, stateDir, workspace, command, prefixArgs, model: role.model, effort: role.effort, fast: role.fast, timeoutSeconds: options.timeoutSeconds, toolGuard: true });
+  }
+  return { roles, runRole: createRoleRunner(workers), fixWorkers };
 }
 
 /** A failed startup git query, rethrown with git's own reason (e.g. "detected dubious ownership"). */

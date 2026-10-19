@@ -185,6 +185,8 @@ export class DashboardState {
       "qa-fail": ["fail", "idle", "fail", false],
       "qa-retry": ["qa", "idle", "running", false],
       "role-gate-failed": ["fail", "idle", "fail", false],
+      "role-fix-started": ["implementing", "running", "waiting", false],
+      "role-fix-finished": ["implemented", "idle", "waiting", false],
       retry: ["retry", "idle", "waiting", false],
       "qa-pass": ["pass", "idle", "pass", false],
       "manual-review": [recoveryClassification({output:event.qa,manualReviewCause:event.manualReviewCause})==='blocked'?'BLOCKED':'USER_ATTENTION', "idle", "fail", false],

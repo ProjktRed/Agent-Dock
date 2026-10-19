@@ -92,6 +92,8 @@ export function describeEvent(e: EngineEvent): string {
     case "role-result": return `${e.roleName ?? "Workflow role"}: ${e.verdict === "changes-needed" ? "changes needed" : "ok"}${e.summary ? ` · ${first(e.summary, 120)}` : ""}`;
     case "role-error": return `${e.roleName ?? "Workflow role"} could not run: ${first(e.message)}`;
     case "role-gate-failed": return `${e.roleName ?? "Gate"} sent the change back for correction`;
+    case "role-fix-started": return `${e.roleName ?? "Fixer"} is fixing what it found (guarded, task files only)`;
+    case "role-fix-finished": return e.error ? `${e.roleName ?? "Fixer"} could not finish its fix: ${first(e.error)}` : `${e.roleName ?? "Fixer"} finished its fix; checking it again`;
     case "loop-complete": return "Objective complete";
     case "paused": return "Paused";
     case "stopped": return "Stopped";

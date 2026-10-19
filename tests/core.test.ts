@@ -499,6 +499,8 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(plan.problems).toEqual([]);
     const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings(), roles: [] });
     expect(none.args).not.toContain("--roles-file");
+    const fixer = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles: [role({ fix: true })] });
+    expect(fixer.roles[0].fix).toBe(true);
   });
 
   it("passes loop limits only with guardrails off, and only those that differ from the engine defaults", () => {
@@ -516,6 +518,10 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     const parsed = parseRoleFile(text, "security-review", "dir");
     expect(parsed).toMatchObject({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: false, enabled: true, instructions: "Look for injection.", warnings: [] });
     expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: true }), "x", "d").gate).toBe(true);
+    // A fixer is a before-QA gate that may fix; without the gate the flag is dropped.
+    expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: true, fix: true }), "x", "d").fix).toBe(true);
+    expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: false, fix: true }), "x", "d").fix).toBe(false);
+    expect(parseRoleFile("---\nname: X\nstage: after-pass\ngate: true\nfix: true\n---\nDo it", "x", "d").fix).toBe(false);
     expect(parseRoleFile("---\nname: X\nstage: sometime\n---\nDo it", "x", "d").warnings[0]).toMatch(/Unknown stage/);
     expect(roleSlug("Security Review (strict)!")).toBe("security-review-strict");
     expect(classifyPrompt("You are Strict QA bot, a custom workflow role in a bounded automation loop")).toBe("custom");

@@ -104,16 +104,20 @@ review and finish them; in Unattended mode the engine also tries again by itself
 
 ## Workflow roles
 
-Workflow tab: your own read-only roles at three points in the loop.
+Workflow tab: your own roles at three points in the loop. Roles review read-only; only a fixer edits, under the guard.
 
 - **Before implementation**: runs once per task; its guidance is added to every worker prompt for
   that task.
 - **Before QA**: reviews each finished attempt; QA and Assessment read its findings. As a **gate**,
   "changes needed" sends the attempt back for correction instead of to QA, and a gate that cannot run
-  blocks the task rather than letting the change through unreviewed.
+  blocks the task rather than letting the change through unreviewed. A gate can also be a
+  **fixer**: when it finds problems, it fixes them itself once per attempt, then reviews the result
+  again. The fix runs on the role's CLI with the tool guard always on, may edit only the task's
+  approved files and never commits; the engine's evidence and scope checks run again afterwards. If
+  problems remain, the attempt goes back for correction as usual.
 - **After QA passes**: writes a report to `role-reports.ndjson` in the project's state folder.
 
-Each role is a `ROLE.md` (frontmatter `name`, `description`, `stage`, `gate`, `enabled`, then the
+Each role is a `ROLE.md` (frontmatter `name`, `description`, `stage`, `gate`, `fix`, `enabled`, then the
 instructions) under `%APPDATA%\Agent Dock\roles\<id>`; import a folder of them from the Workflow
 tab. A role runs on the agent assigned to it: an agent with the role "Workflow role" on Codex CLI or
 Claude Code, with its own model, effort and speed. Roles go through the orchestrator lock, are

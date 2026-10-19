@@ -278,3 +278,48 @@ test('Retry after a blocked Assessment runs a fresh Assessment instead of replay
   const second = await run();
   assert.equal(second.output, 'fresh verdict 2', 'every Retry asks Assessment again');
 });
+
+test('a fixer makes its own requested fix once per attempt under the guard, and the fix is reviewed again before QA', async t => {
+  const { root, state } = await setup(t);
+  const roles = parseRoles([role({ id:'fixer', name:'Fixer', gate:true, fix:true }), role({ id:'plain', name:'Plain', stage:'after-pass', gate:true, fix:true })]);
+  assert.deepEqual(roles.map(r => r.fix), [true, false], 'only a before-QA gate can fix');
+  let gateCalls = 0, workerRuns = 0, qaCalls = 0; const fixPrompts = [];
+  const runRole = async (r) => {
+    if (r.id === 'plain') return { verdict:'pass', summary:'', findings:[], guidance:'' };
+    return ++gateCalls === 1 ? { verdict:'changes-needed', summary:'x is unexported', findings:['src/x.js: export x'], guidance:'' } : { verdict:'pass', summary:'ok', findings:[], guidance:'' };
+  };
+  const fixWorkers = { fixer:{ run:async (prompt, hooks) => { fixPrompts.push(prompt); assert.equal(hooks.task.id, 'W'); await hooks.onEvent({ type:'implementation-cli-ready', cli:'claude' }); return { exitCode:0 }; } } };
+  const result = await runNodeLoop(baseLoop(root, state, { roles, runRole, fixWorkers,
+    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ workerRuns++; await hooks.onStart({pid:1}); return { exitCode:0 }; } },
+    review:async () => { qaCalls++; return { status:'pass', output:'verified', commit:'abc' }; },
+    assessCorrection:()=>assert.fail('the fixer handles it, no correction'), elevate:()=>assert.fail('no elevation'),
+  }));
+  assert.equal(result.status, 'passed');
+  assert.equal(workerRuns, 1, 'the implementation worker is not relaunched');
+  assert.equal(fixPrompts.length, 1);
+  assert.match(fixPrompts[0], /requested by the workflow role Fixer/);
+  assert.match(fixPrompts[0], /src\/x\.js: export x/);
+  assert.match(fixPrompts[0], /Change only these approved paths: src\/x\.js/);
+  assert.match(fixPrompts[0], /Do not commit/);
+  assert.equal(gateCalls, 2, 'the fixed change is reviewed again');
+  assert.equal(qaCalls, 1);
+  const types = (await readFile(path.join(root, 'activity.ndjson'), 'utf8')).trim().split('\n').map(l => JSON.parse(l).type);
+  assert.ok(types.indexOf('role-fix-started') < types.indexOf('role-fix-finished'));
+});
+
+test('a fixer gets one try per attempt; a second rejection goes back to correction', async t => {
+  const { root, state } = await setup(t);
+  const roles = parseRoles([role({ id:'fixer', name:'Fixer', gate:true, fix:true })]);
+  let gateCalls = 0, fixes = 0, assessments = 0;
+  const runRole = async () => ++gateCalls <= 2 ? { verdict:'changes-needed', summary:'still wrong', findings:['src/x.js: fix'], guidance:'' } : { verdict:'pass', summary:'ok', findings:[], guidance:'' };
+  const result = await runNodeLoop(baseLoop(root, state, { roles, runRole,
+    fixWorkers:{ fixer:{ run:async () => { fixes++; throw new Error('usage limit'); } } },
+    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ await hooks.onStart({pid:1}); return { exitCode:0 }; } },
+    review:async () => ({ status:'pass', output:'verified', commit:'abc' }),
+    assessCorrection:async input=>{ assessments++; assert.match(input.failure.reason, /Fixer requested changes/); return correction(1); },
+    elevate:()=>assert.fail('no elevation'),
+  }));
+  assert.equal(result.status, 'passed');
+  assert.equal(fixes, 1, 'a failed fix is not retried for the same attempt');
+  assert.equal(assessments, 1);
+});

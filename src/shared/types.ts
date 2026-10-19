@@ -500,6 +500,8 @@ export interface WorkflowRole {
   stage: RoleStage;
   /** Before QA only: a "changes-needed" verdict sends the change back for correction instead of to QA. */
   gate: boolean;
+  /** Gates only: the role makes its own requested fix once per attempt (guarded, task files only) before a correction. */
+  fix?: boolean;
   enabled: boolean;
   instructions: string;
   dir: string;

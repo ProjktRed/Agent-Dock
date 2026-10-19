@@ -80,7 +80,7 @@ const mixed = isMixed(clis);
 if (mixed) useMixedDefaults(clis);
 useRoleOverrides(options.roleOverrides);
 console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { cli: clis[role], model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
-const { roles, runRole } = await createRoles(options, { stateDir, workspace });
+const { roles, runRole, fixWorkers } = await createRoles(options, { stateDir, workspace });
 if (roles.length) console.log(JSON.stringify({ workflowRoles: roles.map(({ instructions: _text, ...role }) => role) }));
 const state = new DashboardState({ stateDir });
 const worker = implementation.worker;
@@ -148,7 +148,7 @@ try {
       if (event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: state.live?.task?.id, item }).catch(() => {});
     },
     readControl: () => state.readControl(), pendingCodex,
-    roles, runRole,
+    roles, runRole, fixWorkers,
   });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), result);
   await writeRunReport(stateDir, { ...result, supervisorAlerts: supervisorAlerts().length });

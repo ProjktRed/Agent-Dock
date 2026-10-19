@@ -11,7 +11,7 @@ export function roleSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "role";
 }
 
-/** ROLE.md: frontmatter (name, description, stage, gate, enabled) + the role's instructions. */
+/** ROLE.md: frontmatter (name, description, stage, gate, fix, enabled) + the role's instructions. */
 export function parseRoleFile(text: string, id: string, dir: string): WorkflowRole {
   const parsed = parseSkillFile(text);
   const front: Record<string, string> = {};
@@ -31,6 +31,7 @@ export function parseRoleFile(text: string, id: string, dir: string): WorkflowRo
     description: parsed.description,
     stage,
     gate: stage === "before-qa" && front.gate === "true",
+    fix: stage === "before-qa" && front.gate === "true" && front.fix === "true",
     enabled: front.enabled !== "false",
     instructions: parsed.body.trim(),
     dir,
@@ -40,13 +41,14 @@ export function parseRoleFile(text: string, id: string, dir: string): WorkflowRo
 
 const clean = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 
-export function serializeRole(role: Pick<WorkflowRole, "name" | "description" | "stage" | "gate" | "enabled" | "instructions">): string {
+export function serializeRole(role: Pick<WorkflowRole, "name" | "description" | "stage" | "gate" | "fix" | "enabled" | "instructions">): string {
   return [
     "---",
     `name: ${clean(role.name)}`,
     `description: ${clean(role.description)}`,
     `stage: ${role.stage}`,
     `gate: ${role.stage === "before-qa" && role.gate}`,
+    `fix: ${role.stage === "before-qa" && role.gate && role.fix === true}`,
     `enabled: ${role.enabled}`,
     "---",
     "",

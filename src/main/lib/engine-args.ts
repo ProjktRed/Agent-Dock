@@ -278,7 +278,7 @@ export function buildEngineArgs(input: {
     }
     usedKinds.add(kind);
     useConnection(agent, role.name);
-    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
+    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, ...(role.stage === "before-qa" && role.gate && role.fix ? { fix: true } : {}), cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
   // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.

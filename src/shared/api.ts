@@ -48,6 +48,7 @@ export interface EngineRoleEntry {
   name: string;
   stage: WorkflowRole["stage"];
   gate: boolean;
+  fix?: boolean;
   cli: "codex" | "claude";
   model?: string;
   effort?: string;
