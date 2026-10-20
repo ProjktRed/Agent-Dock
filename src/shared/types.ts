@@ -51,6 +51,8 @@ export interface ProjectSchedule {
   time: string;
   /** 0 = Sunday … 6 = Saturday. */
   days: number[];
+  /** Windows: also start while Agent Dock is closed (a per-user Task Scheduler task launches it). */
+  whenClosed?: boolean;
 }
 
 export interface Agent {

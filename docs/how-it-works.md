@@ -180,7 +180,10 @@ All per project in Projects › Workflow, unless noted.
 
 - **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
   open. A start missed by more than 30 minutes (the app was closed) is skipped. Pair with Unattended
-  mode for overnight runs.
+  mode for overnight runs. **Also when closed** (Windows) adds a per-user task under Agent Dock in
+  Task Scheduler that launches Agent Dock minimized at that time; the app then starts what is due, so
+  a run never starts twice. No admin rights; it runs only while you are signed in. Turning the option
+  or the schedule off, or removing the project, removes the task.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.

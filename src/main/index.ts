@@ -17,6 +17,7 @@ import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { dueScheduledStart } from "@shared/schedule";
+import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
 import { addLaneWorktree, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -275,6 +276,13 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
 }
 
 /** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
+/** Windows: keeps Task Scheduler in step with the schedules marked "also when closed" (packaged builds only). */
+async function syncWindowsSchedules() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  const problems = await syncOsSchedules(store.data.projects, process.execPath);
+  if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
+}
+
 /** Scheduled runs: once a minute, start each project whose scheduled slot is due and that is not running. */
 async function runSchedules(now = new Date()) {
   for (const p of store.data.projects.filter((x) => !x.archived && x.schedule?.enabled)) {
@@ -761,9 +769,11 @@ function registerIpc() {
   handle("planner:cancel", (projectId: string) => { planners.get(projectId)?.abort(); });
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
+    const before = store.data.projects.find((x) => x.id === p.id);
     // The scheduler owns lastScheduledStart; a window's older copy never resets it.
     store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, lastScheduledStart: x.lastScheduledStart ?? null } : x));
     await store.saveProjects();
+    if (JSON.stringify([before?.schedule, before?.archived]) !== JSON.stringify([p.schedule, p.archived])) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:remove", async (id: string, deleteHistory: boolean) => {
@@ -775,6 +785,7 @@ function registerIpc() {
     // Only ever delete app-managed engine state, never the workspace or a user-chosen state folder.
     if (deleteHistory && path.resolve(p.stateDir).startsWith(path.resolve(stateRoot))) await rm(path.dirname(p.stateDir), { recursive: true, force: true });
     lastStatus.delete(id);
+    if (p.schedule?.whenClosed) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:activate", async (id: string | null) => {
@@ -950,7 +961,11 @@ async function resumeAfterRestart() {
   }
 }
 
-app.on("second-instance", showWindow);
+// Task Scheduler starts a second copy with --scheduled-run while the app is open: run the due schedules instead of showing the window.
+app.on("second-instance", (_event, argv) => {
+  if (argv.includes(SCHEDULED_RUN_FLAG)) void runSchedules().catch(() => {});
+  else showWindow();
+});
 
 app.on("before-quit", (event) => {
   if (quitting) return;
@@ -1019,6 +1034,9 @@ app.whenReady().then(async () => {
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);
   setTimeout(() => limits.schedule(store.data.settings), 3000);
   setInterval(() => void runSchedules().catch(() => {}), 60_000);
+  // Launched by Task Scheduler: start what is due once the app is ready, then keep checking as usual.
+  if (process.argv.includes(SCHEDULED_RUN_FLAG)) setTimeout(() => void runSchedules().catch(() => {}), 5000);
+  if (store.data.projects.some((p) => p.schedule?.whenClosed)) setTimeout(() => void syncWindowsSchedules().catch(() => {}), 8000);
   // Model lists are free to read; refresh once a day or when missing.
   setTimeout(() => void models.refreshStale(24 * 60 * 60_000), 6000);
 });
