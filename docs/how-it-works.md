@@ -180,7 +180,7 @@ All per project in Projects › Workflow, unless noted.
 
 - **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
   open. A start missed by more than 30 minutes (the app was closed) is skipped. Pair with Unattended
-  mode for overnight runs. **Also when closed** (Windows) adds a per-user task under Agent Dock in
+  mode for overnight runs. **Also when closed** (Windows) adds a per-user task in the "Agent Dock" folder of
   Task Scheduler that launches Agent Dock minimized at that time; the app then starts what is due, so
   a run never starts twice. No admin rights; it runs only while you are signed in. Turning the option
   or the schedule off, or removing the project, removes the task.

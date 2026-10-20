@@ -114,6 +114,7 @@ release is signed with the Agent Dock release key and the download matches its s
 
 ## Documentation
 
+- [User guide](docs/user-guide.md): getting started, task sizes, unattended runs and troubleshooting
 - [How it works](docs/how-it-works.md): where each number comes from, roles, limits, backups and known limitations
 - [Architecture](docs/architecture.md): source layout and how settings map to engine flags
 - [Security boundaries](docs/security.md): what the guards do and do not protect against

@@ -29,6 +29,9 @@ const ACCENTS = [
   ["Rose", "#D98291"],
 ];
 
+/** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
+const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
+
 function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
   return <K extends keyof Settings>(key: K, patch: Partial<Settings[K]>) =>
@@ -118,6 +121,15 @@ function General() {
             <option value="last">Last active project</option>
             {snap.projects.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+        </SetRow>
+      </section>
+      <section className="card pad">
+        <h2 className="h2" style={{ marginBottom: 4 }}>Help</h2>
+        <SetRow title="User guide" desc="Getting started, task sizes, unattended runs, spend, pull requests, lanes and troubleshooting">
+          <a className="btn sm" href={docUrl(snap.version, "user-guide.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+        </SetRow>
+        <SetRow title="How it works" desc="Where each number comes from, the loop's roles, limits and safeguards, and known limitations">
+          <a className="btn sm" href={docUrl(snap.version, "how-it-works.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
         </SetRow>
       </section>
     </div>
