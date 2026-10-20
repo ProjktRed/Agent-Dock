@@ -1,7 +1,7 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "description": "Agent Dock: a Windows desktop app for running AI coding agents on your projects",
   "private": true,
   "license": "MIT",
@@ -40,12 +40,53 @@
     "productName": "Agent Dock",
     "executableName": "AgentDock",
     "afterPack": "scripts/harden-electron.cjs",
-    "directories": { "buildResources": "build" },
-    "files": ["out/**", "package.json", "build-info.json"],
-    "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }, { "from": "scripts", "to": "scripts", "filter": ["swap.mjs"] }],
-    "win": { "target": "dir", "icon": "build/icon.png" },
-    "nsis": { "oneClick": true, "perMachine": false, "include": "scripts/installer.nsh", "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}", "shortcutName": "Agent Dock", "uninstallDisplayName": "Agent Dock", "deleteAppDataOnUninstall": false },
-    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" },
-    "appImage": { "artifactName": "AgentDock-${version}-linux-x86_64.${ext}" }
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**",
+      "package.json",
+      "build-info.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine",
+        "to": "engine",
+        "filter": [
+          "src/**",
+          "skills/**",
+          "ui/**",
+          "package.json"
+        ]
+      },
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": [
+          "swap.mjs"
+        ]
+      }
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "include": "scripts/installer.nsh",
+      "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}",
+      "shortcutName": "Agent Dock",
+      "uninstallDisplayName": "Agent Dock",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": "dir",
+      "icon": "build/icon.png",
+      "category": "Development"
+    },
+    "appImage": {
+      "artifactName": "AgentDock-${version}-linux-x86_64.${ext}"
+    }
   }
 }
