@@ -80,6 +80,11 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
     case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;
+    case "parallel-round": return `Parallel round ${e.round ?? ""}: ${Array.isArray(e.tasks) ? (e.tasks as { id: string; name: string }[]).map((t) => t.name || t.id).join(", ") : ""}`;
+    case "parallel-task-started": return `Task ${e.taskId ?? ""} started in its own worktree (branch ${e.branch ?? ""})`;
+    case "parallel-task-finished": return `Task ${e.taskId ?? ""} finished: ${e.status ?? ""}`;
+    case "parallel-merged": return `Task ${e.taskId ?? ""} merged into your branch after its check passed on the combined code${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}`;
+    case "parallel-merge-failed": return `Task ${e.taskId ?? ""} not merged: ${first(e.message)} It stays on branch ${e.branch ?? ""}.`;
     case "task-stepped-down": return `Task ${e.taskId ?? ""} failed review twice at ${e.from ?? ""} size: set aside and redone ${e.to ?? ""}-sized.${e.stash ? ` The first attempt is in git stash "${e.stash}".` : ""}`;
     case "task-mode-restored": return `The stepped-down work is done: back to ${e.mode ?? ""} size.`;
     case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;

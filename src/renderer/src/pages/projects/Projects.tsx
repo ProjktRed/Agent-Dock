@@ -48,6 +48,7 @@ function WorkflowTab({ project }: { project: Project }) {
         );
       })}
       <TaskModeRow project={project} />
+      <ParallelRow project={project} />
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
       {!project.parentId && <LanesRow project={project} />}
@@ -77,6 +78,29 @@ function TaskModeRow({ project }: { project: Project }) {
       <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
       {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
       <TaskModePicker value={mode} onChange={set} label="Task size for this project" />
+    </div>
+  );
+}
+
+/** This project's parallel tasks: inherited or its own. */
+function ParallelRow({ project }: { project: Project }) {
+  const { snap, saveProject } = useApp();
+  const overridden = project.workflowOverrides.parallelTasks !== undefined;
+  const value = overridden ? project.workflowOverrides.parallelTasks : snap.settings.workflow.parallelTasks ?? 1;
+  const set = (parallelTasks: number | undefined) => {
+    const next = { ...project.workflowOverrides };
+    if (parallelTasks === undefined) delete next.parallelTasks;
+    else next.parallelTasks = parallelTasks;
+    void saveProject({ ...project, workflowOverrides: next });
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent; off in Unattended mode.</div></div>
+      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
+      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
+        <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
+      </select>
     </div>
   );
 }

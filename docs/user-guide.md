@@ -61,6 +61,9 @@ mode for overnight work, and check the run report in the morning.
   prompt, files and check.
 - **Pull-request mode** (Projects › Workflow): each run works on its own `agent-dock/run-…` branch.
   Nothing is pushed until you press **Open pull request**.
+- **Parallel tasks** (Settings › Workflow rules): up to 4 tasks of the same objective at once, each
+  in its own worktree; each change is checked again on the combined code before it is committed.
+  Needs a cloud Implementation agent.
 - **Parallel lanes**: run another objective at the same time in a git worktree on its own branch.
   Each lane shows up as its own project; merge its branch when you are happy with it.
 - **WSL isolation** (opt-in, Windows): the engine and agent CLIs run inside a WSL distro.

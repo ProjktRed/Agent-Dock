@@ -344,6 +344,11 @@ function Workflow() {
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
         <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
+        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent; off in Unattended mode." support="engine">
+          <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
+            <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
+          </select>
+        </SetRow>
         <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
         <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
         <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>

@@ -187,6 +187,16 @@ All per project in Projects › Workflow, unless noted.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
+- **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
+  round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
+  (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>`)
+  on an `agent-dock/parallel-…` branch, at the same time. The run then applies each approved change
+  to your branch without committing, runs that task's check on the combined code, and commits only if
+  it passes. A change that does not apply or fails stays on its branch and goes back to Assessment;
+  a task that did not finish keeps its worktree for you to inspect. Stop reaches every running task.
+  Needs a cloud Implementation agent (a local model server answers one request at a time) and is off
+  in Unattended mode; a task in progress finishes on its own before parallel rounds start. Plan items
+  are checked off as each change is merged.
 - **Parallel lanes**: run another objective at the same time in a linked git worktree
   (`<project>-lanes/<name>`) on its own `agent-dock/lane-…` branch. Each lane is its own project with
   its own engine and state folder; merge its branch when you are happy with it. Removing a lane keeps

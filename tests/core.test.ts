@@ -527,6 +527,21 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
+  it("passes parallel tasks only for a cloud Implementation agent outside Unattended mode", () => {
+    const s = settings();
+    s.workflow.parallelTasks = 3;
+    const local = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
+    expect(local.args).not.toContain("--parallel");
+    expect(local.warnings.join(" ")).toMatch(/need a cloud Implementation agent/);
+    const claude = clis().find((c) => c.kind === "claude")!;
+    const cloud = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: claude.id, provider: undefined, model: "claude-sonnet-5-5" } : a));
+    expect(flag(buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s }).args, "--parallel")).toBe("3");
+    s.workflow.unattended = true;
+    const unattended = buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s });
+    expect(unattended.args).not.toContain("--parallel");
+    expect(unattended.warnings.join(" ")).toMatch(/off in Unattended mode/);
+  });
+
   it("passes the task size mode: eco by default, standard fixed, max with only the limits you set", () => {
     const s = settings();
     const eco = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;

@@ -94,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
     unattended: false,
     taskMode: "eco",
     stepDown: true,
+    parallelTasks: 1,
     maxLimits: { files: 0, newLines: 0, readFiles: 0, timeoutMinutes: 0 },
     unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },
     supervisor: { mode: "alert", stallMinutes: 30, repeatFailures: 3, refusals: 5, millionTokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0, review: "off", reviewer: "auto", reviewerModel: "", reviewerBaseUrl: "http://127.0.0.1:8080/v1", mayDefer: false, reviewMax: 6, planProposals: true },

@@ -19,6 +19,8 @@ import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mj
 import { applyRetention } from "./retention.mjs";
 import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { createReviewer } from "./supervisor-review.mjs";
+import { childArgs, runParallel, spawnChildEngine } from "./parallel-run.mjs";
+import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 
 installTopLevelDiagnostics();
@@ -36,6 +38,10 @@ const maxAttempts = null;
 const pollMs = Number(options["poll-seconds"] ?? 2) * 1000;
 if (!Number.isFinite(pollMs) || pollMs < 100) throw new Error("Invalid polling interval");
 const initialTask = options.task ? JSON.parse(await readFile(path.resolve(options.task), "utf8")) : null;
+// --single-task: one task's engine under a parallel run (it ends after that task and leaves the plan to the parent).
+const singleTask = options["single-task"] === "true";
+const lanes = options.parallel === undefined ? 1 : Number(options.parallel);
+if (!Number.isInteger(lanes) || lanes < 1 || lanes > 8) throw new Error("--parallel must be a whole number from 1 to 8");
 if (initialTask) validateTask(initialTask);
 useTuning(options.tuning);
 console.log(JSON.stringify({ tuning: TUNING }));
@@ -137,17 +143,28 @@ const retention = await applyRetention(stateDir, { days: retentionDays }).catch(
 if (retention && (retention.calls || retention.sessions || retention.setAside || retention.activityTrimmed || retention.actionLogRotated || retention.actionLogPruned))
   await state.record({ type: "retention", days: retentionDays, ...retention });
 const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
+// Parallel rounds start only from a task boundary: a task in progress finishes on its own first.
+const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf8").then((text) => JSON.parse(text)?.automation?.recovery?.phase !== "passed", () => false);
+const parallel = lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress && options.unattended !== "true";
+if (lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: options.unattended === "true" ? "unattended" : "a task is in progress" } }));
+const loopEvent = async (event) => {
+  await recordLoopEvent(state,event,options);
+  if (!singleTask && event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: event.taskId ?? state.live?.task?.id, item }).catch(() => {});
+};
+const betweenTasks = () => (singleTask ? Promise.resolve() : applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}));
 try {
-  const result = await runNodeLoop({
+  const result = parallel ? await runParallel({
+    workspace, stateDir, objective: options.objective, lanes,
+    assess: (input) => codex.assess(input),
+    runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile }), stateDir: childState }),
+    onEvent: loopEvent, readControl: () => state.readControl(), betweenTasks,
+  }) : await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
     solReassessmentEnabled: options.solReassessment,
     manualResolver: options['resolve-block']==='true',
-    betweenTasks: () => applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}),
+    betweenTasks, stopAfterTask: singleTask,
     onTask: async (task) => { await state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }); await superviseTask(task).catch(() => {}); await saveTaskDefinition(stateDir, task); },
-    onEvent: async (event) => {
-      await recordLoopEvent(state,event,options);
-      if (event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: state.live?.task?.id, item }).catch(() => {});
-    },
+    onEvent: loopEvent,
     readControl: () => state.readControl(), pendingCodex,
     roles, runRole, fixWorkers,
   });
@@ -168,7 +185,7 @@ try {
   // A run that ends right after an approval (a task limit, Stop) applies its plan check-offs and approved plan changes now (clean tree only).
   // Never while a task is in progress: an extra commit would move HEAD under its recovery.
   const current = await readFile(path.join(stateDir, "current-task.json"), "utf8").then(JSON.parse, () => null);
-  if (!current || current.automation?.recovery?.phase === "passed") await applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {});
+  if (!singleTask && (!current || current.automation?.recovery?.phase === "passed")) await applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {});
   stopSupervisor();
   await awaitSupervisorReview();
   await flushNotifications();

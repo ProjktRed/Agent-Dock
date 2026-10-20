@@ -304,6 +304,15 @@ export function buildEngineArgs(input: {
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
   if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // Parallel tasks: cloud Implementation agents only (a local model server answers one request at a time),
+  // and not in Unattended mode, whose run limits count one engine.
+  const parallel = Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  if (parallel > 1) {
+    const local = (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl?.provider !== "openai";
+    if (unattended) warnings.push(`Parallel tasks are off in Unattended mode; tasks run one at a time.`);
+    else if (local) warnings.push(`Parallel tasks need a cloud Implementation agent (a local model server works on one request at a time); tasks run one at a time.`);
+    else args.push("--parallel", String(parallel));
+  }
   // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
   const taskMode = taskModeOf(workflow);
   if (taskMode !== "eco") args.push("--task-mode", taskMode);

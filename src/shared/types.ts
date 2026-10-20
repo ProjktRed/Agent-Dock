@@ -164,6 +164,8 @@ export interface WorkflowSettings {
   stepDown?: boolean;
   /** Max mode's own limits (Max limits in the sidebar); 0 = no limit. */
   maxLimits?: MaxLimits;
+  /** Tasks run side by side in one run, each in its own git worktree (engine --parallel); 1 = one at a time. */
+  parallelTasks?: number;
   /** Supervisor v1: deterministic monitors; may alert, and pause or stop when allowed. */
   supervisor?: SupervisorSettings;
 }
