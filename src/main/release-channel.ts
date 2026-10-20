@@ -1,9 +1,10 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { applyPatch } from "@shared/block-patch";
 
 // Signed release channel (0.22.1). The app downloads the newest GitHub Release, and installs it only
 // when its manifest is signed by the release key built into the app, names this product and
@@ -113,8 +114,9 @@ const fileSha256 = async (file: string) => {
 
 /**
  * Rebuilds the new version in `outDir`: each indexed file comes from the changed files when present,
- * otherwise from the installed app, and must match the signed index (SHA-256 and size). Files not in
- * the index are left out. Throws on the first mismatch, so the caller can fall back to the full zip.
+ * from a binary patch (__adpatch/<path>, 0.35) applied to the installed file, otherwise from the installed
+ * app, and must match the signed index (SHA-256 and size). Files not in the index are left out. Throws
+ * on the first mismatch, so the caller can fall back to the full zip.
  */
 export async function assembleFromDelta(index: { files: { path: string; sha256: string; size: number }[] }, changedDir: string, installDir: string, outDir: string): Promise<string> {
   if (!Array.isArray(index?.files) || !index.files.length) throw new Error("The file index is empty.");
@@ -123,11 +125,14 @@ export async function assembleFromDelta(index: { files: { path: string; sha256: 
     const rel = String(entry.path);
     if (!rel || rel.startsWith("/") || rel.split("/").some((part) => part === ".." || part === "") || /[\\:]/.test(rel)) throw new Error(`Unsafe path in the file index: ${rel}`);
     const changed = path.join(changedDir, ...rel.split("/"));
-    const source = existsSync(changed) ? changed : path.join(installDir, ...rel.split("/"));
+    const patch = path.join(changedDir, "__adpatch", ...rel.split("/"));
+    const installed = path.join(installDir, ...rel.split("/"));
+    const source = existsSync(changed) ? changed : installed;
     if (!existsSync(source)) throw new Error(`${rel} is missing from the installed app.`);
     const target = path.join(outDir, ...rel.split("/"));
     mkdirSync(path.dirname(target), { recursive: true });
-    copyFileSync(source, target);
+    if (!existsSync(changed) && existsSync(patch)) writeFileSync(target, applyPatch(readFileSync(installed), readFileSync(patch)));
+    else copyFileSync(source, target);
     if (statSync(target).size !== entry.size || (await fileSha256(target)) !== entry.sha256) throw new Error(`${rel} does not match the signed file index.`);
   }
   if (!existsSync(path.join(outDir, "AgentDock.exe"))) throw new Error("The rebuilt update has no AgentDock.exe.");

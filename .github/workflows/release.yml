@@ -100,7 +100,13 @@ jobs:
           from="${previous#v}"
           # Releases before 0.33 have no index, so deltas start with the release after 0.33.
           if [ -n "$previous" ] && gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern "AgentDock-$from-win-x64.files.json" --dir previous; then
-            node scripts/release-delta.mjs changed --dir dist/win-unpacked --index "$index" --previous "previous/AgentDock-$from-win-x64.files.json" --out delta
+            # The previous release's files, so large changed files (the exe) can ship as binary patches.
+            previous_dir=""
+            if gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern "AgentDock-$from-win-x64.zip" --dir previous; then
+              pwsh -NoProfile -Command "Expand-Archive -LiteralPath 'previous/AgentDock-$from-win-x64.zip' -DestinationPath previous/app -Force" && previous_dir="previous/app"
+              [ -f "$previous_dir/win-unpacked/AgentDock.exe" ] && previous_dir="$previous_dir/win-unpacked"
+            fi
+            node scripts/release-delta.mjs changed --dir dist/win-unpacked --index "$index" --previous "previous/AgentDock-$from-win-x64.files.json" --out delta ${previous_dir:+--previous-dir "$previous_dir"}
             if [ -n "$(ls -A delta 2>/dev/null)" ]; then
               delta="AgentDock-$VERSION-from-$from-win-x64.zip"
               pwsh -NoProfile -Command "Compress-Archive -Path delta/* -DestinationPath '$delta'"

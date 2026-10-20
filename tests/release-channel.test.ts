@@ -222,4 +222,33 @@ describe("smaller (delta) updates", () => {
     await expect(assembleFromDelta(index, changed, installed, out)).rejects.toThrow(/app\.asar does not match/);
     await expect(assembleFromDelta({ files: [{ path: "../evil", sha256: "a".repeat(64), size: 1 }] }, changed, installed, out)).rejects.toThrow(/Unsafe path/);
   });
+
+  it("ships a large changed file as a small binary patch that rebuilds it exactly", async () => {
+    const { buildIndex, collectChanged } = await import("../scripts/release-delta.mjs");
+    const { makePatch, applyPatch } = await import("../src/shared/block-patch");
+    const { assembleFromDelta } = await import("../src/main/release-channel");
+    let seed = 7;
+    const random = (n: number) => Buffer.from(Array.from({ length: n }, () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255));
+    const oldExe = random(3 * 1024 * 1024);
+    // A new build: a few bytes changed (like the embedded integrity hash) and a short insertion.
+    const newExe = Buffer.concat([oldExe.subarray(0, 1_000_000), Buffer.from("inserted bytes"), oldExe.subarray(1_000_000)]);
+    newExe.write("0123456789abcdef", 2_500_000, "latin1");
+    const patch = makePatch(oldExe, newExe);
+    expect(patch.length).toBeLessThan(20_000);
+    expect(applyPatch(oldExe, patch).equals(newExe)).toBe(true);
+    expect(() => applyPatch(random(oldExe.length), patch)).toThrow(/not the one this patch was made from/);
+    expect(applyPatch(Buffer.from("abc"), makePatch(Buffer.from("abc"), Buffer.from("abcd"))).toString()).toBe("abcd");
+
+    const installed = await tmp(), target = await tmp(), delta = await tmp(), out = path.join(await tmp(), "rebuilt");
+    write(installed, "resources/app.asar", "old app"); writeFileSync(path.join(installed, "AgentDock.exe"), oldExe);
+    write(target, "resources/app.asar", "new app"); writeFileSync(path.join(target, "AgentDock.exe"), newExe);
+    const summary = collectChanged(["AgentDock.exe", "resources/app.asar"], target, delta, installed);
+    expect([summary.patched, summary.copied]).toEqual([1, 1]);
+    expect(existsSync(path.join(delta, "AgentDock.exe"))).toBe(false);
+    await assembleFromDelta(await buildIndex(target), delta, installed, out);
+    expect(readFileSync(path.join(out, "AgentDock.exe")).equals(newExe)).toBe(true);
+    // A different installed exe cannot be patched: the update falls back to the full download.
+    writeFileSync(path.join(installed, "AgentDock.exe"), random(100));
+    await expect(assembleFromDelta(await buildIndex(target), delta, installed, out)).rejects.toThrow(/not the one this patch was made from/);
+  });
 });
