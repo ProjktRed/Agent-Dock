@@ -2,7 +2,8 @@ import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration, engineStageLabel, tokens } from "../../lib/format";
-import { planEstimate } from "../../lib/estimate";
+import { modeEstimates, planEstimate } from "../../lib/estimate";
+import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
@@ -251,10 +252,24 @@ export function ProgressTab() {
             {plan.total ? <span>{plan.total - plan.completed} remaining</span> : null}
           </div>
           {(() => {
-            const est = plan.total ? planEstimate(plan.total - plan.completed, runs) : null;
+            if (!plan.total) return null;
+            const remaining = plan.total - plan.completed;
+            const hrs = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(1)} h`);
+            const text = (e: { hours: number; tokens: number; costUsd: number }) => `about ${hrs(e.hours)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · ${e.costUsd.toFixed(2)}` : ""}`;
+            // Per task size, from runs that checked off plan items (0.35 on); otherwise per approved task.
+            const byMode = modeEstimates(remaining, runs);
+            const current = taskModeOf({ ...snap.settings.workflow, ...activeProject?.workflowOverrides });
+            const modes = TASK_MODES.filter((m) => byMode[m.mode]);
+            if (modes.length) {
+              return (
+                <div className="sub" title="At this project's pace per finished plan item, from its recent runs in each task size.">
+                  Estimate for the rest: {modes.map((m, i) => <span key={m.mode}>{i ? " · " : ""}<b style={{ fontWeight: m.mode === current ? 600 : 400 }}>{m.label}</b> {text(byMode[m.mode]!)}</span>)}
+                </div>
+              );
+            }
+            const est = planEstimate(remaining, runs);
             if (!est) return null;
-            const hrs = est.hours < 1 ? `${Math.max(1, Math.round(est.hours * 60))} min` : `${est.hours.toFixed(1)} h`;
-            return <div className="sub" title={`At this project's pace over its last ${est.basisTasks} approved task(s); each plan item counted as one task.`}>Estimate for the rest: about {hrs} · {tokens(Math.round(est.tokens))} tokens{est.costUsd ? ` · ${est.costUsd.toFixed(2)}` : ""}</div>;
+            return <div className="sub" title={`At this project's pace over its last ${est.basisTasks} approved task(s); each plan item counted as one task.`}>Estimate for the rest: {text(est)}</div>;
           })()}
         </div>
         <div className="stack">

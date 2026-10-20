@@ -3,6 +3,7 @@ import path from "node:path";
 import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { SECOND_OPINION_ROLE_ID } from "@shared/workflow-templates";
+import { maxLimitsOf, taskModeOf } from "@shared/task-mode";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -303,9 +304,23 @@ export function buildEngineArgs(input: {
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
   if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
+  const taskMode = taskModeOf(workflow);
+  if (taskMode !== "eco") args.push("--task-mode", taskMode);
+  if (taskMode !== "eco" && workflow.stepDown === false) args.push("--step-down", "false");
+  if (taskMode === "max") {
+    const max = maxLimitsOf(workflow);
+    if (max.files) args.push("--task-max-files", String(max.files));
+    if (max.newLines) args.push("--task-max-new-lines", String(Math.max(10, max.newLines)));
+    if (max.readFiles) args.push("--task-max-read-files", String(max.readFiles));
+    // Max limits' timeout replaces the Implementation agent's own.
+    const at = args.indexOf("--timeout-seconds");
+    if (max.timeoutMinutes && at >= 0) args[at + 1] = String(max.timeoutMinutes * 60);
+  }
   // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
   if (!guarded) {
     for (const [key, flag] of TUNING_FLAGS) {
+      if (taskMode !== "eco" && key.startsWith("taskMax")) continue;
       const value = settings.tuning?.[key];
       if (typeof value === "number" && value !== DEFAULT_SETTINGS.tuning[key]) args.push(flag, String(value));
     }

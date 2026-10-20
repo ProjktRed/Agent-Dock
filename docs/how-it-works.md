@@ -74,12 +74,40 @@ errors do not cause failover. If both CLIs are limited, the existing wait/Resume
 operation without rerunning implementation. Selected custom executable paths are honored; roles
 sharing a CLI kind must use the same executable. Both CLIs must pass startup checks.
 
+## Task size: Eco, Standard and Max
+
+Settings › Workflow rules › Task size, overridable per project in Projects › Workflow. It sets how much
+work Assessment puts into one task (engine flag `--task-mode`):
+
+- **Eco** (default): small tasks for local models or saving usage: one file per task where possible,
+  implementation and tests as separate tasks, new files under about 200 lines, at most 3 files to read.
+  With engine guardrails off, these numbers can be tuned in Context limits.
+- **Standard**: one unchecked plan item per task, its code and tests together: at most 10 files,
+  new files under about 800 lines, at most 10 files to read. For Pro, Max or API plans, or a local
+  model with a large context.
+- **Max**: no size limits; one task may cover several plan items that belong together. Turning it on
+  asks first. While any project uses Max, a **Max limits** button sits in the sidebar above Collapse:
+  files per task, new file size, files to read and an implementation timeout (replacing the agent's
+  own), all empty (no limit) at first.
+
+The scope guard, independent QA, QA-only commits and the spend budgets are the same in every mode.
+**Suggested** names a mode for the enabled Implementation agent (Standard for a cloud CLI on a Pro,
+Max, Team or API plan, or a local model with at least a 128K context; Eco otherwise). It never
+suggests Max and never changes the mode by itself.
+
+**Step down** (on by default): in Standard or Max, a task that fails review twice is set aside, its
+work kept in a named git stash, and redone one size smaller (Max to Standard, Standard to Eco).
+Assessment is told to redo that work now, starting with its first part. The configured size comes
+back once the set-aside task's plan items are checked off, or after 5 approved tasks. A new run
+always starts at the configured size. Run reports show the task size, step-downs and plan items
+finished; Overview's estimate compares the sizes this project has run in.
+
 ## Loop limits
 
 Editable with guardrails off; the defaults are the engine's built-in values: automatic Elevation
 after 3 attempted corrections; no correction limit (with one, the loop stops for you after that many
 corrections on a task, and Resume allows another round); 3 Resolver strategies per task;
-Assessment's task sizing for the worker (1 file per task, new files under about 200 lines, at most 3
+Eco's task sizing for the worker (1 file per task, new files under about 200 lines, at most 3
 files to read); default context and output for new Cline agents.
 
 ## Implementation on any CLI

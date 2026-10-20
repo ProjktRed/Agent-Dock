@@ -155,9 +155,19 @@ export interface WorkflowSettings {
   };
   /** Price table for spend: USD per million tokens. A model ending in * matches by prefix. */
   prices?: ModelPrice[];
+  /** Task size (engine --task-mode): eco splits plan items into small tasks, standard does one plan item per task,
+   *  max has no fixed size apart from maxLimits. */
+  taskMode?: TaskMode;
+  /** Standard or max: a task that fails review twice is set aside and redone one size smaller (default on). */
+  stepDown?: boolean;
+  /** Max mode's own limits (Max limits in the sidebar); 0 = no limit. */
+  maxLimits?: MaxLimits;
   /** Supervisor v1: deterministic monitors; may alert, and pause or stop when allowed. */
   supervisor?: SupervisorSettings;
 }
+
+export type TaskMode = "eco" | "standard" | "max";
+export interface MaxLimits { files: number; newLines: number; readFiles: number; timeoutMinutes: number }
 
 /** One model's price in USD per million tokens; cachedInput is for input read from a prompt cache. */
 export interface ModelPrice { model: string; input: number; cachedInput: number; output: number }
@@ -389,6 +399,10 @@ export interface RunReport {
   needsAttention: number;
   supervisorAlerts: number;
   approved?: { taskId: string | null; name: string | null; at: string }[];
+  /** From 0.35: the configured task size, plan items checked off, and step-downs. Older reports: eco. */
+  taskMode?: TaskMode;
+  planItems?: number;
+  stepDowns?: number;
   usage: { tokens: number; input: number; cached: number; output: number; costUsd: number; calls: number };
   actionLog: { ok: boolean; entries?: number; reason?: string };
 }

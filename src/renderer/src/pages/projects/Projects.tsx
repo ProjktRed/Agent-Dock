@@ -8,6 +8,8 @@ import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle } from "../../components/ui";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { TaskModePicker } from "../../components/TaskMode";
+import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 
 type DetailTab = "overview" | "plan" | "agents" | "workflow" | "history";
 const ROLES = [
@@ -45,6 +47,7 @@ function WorkflowTab({ project }: { project: Project }) {
           </div>
         );
       })}
+      <TaskModeRow project={project} />
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
       {!project.parentId && <LanesRow project={project} />}
@@ -53,6 +56,27 @@ function WorkflowTab({ project }: { project: Project }) {
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
         <button className="btn sm" onClick={() => window.api.openPath(project.stateDir)}>Open</button>
       </div>
+    </div>
+  );
+}
+
+/** This project's task size: inherited from Settings › Workflow rules, or its own. */
+function TaskModeRow({ project }: { project: Project }) {
+  const { snap, saveProject } = useApp();
+  const overridden = project.workflowOverrides.taskMode !== undefined;
+  const mode = taskModeOf({ ...snap.settings.workflow, ...project.workflowOverrides });
+  const set = (taskMode: WorkflowSettings["taskMode"] | undefined) => {
+    const next = { ...project.workflowOverrides };
+    if (taskMode === undefined) delete next.taskMode;
+    else next.taskMode = taskMode;
+    void saveProject({ ...project, workflowOverrides: next });
+  };
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap" }}>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Task size<Support kind="engine" /></div><div className="ld">{TASK_MODES.find((m) => m.mode === mode)!.desc}</div></div>
+      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
+      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <TaskModePicker value={mode} onChange={set} label="Task size for this project" />
     </div>
   );
 }

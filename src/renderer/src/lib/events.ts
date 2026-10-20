@@ -80,6 +80,8 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
     case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;
+    case "task-stepped-down": return `Task ${e.taskId ?? ""} failed review twice at ${e.from ?? ""} size: set aside and redone ${e.to ?? ""}-sized.${e.stash ? ` The first attempt is in git stash "${e.stash}".` : ""}`;
+    case "task-mode-restored": return `The stepped-down work is done: back to ${e.mode ?? ""} size.`;
     case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;
     case "cline-stalled": return `Worker ended early: ${first(e.message)}`;
     case "qa-fail": return `QA found problems: ${first(e.qa)}`;

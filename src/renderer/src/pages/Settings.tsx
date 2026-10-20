@@ -7,6 +7,7 @@ import { Updates } from "./Updates";
 import { connectionMeta, roleLabel, tokens } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { Empty, Modal, ProvenanceChip, SetRow, St, Support, Tabs, Toggle } from "../components/ui";
+import { TaskModeCard } from "../components/TaskMode";
 
 type Section = SettingsSection;
 const SECTIONS: { value: Section; label: string }[] = [
@@ -326,6 +327,7 @@ function Workflow() {
         </div>
         <span className="hint">Choosing a default enables that agent and disables other agents with the same role. Projects can still override a role.</span>
       </section>
+      <TaskModeCard />
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
         <GuardrailsNote />
@@ -384,9 +386,9 @@ function Context() {
           <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Files per task" desc="Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
-        <SetRow title="New file size" desc="Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
-        <SetRow title="Files to read" desc="Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
+        <SetRow title="Files per task" desc="Eco mode: Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
+        <SetRow title="New file size" desc="Eco mode: Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
+        <SetRow title="Files to read" desc="Eco mode: Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>

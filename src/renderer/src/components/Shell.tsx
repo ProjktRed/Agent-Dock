@@ -7,6 +7,7 @@ import { Dot, Modal } from "./ui";
 import { useUpdateStatus } from "../lib/updates";
 import { openSettingsSection } from "../lib/nav";
 import { Logo } from "./Logo";
+import { MaxLimitsDialog, useMaxModeOn } from "./TaskMode";
 
 /** Bring the attention card into view: Overview switches to its Progress tab, then the card scrolls in. */
 function showAttentionPanel() {
@@ -36,6 +37,8 @@ export function Sidebar() {
   const healthList = Object.values(healths);
   const unhealthy = healthList.filter((h) => h.state !== "connected").length;
   const healthy = healthList.length - unhealthy;
+  const maxMode = useMaxModeOn();
+  const [maxOpen, setMaxOpen] = useState(false);
   const badges: Partial<Record<Route, ReactNode>> = {
     overview: attention ? <span className="badge lbl attn">{attention}</span> : null,
     projects: projects.length ? <span className="badge lbl">{projects.length}</span> : null,
@@ -58,6 +61,13 @@ export function Sidebar() {
         </span>
         <span>{healthList.length ? `${healthy} of ${healthList.length} CLIs healthy` : "Checking CLIs…"}</span>
       </div>
+      {maxMode && (
+        <button className="nav" onClick={() => setMaxOpen(true)} title="Max limits: Max mode's own task limits">
+          <Icon name="warn" className="warn" />
+          <span className="lbl">Max limits</span>
+        </button>
+      )}
+      {maxOpen && <MaxLimitsDialog onClose={() => setMaxOpen(false)} />}
       <button className="nav" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title="Toggle sidebar (Ctrl+B)">
         <Icon name="sidebar" />
         <span className="lbl">Collapse</span>

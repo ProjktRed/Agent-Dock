@@ -14,6 +14,7 @@ export function runReportRows(r: RunReport): [string, string][] {
   const estimated = (usage as { estimatedUsd?: number }).estimatedUsd ?? 0;
   return [
     ["Mode", r.unattended ? "Unattended" : "Attended"],
+    ["Task size", `${r.taskMode ?? "eco"}${r.stepDowns ? ` (${r.stepDowns} step-down${r.stepDowns === 1 ? "" : "s"})` : ""}`],
     ["Started", r.startedAt],
     ["Ended", `${r.endedAt} (${length(r.hours)})`],
     ["Result", r.status],

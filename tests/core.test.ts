@@ -527,6 +527,27 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
+  it("passes the task size mode: eco by default, standard fixed, max with only the limits you set", () => {
+    const s = settings();
+    const eco = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(eco).not.toContain("--task-mode");
+    s.workflow.taskMode = "standard";
+    s.advanced.engineGuardrails = false;
+    s.tuning = { ...s.tuning, taskMaxFiles: 3 };
+    const standard = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(flag(standard, "--task-mode")).toBe("standard");
+    expect(standard).not.toContain("--task-max-files");
+    s.workflow.taskMode = "eco";
+    const p = project({ workflowOverrides: { taskMode: "max", stepDown: false } });
+    s.workflow.maxLimits = { files: 25, newLines: 0, readFiles: 0, timeoutMinutes: 90 };
+    const max = buildEngineArgs({ project: p, agents: agents(), clis: clis(), settings: s }).args;
+    expect(flag(max, "--task-mode")).toBe("max");
+    expect(flag(max, "--step-down")).toBe("false");
+    expect(flag(max, "--task-max-files")).toBe("25");
+    expect(max).not.toContain("--task-max-new-lines");
+    expect(flag(max, "--timeout-seconds")).toBe("5400");
+  });
+
   it("ROLE.md round-trips, ids come from names, and a gate only applies before QA", () => {
     const text = serializeRole({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: true, enabled: true, instructions: "Look for injection.\n" });
     const parsed = parseRoleFile(text, "security-review", "dir");

@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { readDeferred } from "./supervisor-review.mjs";
+import { STEP_DOWN } from "./engine-tuning.mjs";
 
 const exec = promisify(execFile);
 const git = (workspace, args) => exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout.trim());
@@ -14,7 +15,7 @@ const git = (workspace, args) => exec("git", args, { cwd: workspace, windowsHide
  * ignored files) goes into a named git stash, so nothing is lost or reset; Agent Dock's own state
  * folder is excluded when it sits inside the workspace. Refuses when HEAD moved from the baseline.
  */
-export async function deferTask({ workspace, stateDir, task, baselineSha, reason }) {
+export async function deferTask({ workspace, stateDir, task, baselineSha, reason, stepDown = null }) {
   const head = await git(workspace, ["rev-parse", "HEAD"]);
   if (baselineSha && head !== baselineSha) return { blocked: `Cannot defer ${task.id}: HEAD moved from the task's baseline` };
   const exclude = [];
@@ -27,7 +28,7 @@ export async function deferTask({ workspace, stateDir, task, baselineSha, reason
     await git(workspace, ["stash", "push", "--include-untracked", "-m", message, "--", ".", ...exclude]);
     stash = { ref: await git(workspace, ["rev-parse", "stash@{0}"]), message };
   }
-  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, at: new Date().toISOString() };
+  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, at: new Date().toISOString(), ...(stepDown ? { stepDown } : {}) };
   const list = await readDeferred(stateDir);
   await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), [...list.filter((d) => d.id !== task.id), entry]);
   return { entry };
@@ -56,7 +57,13 @@ export async function setAsideTask({ workspace, stateDir, reason = "Set aside by
 
 /** The objective Assessment sees, with the deferred tasks it must not pick again. */
 export async function objectiveWithDeferred(stateDir, objective) {
-  const list = await readDeferred(stateDir);
-  if (!list.length) return objective;
-  return `${objective}\n\nDeferred tasks (set aside by the Supervisor or by you; do not choose them or the same work again unless nothing else in the objective remains; their unfinished work is in the named git stash): ${list.map((d) => `${d.id} "${d.name}" (${d.reason})`).join("; ")}`;
+  const all = await readDeferred(stateDir);
+  // A stepped-down task is redone now, smaller; once its step-down is over it is no longer listed.
+  const active = STEP_DOWN.active;
+  const redo = active ? all.find((d) => d.stepDown && d.id === active.taskId) : null;
+  const list = all.filter((d) => !d.stepDown);
+  let text = objective;
+  if (list.length) text += `\n\nDeferred tasks (set aside by the Supervisor or by you; do not choose them or the same work again unless nothing else in the objective remains; their unfinished work is in the named git stash): ${list.map((d) => `${d.id} "${d.name}" (${d.reason})`).join("; ")}`;
+  if (redo) text += `\n\nStepped down: ${redo.id} "${redo.name}" failed review twice at ${active.from} size. Redo its work now as ${active.to}-sized tasks, starting with its first part, from the current code (its earlier attempt is in git stash "${redo.stash?.message ?? "none"}"; do not apply it).${active.items.length ? ` Its plan items: ${active.items.join("; ")}.` : ""}`;
+  return text;
 }
