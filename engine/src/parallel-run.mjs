@@ -94,7 +94,7 @@ export function shareElevations({ max = 0, used = 0 } = {}, count) {
 
 export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, elevations = null }) {
   const limited = Number.isInteger(elevations);
-  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", ...BUDGET_FLAGS, ...(sizing ? SIZE_FLAGS : []), ...(limited ? ["--max-elevations"] : []), ...(limited && elevations === 0 ? ["--sol-reassessment"] : [])]);
+  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", "--local-server-managed", "--parallel-child", ...BUDGET_FLAGS, ...(sizing ? SIZE_FLAGS : []), ...(limited ? ["--max-elevations"] : []), ...(limited && elevations === 0 ? ["--sol-reassessment"] : [])]);
   let workspace = null;
   for (let i = 0; i < argv.length; i += 2) if (argv[i] === "--workspace") workspace = argv[i + 1];
   const out = [];
@@ -104,7 +104,7 @@ export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, e
   }
   const size = sizing ? ["--task-mode", sizing.taskMode, "--task-max-files", String(sizing.taskMaxFiles), "--task-max-new-lines", String(sizing.taskMaxNewLines), "--task-max-read-files", String(sizing.taskMaxReadFiles)] : [];
   const share = !limited ? [] : elevations > 0 ? ["--max-elevations", String(elevations)] : ["--sol-reassessment", "false"];
-  return [...out, ...size, ...share, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off"];
+  return [...out, ...size, ...share, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off", "--local-server-managed", "external", "--parallel-child", "true"];
 }
 
 /** A task engine's environment: the parent's without AGENT_DOCK_NOTIFY, so only the parent sends notifications. */

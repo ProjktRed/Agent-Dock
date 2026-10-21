@@ -422,7 +422,7 @@ function Workflow() {
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
         <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
-        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent. In Unattended mode the run limits count all tasks together." support="engine">
+        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. On a local model server, at most as many tasks as it answers at once (llama.cpp slots, or the Ollama connection's requests at once). In Unattended mode the run limits count all tasks together." support="engine">
           <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
             <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
           </select>

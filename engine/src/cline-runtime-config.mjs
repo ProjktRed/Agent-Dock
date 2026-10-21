@@ -176,6 +176,9 @@ export async function prepareClineRuntime({
   thinking = "none",
   providerBaseUrl,
   providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY",
+  // A parallel task (0.38, --local-server-managed external): the run checked the server before the round,
+  // so this engine never starts one (several task engines starting it at once would race).
+  externalServer = false,
 }) {
   if (provider === "llamacpp") {
     const baseUrl = llamaCppUrl.replace(/\/$/, "");
@@ -186,6 +189,7 @@ export async function prepareClineRuntime({
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
+        if (externalServer) throw new Error(`${error.message}. A parallel task uses the llama.cpp server the run started or found, and never starts one itself.`);
         // A launcher script wins; otherwise llama-server from PATH serves the models folder directly.
         const server = llamaCppLauncher ? null : llamaCppModelsDir ? findServerImpl() : null;
         if (llamaCppLauncher) await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));

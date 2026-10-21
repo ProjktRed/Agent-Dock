@@ -135,6 +135,8 @@ export interface CliConnection {
   hasSecret: boolean;
   /** llama.cpp only: serve every model in this folder (router mode, opt-in). Null keeps the launcher's single model. */
   modelsDir?: string | null;
+  /** Ollama only: requests it answers at once (its OLLAMA_NUM_PARALLEL), the most parallel tasks it gets. Default 1. */
+  parallelRequests?: number;
   /** Local providers: the model list last collected from the provider itself (Models tab › Refresh). */
   collected?: CollectedModels | null;
 }

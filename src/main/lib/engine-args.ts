@@ -309,13 +309,18 @@ ${project.objective}` : project.objective;
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
   if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
-  // Parallel tasks: cloud Implementation agents only (a local model server answers one request at a time).
-  // Unattended mode too: the run keeps one budget for all its tasks, whose engines run without limits of their own.
+  // Parallel tasks. Unattended mode too: the run keeps one budget for all its tasks, whose engines run without
+  // limits of their own. On a local model server (0.38) the engine runs at most as many tasks as the server
+  // answers at once: llama.cpp's slots, or the requests at once set on the Ollama connection.
   const parallel = Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
   if (parallel > 1) {
+    args.push("--parallel", String(parallel));
     const local = (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl?.provider !== "openai";
-    if (local) warnings.push(`Parallel tasks need a cloud Implementation agent (a local model server works on one request at a time); tasks run one at a time.`);
-    else args.push("--parallel", String(parallel));
+    if (local && impl?.provider === "ollama") {
+      const at = Math.max(1, Math.floor(Number(clis.find((c) => c.kind === "ollama")?.parallelRequests) || 1));
+      args.push("--ollama-parallel", String(at));
+      if (at < parallel) warnings.push(`Ollama answers ${at} request${at === 1 ? "" : "s"} at once as set on its connection (CLIs › Ollama, OLLAMA_NUM_PARALLEL), so at most ${at} task${at === 1 ? "" : "s"} run at once.`);
+    }
   }
   // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
   const taskMode = taskModeOf(workflow);

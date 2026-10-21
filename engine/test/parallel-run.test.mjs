@@ -30,7 +30,7 @@ const readJson=file=>readFile(file,'utf8').then(JSON.parse,()=>({}));
 
 test('child engines get the parent arguments for one task in its worktree, without step-down',()=>{
  const args=childArgs(['--workspace','C:/p','--objective','Build','--parallel','3','--auto-continue','false','--step-down','true','--task','old.json'],{worktree:'C:/p-parallel/A',stateDir:'C:/s/A',taskFile:'C:/s/A/task.json'});
- assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off']);
+ assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
  assert.equal(worktreeFor(path.join('C:','work','proj'),'T 1-2'),path.join('C:','work','proj-parallel','T_1-2'));
 });
 
@@ -280,7 +280,7 @@ test('a merged task ends a saved step-down, and while it lasts task engines work
  await writeFile(path.join(stateDir,'deferred-tasks.json'),JSON.stringify([{id:'Big',name:'Big',reason:'Failed review twice',stash:null,stepDown:{from:'standard',to:'eco'}}]));
  const sizing=STEP_DOWN.active?TUNING:null;
  assert.deepEqual(childArgs(['--objective','B','--task-mode','standard','--task-max-files','12'],{worktree:'W',stateDir:'S',taskFile:'T',sizing}),
-  ['--objective','B','--task-mode','eco','--task-max-files','1','--task-max-new-lines','200','--task-max-read-files','3','--workspace','W','--state-dir','S','--task','T','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off']);
+  ['--objective','B','--task-mode','eco','--task-max-files','1','--task-max-new-lines','200','--task-max-read-files','3','--workspace','W','--state-dir','S','--task','T','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
  const objectives=[],events=[];let n=0;
  const onEvent=async e=>events.push(e);
  const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,

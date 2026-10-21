@@ -238,8 +238,11 @@ All per project in Projects › Workflow, unless noted.
   task at its next safe point (`--max-rounds N` also ends the run after N rounds). The check of the
   combined code goes through the QA runner: the same approved-command check, without secrets in its
   environment. Overview's Current task card lists the round's tasks with each one's stage
-  (`parallel-round.json`). Needs a cloud Implementation agent (a local model server answers one
-  request at a time); a task in progress finishes on its own before parallel rounds start. Plan items are checked off as each change
+  (`parallel-round.json`). On a local model server (0.38) a round has at most as many tasks as the
+  server answers at once: llama.cpp's slots (`llama-server --parallel N`, read from `/props`; each slot
+  gets the context divided by N, which must still cover the agent's context), or the requests at once
+  set on the Ollama connection (its `OLLAMA_NUM_PARALLEL`). Task engines never start the server
+  (`--local-server-managed external`); a task in progress finishes on its own before parallel rounds start. Plan items are checked off as each change
   is merged. Projects › Workflow › **Clean up parallel worktrees** removes the kept worktrees (each
   `node_modules` link first) and every `agent-dock/parallel-…` branch, after you confirm; unmerged work
   on them is lost, and it waits while a run of the project or its lanes is active.
@@ -263,8 +266,7 @@ All per project in Projects › Workflow, unless noted.
 - Workflow roles review read-only, except a **fixer** gate (Before QA), which edits the task's
   approved files under the tool guard, once per attempt, and never commits. Roles run only on Codex
   CLI or Claude Code.
-- Parallel tasks need a cloud Implementation agent (a local model server answers one request at a
-  time). A task's tokens and spend count toward the run's budgets while it works (checked every few
+- Parallel tasks on a local model server run only as many at once as it answers (see above). A task's tokens and spend count toward the run's budgets while it works (checked every few
   seconds, so a limit can be passed by what the tasks use in that time and until their next safe
   point); its per-role usage reaches Overview when its engine finishes. The Elevation limit is shared:
   what is left of it is split between the round's tasks (a task given none runs without automatic

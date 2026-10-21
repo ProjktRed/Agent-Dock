@@ -569,12 +569,18 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
-  it("passes parallel tasks only for a cloud Implementation agent, in Unattended mode too", () => {
+  it("passes parallel tasks for cloud and local Implementation agents, in Unattended mode too", () => {
     const s = settings();
     s.workflow.parallelTasks = 3;
-    const local = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
-    expect(local.args).not.toContain("--parallel");
-    expect(local.warnings.join(" ")).toMatch(/need a cloud Implementation agent/);
+    // A local server: the engine caps the lanes to its slots; Ollama gets the requests at once set on its connection.
+    expect(flag(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args, "--parallel")).toBe("3");
+    const ollamaAgents = agents().map((a) => (a.role === "implementation" ? { ...a, provider: "ollama" as const } : a));
+    const ollama = buildEngineArgs({ project: project(), agents: ollamaAgents, clis: clis(), settings: s });
+    expect(flag(ollama.args, "--ollama-parallel")).toBe("1");
+    expect(ollama.warnings.join(" ")).toMatch(/Ollama answers 1 request at once/);
+    const roomy = clis().map((c) => (c.kind === "ollama" ? { ...c, parallelRequests: 4 } : c));
+    const ok = buildEngineArgs({ project: project(), agents: ollamaAgents, clis: roomy, settings: s });
+    expect([flag(ok.args, "--ollama-parallel"), ok.warnings.some((w) => /Ollama answers/.test(w))]).toEqual(["4", false]);
     const claude = clis().find((c) => c.kind === "claude")!;
     const cloud = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: claude.id, provider: undefined, model: "claude-sonnet-5-5" } : a));
     expect(flag(buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s }).args, "--parallel")).toBe("3");

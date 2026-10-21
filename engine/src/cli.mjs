@@ -24,6 +24,7 @@ import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./paralle
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
+import { localLanes } from "./local-parallel.mjs";
 
 installTopLevelDiagnostics();
 
@@ -150,8 +151,14 @@ const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: sup
 // Parallel rounds start only from a task boundary: a task in progress finishes on its own first.
 const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf8").then((text) => JSON.parse(text)?.automation?.recovery?.phase !== "passed", () => false);
 // Unattended mode too: the run keeps one budget for all its tasks (their engines run without limits of their own).
-const parallel = lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress;
-if (lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: "a task is in progress" } }));
+// A local model server answers only as many requests at once as it has slots (local-parallel.mjs).
+const capped = lanes > 1 && !singleTask ? await localLanes({ provider: options.provider, lanes, options, baseUrl: implementation.runtime?.baseUrl ?? null }) : { lanes, reason: null };
+if (capped.reason) {
+  console.log(JSON.stringify({ parallel: { lanes: capped.lanes, reason: capped.reason } }));
+  await state.record({ type: "parallel-capped", lanes: capped.lanes, message: `Parallel tasks: ${capped.reason}.` }).catch(() => {});
+}
+const parallel = capped.lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress;
+if (capped.lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: "a task is in progress" } }));
 // --max-rounds N: a parallel run ends after N rounds (0 = no limit).
 const maxRounds = options["max-rounds"] === undefined ? 0 : Number(options["max-rounds"]);
 if (!Number.isInteger(maxRounds) || maxRounds < 0) throw new Error("--max-rounds must be a whole number of at least 0");
@@ -164,7 +171,7 @@ const loopEvent = async (event) => {
 const betweenTasks = () => (singleTask ? Promise.resolve() : applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}));
 try {
   const result = parallel ? await runParallel({
-    workspace, stateDir, objective: options.objective, lanes, maxRounds,
+    workspace, stateDir, objective: options.objective, lanes: capped.lanes, maxRounds,
     assess: (input) => codex.assess(input),
     // While stepped down, a task's engine works at the smaller size its task was planned for.
     runChild: ({ worktree, stateDir: childState, taskFile, elevations }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null, elevations }), stateDir: childState }),

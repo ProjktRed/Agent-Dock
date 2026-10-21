@@ -60,7 +60,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
       let runtime = null;
       if (options.provider === "llamacpp" || options.provider === "ollama") {
         runtime = await prepareClineRuntime({
-          stateDir, provider: options.provider, model: options.model,
+          stateDir, provider: options.provider, model: options.model, externalServer: options["local-server-managed"] === "external",
           contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
           timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
           ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
@@ -96,7 +96,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
     }
 
     const runtime = await prepareClineRuntime({
-      stateDir, provider: options.provider, model: options.model,
+      stateDir, provider: options.provider, model: options.model, externalServer: options["local-server-managed"] === "external",
       contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
       timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
       ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
@@ -113,6 +113,8 @@ export async function createImplementationWorker(options, { stateDir, workspace,
       baseUrl: runtime.baseUrl, beforeRun: runtime.ensureReady,
       cleanupAfterRun: runtime.cleanupAfterRun, providerEnv: runtime.providerEnv,
       readMetrics: runtime.readMetrics,
+      // A parallel task: the other tasks' Cline processes are not someone else using Cline (each has its own state).
+      ...(options["parallel-child"] === "true" ? { checkExternalBusy: async () => false } : {}),
     });
     return { worker, provider: runtime.provider, model: runtime.model, runtime };
   };

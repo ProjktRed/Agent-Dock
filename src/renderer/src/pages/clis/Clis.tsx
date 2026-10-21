@@ -104,6 +104,7 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
   const { setClis, toast } = useApp();
   const [busy, setBusy] = useState(false);
   const [dir, setDir] = useState(cli.modelsDir ?? "");
+  const [atOnce, setAtOnce] = useState(String(cli.parallelRequests ?? 1));
   const collected = cli.collected;
   const collect = async () => {
     setBusy(true);
@@ -135,6 +136,16 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
             {cli.modelsDir && <button className="btn ghost sm" onClick={() => void saveDir(null)}>Turn off</button>}
           </div>
           <span className="hint">With a folder set, Agent Dock starts llama.cpp itself when it is not running (llama-server from PATH, or the launcher script in Settings › Advanced) with --models-dir: the server lists every model in the folder and loads the one the Implementation agent uses. Each subfolder counts as one model. Applies when the server next starts.</span>
+        </div>
+      )}
+      {cli.kind === "ollama" && (
+        <div className="well pad stack" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Requests at once</b><span className="chip">{cli.parallelRequests ?? 1}</span></div>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input tnum" style={{ width: 90 }} inputMode="numeric" value={atOnce} onChange={(e) => setAtOnce(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} aria-label="Requests Ollama answers at once" />
+            <button className="btn sm" disabled={!Number(atOnce) || Number(atOnce) === (cli.parallelRequests ?? 1)} onClick={async () => setClis(await window.api.saveCli({ ...cli, parallelRequests: Math.min(16, Math.max(1, Number(atOnce))) }))}>Save</button>
+          </div>
+          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL yourself.</span>
         </div>
       )}
       <div className="row" style={{ gap: 10 }}>

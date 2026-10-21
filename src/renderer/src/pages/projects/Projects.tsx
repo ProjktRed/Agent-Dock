@@ -110,7 +110,7 @@ function ParallelRow({ project }: { project: Project }) {
   };
   return (
     <div className="setrow">
-      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent. In Unattended mode the run limits count all tasks together.</div></div>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. On a local model server, at most as many tasks as it answers at once (llama.cpp slots, or the Ollama connection's requests at once). In Unattended mode the run limits count all tasks together.</div></div>
       <ScopeChip overridden={overridden} onReset={() => set(undefined)} />
       <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
         <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
