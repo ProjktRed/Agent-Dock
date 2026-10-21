@@ -202,6 +202,9 @@ All per project in Projects › Workflow, unless noted.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
+  On GitLab (gitlab.com, or a host whose name contains "gitlab") the push itself opens the merge
+  request with push options (`merge_request.create`, target and title), so no GitLab CLI is needed; a
+  server that does not take push options gets a plain push and GitLab's new merge request page.
 - **GitHub CI**: once the app has pushed a run branch, Projects › Workflow › GitHub CI shows that
   commit's GitHub Actions runs (`gh run list`, polled every minute until they finish, for at most six
   hours) and tells you when they pass or fail (Windows notification per the notification settings).

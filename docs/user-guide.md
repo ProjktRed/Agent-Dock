@@ -78,7 +78,7 @@ mode for overnight work, and check the run report in the morning.
 - **Task history** (Projects): every task with its outcome. **Run again** repeats one with the same
   prompt, files and check.
 - **Pull-request mode** (Projects › Workflow): each run works on its own `agent-dock/run-…` branch.
-  Nothing is pushed until you press **Open pull request**.
+  Nothing is pushed until you press **Open pull request**. On GitLab this opens a merge request.
 - **GitHub CI** (Projects › Workflow): after Open pull request, the pushed commit's GitHub Actions
   runs show there, with a notification when they finish. Needs GitHub CLI signed in (`gh auth login`).
   **Fix CI failure** starts a run that fixes it from the failed log; with **Fix failures automatically**

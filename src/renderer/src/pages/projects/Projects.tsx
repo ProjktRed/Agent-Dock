@@ -204,7 +204,7 @@ function PullRequestRow({ project }: { project: Project }) {
   };
   return (
     <div className="setrow">
-      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Pull-request mode<Support kind="app" /></div><div className="ld">Each new run works on its own agent-dock/run-… branch instead of {project.prBase ?? "your current branch"}. Nothing is pushed until you press Open pull request, which pushes the branch and opens the pull request with GitHub CLI (or GitHub's compare page).</div></div>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Pull-request mode<Support kind="app" /></div><div className="ld">Each new run works on its own agent-dock/run-… branch instead of {project.prBase ?? "your current branch"}. Nothing is pushed until you press Open pull request, which pushes the branch and opens the pull request with GitHub CLI (or GitHub's compare page). On GitLab the push opens a merge request (or GitLab's new merge request page).</div></div>
       {project.prMode && <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => void open()}>{busy ? "Pushing…" : "Open pull request"}</button>}
       <ScopeChip />
       <Toggle on={project.prMode === true} onChange={(v) => void saveProject({ ...project, prMode: v })} label="Pull-request mode" />
