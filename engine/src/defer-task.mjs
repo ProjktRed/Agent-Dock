@@ -55,6 +55,18 @@ export async function setAsideTask({ workspace, stateDir, reason = "Set aside by
   return result.entry;
 }
 
+/** Adds the tasks another engine deferred (a parallel task's, in its own state folder) to stateDir's list,
+ *  one entry per task id (the newer one wins). Their stashes stay valid: worktrees share the repository's stash.
+ *  Returns how many entries were added or replaced. */
+export async function mergeDeferred(fromStateDir, stateDir) {
+  const incoming = await readDeferred(fromStateDir);
+  if (!incoming.length) return 0;
+  const ids = new Set(incoming.map((d) => d.id));
+  const list = await readDeferred(stateDir);
+  await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), [...list.filter((d) => !ids.has(d.id)), ...incoming]);
+  return incoming.length;
+}
+
 /** The objective Assessment sees, with the deferred tasks it must not pick again. */
 export async function objectiveWithDeferred(stateDir, objective) {
   const all = await readDeferred(stateDir);

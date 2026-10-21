@@ -79,3 +79,27 @@ test('a standard task that fails review twice is stashed and redone eco-sized, t
  assert.ok(events.some(e=>e.type==='task-mode-restored'&&e.mode==='standard'));
 });
 
+
+test('one task engine of a parallel run (stopAfterTask) ends on a step-down instead of asking Assessment for more',async t=>{
+ const ws=await mkdtemp(path.join(os.tmpdir(),'stepdown-ws-')),stateDir=await mkdtemp(path.join(os.tmpdir(),'stepdown-state-'));
+ t.after(()=>{useTuning();return Promise.all([rm(ws,{recursive:true,force:true}),rm(stateDir,{recursive:true,force:true})]);});
+ useTuning({...MODE_SIZING.standard,taskMode:'standard'});
+ const git=(...args)=>execFileSync('git',args,{cwd:ws,encoding:'utf8'}).trim();
+ git('init','-q');git('config','user.email','t@example.com');git('config','user.name','T');git('config','core.autocrlf','false');
+ await writeFile(path.join(ws,'a.js'),'1\n');git('add','.');git('commit','-qm','base');
+ const head=git('rev-parse','HEAD');
+ const A={id:'A',name:'Whole item',prompt:'Task skill: implement\nA',allowedPaths:['a.js'],qaCommand:'npm test'};
+ const state=new DashboardState({stateDir});await state.initialize({task:A,workspace:ws});
+ const packet=({task,attempt,workerResult})=>({task,baselineSha:head,attempt,diff:{text:'d',bytes:1},changedFiles:task.allowedPaths,clineSummary:{exitCode:workerResult.exitCode,text:'x'},qaEvidence:{command:{command:'t',exitCode:1},categories:{tests:'FAIL',scopeCheck:'PASS'}}});
+ const result=await runNodeLoop({workspace:ws,stateDir,objective:'Build it',initialTask:A,stopAfterTask:true,
+  codex:{activeCount:0,assertIdle:async()=>{}},
+  assess:async()=>assert.fail('the parent plans the next round'),
+  worker:{withExclusive:fn=>fn(),run:async(prompt,hooks)=>{await hooks.onStart({pid:1});await writeFile(path.join(ws,'a.js'),'too big\n');return{exitCode:0};}},
+  baseline:async()=>({head}),verify:async()=>{},prepareQa:async input=>packet({...input,task:input.task??A}),
+  review:async()=>({status:'fail',output:'still failing'}),
+  assessCorrection:async()=>({status:'correction',preserve:[],rootProblem:'r',previousStrategyFailure:'p',newStrategy:'n',nextWorkerInstructions:'again',neededEvidence:[],failureReason:'f'}),
+  elevate:async()=>assert.fail('no elevation'),
+  readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1});
+ assert.equal(result.status,'stepped-down');
+ assert.match(result.output,/Stepped down from standard to eco/);
+});

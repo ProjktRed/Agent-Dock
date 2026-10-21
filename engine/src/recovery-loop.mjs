@@ -416,6 +416,9 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(!result){await emit('queued');await sleep(pollMs);continue;}
       if(result.status==='blocked')result=await block(result.output??r?.blockedReason??'Recovery is blocked');
       if(result.status==='resolver-ready')continue;
+      // One task's engine (parallel run) never asks Assessment for another task: the parent plans the next round.
+      // (A reassess comes only from this loop's own Assessment, which such an engine never runs.)
+      if(stopAfterTask&&['deferred','stepped-down'].includes(result.status))return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
       if(result.status==='reassess'){previous={task:result.task,result:result.qa};task=null;continue;}
       if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
       if(result.status==='stepped-down'){previous={task,result:result.reason};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}

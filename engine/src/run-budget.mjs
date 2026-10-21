@@ -111,8 +111,16 @@ export async function recordUsage({ input = 0, cached = 0, output = 0, costUsd =
   input = clean(input); cached = clean(cached); output = clean(output); costUsd = clean(costUsd);
   if (!input && !output && !costUsd) return;
   const estimated = costUsd ? 0 : estimateCost({ input, cached, output }, model);
-  costUsd += estimated;
-  Object.assign(RUN.usage, { input: RUN.usage.input + input, cached: RUN.usage.cached + cached, output: RUN.usage.output + output, costUsd: RUN.usage.costUsd + costUsd, estimatedUsd: RUN.usage.estimatedUsd + estimated, calls: RUN.usage.calls + 1 });
+  await addRunUsage({ input, cached, output, costUsd: costUsd + estimated, estimatedUsd: estimated, calls: 1 });
+}
+
+/** Adds usage already priced to the run and the day: one call's, or the run totals of a parallel task's
+ *  engine (its run-report usage; that engine counted its calls only in its own state folder). */
+export async function addRunUsage({ input = 0, cached = 0, output = 0, costUsd = 0, estimatedUsd = 0, calls = 0 } = {}) {
+  const clean = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0);
+  input = clean(input); cached = clean(cached); output = clean(output); costUsd = clean(costUsd); estimatedUsd = clean(estimatedUsd); calls = clean(calls);
+  if (!input && !output && !costUsd) return;
+  Object.assign(RUN.usage, { input: RUN.usage.input + input, cached: RUN.usage.cached + cached, output: RUN.usage.output + output, costUsd: RUN.usage.costUsd + costUsd, estimatedUsd: RUN.usage.estimatedUsd + estimatedUsd, calls: RUN.usage.calls + calls });
   if (RUN.day.date !== today()) RUN.day = { date: today(), tokens: 0, costUsd: 0 };
   RUN.day.tokens += countedTokens({ input, cached, output }); RUN.day.costUsd += costUsd;
   if (!watched) return;

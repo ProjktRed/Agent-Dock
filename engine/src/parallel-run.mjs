@@ -1,11 +1,13 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson, DashboardState } from "./dashboard-state.mjs";
-import { objectiveWithDeferred } from "./defer-task.mjs";
+import { mergeDeferred, objectiveWithDeferred } from "./defer-task.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
+import { noteStepDownApproval } from "./engine-tuning.mjs";
 import { validateTask } from "./node-loop.mjs";
+import { addRunUsage } from "./run-budget.mjs";
 
 // Parallel tasks in one run (0.35, --parallel N). Each round, Assessment picks up to N tasks whose
 // allowed files do not overlap. Every task then runs through a complete engine of its own (Implementation,
@@ -14,24 +16,62 @@ import { validateTask } from "./node-loop.mjs";
 // runs that task's check command on the combined code, and commits only if the check passes. A change
 // that does not apply or fails its check is not committed; its branch is kept for you and the work
 // goes back to Assessment. Worktrees of tasks that did not finish are left in place to inspect.
+// Between rounds the run follows Stop and Pause as the normal loop does between tasks (Automatic
+// continuation off pauses after a round that merged a change). A task that fails to merge twice stops for you.
 
 const exec = promisify(execFile);
 const git = (cwd, args) => exec("git", args, { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const firstLine = (text, max) => String(text ?? "").split(/\r?\n/)[0].slice(0, max);
 
 const overlaps = (a, b) => a.allowedPaths.some((x) => b.allowedPaths.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
 
 /** The worktree folder for a task: next to the project, like parallel lanes. */
 export const worktreeFor = (workspace, taskId) => path.join(path.dirname(workspace), `${path.basename(workspace)}-parallel`, String(taskId).replace(/[^\w.-]+/g, "_"));
 
-/** Child engine arguments: the parent's, for one task in its worktree with its own state folder. */
-export function childArgs(argv, { worktree, stateDir, taskFile }) {
-  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--single-task", "--auto-continue"]);
-  const out = [];
-  for (let i = 0; i < argv.length; i += 2) if (!drop.has(argv[i])) out.push(argv[i], argv[i + 1]);
-  return [...out, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true"];
+/** A free worktree folder: kept worktrees of earlier runs are never reused, nor one name twice in a round
+ *  (taken: the round's names in lower case, as ids that clean up alike or differ only in case would share one). */
+export function freeWorktree(workspace, name, taken = new Set()) {
+  let worktree = worktreeFor(workspace, name);
+  for (let i = 2; existsSync(worktree) || taken.has(path.basename(worktree).toLowerCase()); i++) worktree = worktreeFor(workspace, `${name}-${i}`);
+  taken.add(path.basename(worktree).toLowerCase());
+  return worktree;
 }
 
-/** Runs one child engine to the end of its task; resolves with its loop result and approved commit. */
+/** Removes a worktree's node_modules link, never what it points to: `git worktree remove` follows
+ *  the junction and would delete the project's own node_modules. */
+export function unlinkModules(worktree) {
+  const link = path.join(worktree, "node_modules");
+  let stat;
+  try { stat = lstatSync(link); } catch { return; }
+  if (!stat.isSymbolicLink()) return;
+  try { unlinkSync(link); } catch { rmdirSync(link); }
+}
+
+async function removeWorktree(workspace, worktree) {
+  unlinkModules(worktree);
+  await git(workspace, ["worktree", "remove", "--force", worktree]);
+}
+
+const SIZE_FLAGS = ["--task-mode", "--task-max-files", "--task-max-new-lines", "--task-max-read-files"];
+
+/** Child engine arguments: the parent's, for one task in its worktree with its own state folder.
+ *  No step-down in a task's engine: the parent plans the next round. sizing (the parent's tuning while it is
+ *  stepped down) replaces the configured task size, so the task's engine works at the size it was planned for. */
+export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null }) {
+  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--single-task", "--auto-continue", "--step-down", ...(sizing ? SIZE_FLAGS : [])]);
+  const out = [];
+  for (let i = 0; i < argv.length; i += 2) if (!drop.has(argv[i])) out.push(argv[i], argv[i + 1]);
+  const size = sizing ? ["--task-mode", sizing.taskMode, "--task-max-files", String(sizing.taskMaxFiles), "--task-max-new-lines", String(sizing.taskMaxNewLines), "--task-max-read-files", String(sizing.taskMaxReadFiles)] : [];
+  return [...out, ...size, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false"];
+}
+
+/** onMerged for a run: a merged task counts toward ending a step-down, as an approved task does in the normal loop. */
+export const endStepDown = (onEvent) => async (task) => {
+  const restored = noteStepDownApproval(task);
+  if (restored) await onEvent({ type: "task-mode-restored", mode: restored.mode, from: restored.from });
+};
+
+/** Runs one child engine to the end of its task; resolves with its loop result, approved commit and usage. */
 export function spawnChildEngine({ cliPath, args, stateDir, env = process.env }) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [cliPath, ...args], { env, windowsHide: true, stdio: "ignore" });
@@ -39,7 +79,7 @@ export function spawnChildEngine({ cliPath, args, stateDir, env = process.env })
     child.on("close", () => {
       const read = (name) => { try { return JSON.parse(readFileSync(path.join(stateDir, name), "utf8")); } catch { return null; } };
       const result = read("loop-result.json") ?? { status: "blocked", output: "The task's engine ended without a result." };
-      resolve({ ...result, commit: read("last-result.json")?.result?.qa?.commit ?? null });
+      resolve({ ...result, commit: read("last-result.json")?.result?.qa?.commit ?? null, usage: read("run-report.json")?.usage ?? null });
     });
   });
 }
@@ -58,15 +98,28 @@ async function defaultRunCheck(command, cwd) {
   });
 }
 
-export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, pollMs = 3000 }) {
+/** Between rounds, as the normal loop between tasks: waits while paused; false once Stop arrives. */
+async function beforeRound({ readControl, onEvent, pollMs }) {
+  let announced = false;
+  for (;;) {
+    const control = await readControl();
+    if (control.stopAfterSafePoint) { await onEvent({ type: "stopped" }); return false; }
+    if (!control.pauseAfterCurrent) return true;
+    if (!announced) { await onEvent({ type: "paused" }); announced = true; }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, addUsage = addRunUsage, pollMs = 3000 }) {
   let previous = null;
+  const mergeFailures = new Map();
   for (let round = 1; ; round++) {
-    if ((await readControl()).stopAfterSafePoint) { await onEvent({ type: "stopped" }); return { status: "stopped" }; }
+    if (!(await beforeRound({ readControl, onEvent, pollMs }))) return { status: "stopped", ...(previous ? { output: previous.result } : {}) };
     await betweenTasks();
     if (await git(workspace, ["status", "--porcelain", "--untracked-files=all"])) return { status: "blocked", output: "Parallel tasks need a clean working tree between rounds." };
     const head = await git(workspace, ["rev-parse", "HEAD"]);
     const batch = [];
-    let done = false;
+    let done = false, qaRejections = 0;
     while (batch.length < lanes) {
       const taken = batch.map((t) => `${t.id} "${t.name ?? t.id}" (files: ${t.allowedPaths.join(", ")})`).join("; ");
       const text = (await objectiveWithDeferred(stateDir, objective)) + (taken ? `\n\nAlready running in parallel this round: ${taken}. Choose a different task whose allowedPaths share no file or folder with these, or return done when no such task remains.` : "");
@@ -74,29 +127,60 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       if (result.status === "done") { done = !batch.length; break; }
       if (result.status !== "task") { if (!batch.length) return { status: "blocked", output: result.output ?? "Assessment could not produce a safe task" }; break; }
       const task = result.task;
-      try { validateTask(task); assertSafeQaCommand({ workspace, stateDir, command: task.qaCommand }); }
-      catch (error) { if (!batch.length) return { status: "blocked", output: `${error.message}: ${task.qaCommand}` }; break; }
+      try { validateTask(task); }
+      catch (error) { if (!batch.length) return { status: "blocked", output: error.message }; break; }
+      // As in the normal loop: an unapproved check command sends Assessment back once, with the reason.
+      try { assertSafeQaCommand({ workspace, stateDir, command: task.qaCommand }); qaRejections = 0; }
+      catch (error) {
+        if (++qaRejections > 1) { if (!batch.length) return { status: "blocked", output: `${error.message}: ${task.qaCommand}` }; break; }
+        await onEvent({ type: "assessment-rejected", qa: `Check command "${task.qaCommand}" is not allowed. Assessment chooses again.` });
+        previous = { task, result: `Rejected before implementation: qaCommand "${task.qaCommand}" is not an approved check. Use an existing npm script (npm test, npm run <script>) or npx tsc/eslint/prettier/vitest/playwright.` };
+        continue;
+      }
       if (batch.some((t) => t.id === task.id || overlaps(t, task))) break;
       batch.push(task);
     }
     if (done) { await onEvent({ type: "loop-complete" }); return { status: "done" }; }
     await onEvent({ type: "parallel-round", round, tasks: batch.map((t) => ({ id: t.id, name: t.name ?? t.id })) });
 
-    // Stop reaches the running tasks: each task's engine stops at its own next safe point.
-    const childStates = [];
-    let forwarded = false;
+    // Stop, Pause and Resume reach the running tasks: each task's engine stops (or pauses) at its own next safe point.
+    // Resume also ends a task's usage-limit wait, which waits for a Resume of its own engine.
+    const children = [];
+    let forwarded = false, paused = false, ticking = false;
+    let resumes = Number((await readControl().catch(() => ({}))).resumeGeneration ?? 0);
+    const stopAll = async () => { if (!forwarded) { forwarded = true; await forwardStop(children.map((c) => c.state)); } };
     const watch = setInterval(async () => {
-      if (forwarded || !(await readControl().catch(() => ({}))).stopAfterSafePoint) return;
-      forwarded = true;
-      await forwardStop(childStates);
+      if (forwarded || ticking) return;
+      ticking = true;
+      try {
+        const control = await readControl().catch(() => ({}));
+        if (control.stopAfterSafePoint) return await stopAll();
+        const states = children.map((c) => c.state);
+        if (Number(control.resumeGeneration ?? 0) > resumes) { resumes = Number(control.resumeGeneration); paused = false; await forwardControl(states, "resume"); }
+        if (Boolean(control.pauseAfterCurrent) !== paused) { paused = !paused; await forwardControl(states, paused ? "pause" : "resume"); }
+        // A task waiting out a usage limit holds up the round: say so once per wait.
+        for (const child of children) {
+          const live = await child.state.readLive().catch(() => null);
+          const waiting = live?.stage === "WAITING_FOR_LIMIT";
+          if (waiting && !child.waiting) await onEvent({ type: "waiting-for-codex", taskId: child.taskId, parallel: true, operation: live.interruptedOperation ?? null, message: live.codexLimitMessage ?? null, retryAt: live.codexRetryAt ?? null });
+          child.waiting = waiting;
+        }
+      } finally { ticking = false; }
     }, pollMs);
-    const runs = await Promise.all(batch.map(async (task) => {
-      const worktree = worktreeFor(workspace, `${task.id}-${round}`);
-      const branch = `agent-dock/parallel-${String(task.id).replace(/[^\w.-]+/g, "_")}-${Date.now().toString(36)}`;
+    // One name per run and try, so a worktree kept from an earlier run never blocks this one.
+    const stamp = Date.now().toString(36);
+    const taken = new Set();
+    const settled = await Promise.allSettled(batch.map(async (task) => {
+      const id = String(task.id).replace(/[^\w.-]+/g, "_");
+      const worktree = freeWorktree(workspace, `${id}-${stamp}`, taken);
+      const branch = `agent-dock/parallel-${path.basename(worktree)}`;
       const childState = path.join(stateDir, "parallel", path.basename(worktree));
       mkdirSync(childState, { recursive: true });
-      childStates.push(childState);
-      await git(workspace, ["worktree", "add", "-b", branch, worktree, head]);
+      // One DashboardState per task engine for the round, so control writes to it queue one after another.
+      children.push({ taskId: task.id, state: new DashboardState({ stateDir: childState }), waiting: false });
+      // A task that cannot start stops the ones that did; the round reports once they have all ended.
+      try { await git(workspace, ["worktree", "add", "-b", branch, worktree, head]); }
+      catch (error) { await stopAll(); throw error; }
       // Ignored dependencies are not in a new worktree; link the project's node_modules so checks can run.
       const modules = path.join(workspace, "node_modules");
       if (existsSync(modules) && !existsSync(path.join(worktree, "node_modules"))) { try { symlinkSync(modules, path.join(worktree, "node_modules"), "junction"); } catch {} }
@@ -104,17 +188,23 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       await atomicWriteJson(taskFile, task);
       await onEvent({ type: "parallel-task-started", taskId: task.id, name: task.name ?? task.id, branch, worktree });
       const result = await runChild({ task, worktree, stateDir: childState, taskFile });
+      // The task's tokens and spend count toward this run: its engine kept them in its own state folder.
+      if (result.usage) await addUsage(result.usage);
       await onEvent({ type: "parallel-task-finished", taskId: task.id, status: result.status, commit: result.commit ?? null, branch });
       return { task, worktree, branch, childState, result };
     })).finally(() => clearInterval(watch));
+    const runs = settled.map((s, i) => (s.status === "fulfilled" ? s.value : { task: batch[i], startError: firstLine(s.reason?.message ?? s.reason, 300) }));
 
     const notes = [];
     for (const run of runs) {
       const { task, worktree, branch, result } = run;
-      if (result.status !== "passed" || !result.commit) { notes.push(`${task.id}: ${result.status}${result.output ? ` (${String(result.output).split(/\r?\n/)[0].slice(0, 200)})` : ""}; its worktree stays at ${worktree}`); continue; }
+      if (run.startError) { notes.push(`${task.id} could not start: ${run.startError}`); continue; }
+      // A task its engine set aside is listed for the run's Assessment too (one at a time: one list file).
+      await mergeDeferred(run.childState, stateDir).catch(() => {});
+      if (result.status !== "passed" || !result.commit) { notes.push(`${task.id}: ${result.status}${result.output ? ` (${firstLine(result.output, 200)})` : ""}; its worktree stays at ${worktree}`); continue; }
       let merged = false, why = "";
       try { await git(workspace, ["cherry-pick", "--no-commit", result.commit]); }
-      catch (error) { why = `did not apply cleanly to the combined code (${String(error.message).split(/\r?\n/)[0].slice(0, 200)})`; }
+      catch (error) { why = `did not apply cleanly to the combined code (${firstLine(error.message, 200)})`; }
       if (!why) {
         const check = await runCheck(task.qaCommand, workspace);
         if (check.exitCode === 0) {
@@ -127,6 +217,7 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
         await git(workspace, ["reset", "--merge"]).catch(() => {});
         await git(workspace, ["cherry-pick", "--quit"]).catch(() => {});
         notes.push(`${task.id} ${why}; kept on branch ${branch}`);
+        mergeFailures.set(task.id, (mergeFailures.get(task.id) ?? 0) + 1);
         await onEvent({ type: "parallel-merge-failed", taskId: task.id, branch, message: why });
         continue;
       }
@@ -134,17 +225,24 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       await onEvent({ type: "parallel-merged", taskId: task.id, commit, branch });
       await onEvent({ type: "qa-pass", taskId: task.id, qa: `Merged from ${branch}`, parallel: true, ...(task.planItems?.length ? { planItems: task.planItems } : {}) });
       await onMerged(task);
-      await git(workspace, ["worktree", "remove", "--force", worktree]).catch(() => {});
+      await removeWorktree(workspace, worktree).catch(() => {});
       await git(workspace, ["branch", "-D", branch]).catch(() => {});
     }
     previous = { task: batch.at(-1), result: notes.length ? `Parallel round ${round}: ${notes.join("; ")}` : `Parallel round ${round}: all ${batch.length} task(s) merged.` };
+    if (runs.some((r) => r.startError)) return { status: "blocked", output: previous.result };
     if ((await readControl()).stopAfterSafePoint) { await onEvent({ type: "stopped" }); return { status: "stopped", output: previous.result }; }
     // Nothing merged and nothing left to try: stop for you instead of repeating the same round.
     if (notes.length === runs.length) return { status: "user-attention", output: previous.result };
+    // Nor pick the same change again after it failed to merge twice.
+    const repeated = [...mergeFailures].filter(([, n]) => n >= 2).map(([id]) => id);
+    if (repeated.length) return { status: "user-attention", output: `${repeated.join(", ")} failed to merge twice. ${previous.result}` };
   }
 }
 
-/** Forwards a Stop to every running child engine. */
-export async function forwardStop(stateDirs) {
-  for (const dir of stateDirs) await new DashboardState({ stateDir: dir }).setControl("stop").catch(() => {});
+/** Forwards a control action (stop, pause, resume) to every running child engine (DashboardStates or state folders). */
+export async function forwardControl(targets, action) {
+  for (const target of targets) await (typeof target === "string" ? new DashboardState({ stateDir: target }) : target).setControl(action).catch(() => {});
 }
+
+/** Forwards a Stop to every running child engine. */
+export const forwardStop = (targets) => forwardControl(targets, "stop");

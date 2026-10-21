@@ -10,7 +10,7 @@ import { DashboardState, atomicWriteJson, flushActionLog } from "./dashboard-sta
 import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
-import { TUNING, useTuning } from "./engine-tuning.mjs";
+import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
@@ -19,7 +19,7 @@ import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mj
 import { applyRetention } from "./retention.mjs";
 import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { createReviewer } from "./supervisor-review.mjs";
-import { childArgs, runParallel, spawnChildEngine } from "./parallel-run.mjs";
+import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./parallel-run.mjs";
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 
@@ -44,6 +44,7 @@ const lanes = options.parallel === undefined ? 1 : Number(options.parallel);
 if (!Number.isInteger(lanes) || lanes < 1 || lanes > 8) throw new Error("--parallel must be a whole number from 1 to 8");
 if (initialTask) validateTask(initialTask);
 useTuning(options.tuning);
+await loadStepDown(stateDir);
 console.log(JSON.stringify({ tuning: TUNING }));
 const implementation = await createImplementationWorker(options, { stateDir, workspace });
 const provider = implementation.provider;
@@ -148,6 +149,8 @@ const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf
 const parallel = lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress && options.unattended !== "true";
 if (lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: options.unattended === "true" ? "unattended" : "a task is in progress" } }));
 const loopEvent = async (event) => {
+  // Overview follows a parallel round as one task (each task's own engine keeps its live state in its folder).
+  if (event.type === "parallel-round") await state.initialize({ task: { id: `parallel-round-${event.round}`, name: `Parallel round ${event.round}: tasks ${event.tasks.map((t) => t.id).join(", ")}`, prompt: options.objective }, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider });
   await recordLoopEvent(state,event,options);
   if (!singleTask && event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: event.taskId ?? state.live?.task?.id, item }).catch(() => {});
 };
@@ -156,8 +159,10 @@ try {
   const result = parallel ? await runParallel({
     workspace, stateDir, objective: options.objective, lanes,
     assess: (input) => codex.assess(input),
-    runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile }), stateDir: childState }),
+    // While stepped down, a task's engine works at the smaller size its task was planned for.
+    runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null }), stateDir: childState }),
     onEvent: loopEvent, readControl: () => state.readControl(), betweenTasks,
+    onMerged: endStepDown(loopEvent),
   }) : await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
     solReassessmentEnabled: options.solReassessment,
