@@ -30,6 +30,8 @@ describe("WSL isolation", () => {
     const kill = wslKillTree("Ubuntu", 4242);
     expect(kill.args.slice(0, 5)).toEqual(["-d", "Ubuntu", "--exec", "sh", "-c"]);
     expect(kill.args.slice(-2)).toEqual(["agent-dock-stop", "4242"]);
+    // Nothing the Windows command line or wsl.exe could rewrite: no double quote, backslash, NUL or line break.
+    expect(kill.args[5]).not.toMatch(/["\\\0\r\n]/);
     expect(() => wslKillTree("Ubuntu", 1)).toThrow(/process id/);
     expect(() => wslKillTree("a b", 5)).toThrow(/distro's name/);
     if (process.platform !== "linux") return;
