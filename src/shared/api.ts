@@ -25,6 +25,7 @@ import type {
   RunReport,
   WorkflowRole,
 } from "./types";
+import type { EstimateRecord } from "./estimate";
 
 export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve" | "retry-qa";
 
@@ -147,6 +148,8 @@ export interface DesktopApi {
   openPullRequest(projectId: string): Promise<string>;
   /** GitHub CI: the watched commit's GitHub Actions runs, as last read. */
   ciStatus(projectId: string): Promise<CiStatus>;
+  /** Estimate calibration: the estimates recorded at each start (estimates.json). */
+  estimates(projectId: string): Promise<EstimateRecord[]>;
   /** Reads the runs again now, with GitHub CLI. */
   refreshCi(projectId: string): Promise<CiStatus>;
   /** Starts a run that fixes the failed CI run; the branch is pushed again when it completes. */

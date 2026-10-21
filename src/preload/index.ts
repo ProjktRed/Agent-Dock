@@ -44,6 +44,7 @@ const api: DesktopApi = {
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],
   openPullRequest: invoke("project:openPullRequest") as DesktopApi["openPullRequest"],
   ciStatus: invoke("project:ciStatus") as DesktopApi["ciStatus"],
+  estimates: invoke("project:estimates") as DesktopApi["estimates"],
   refreshCi: invoke("project:ciRefresh") as DesktopApi["refreshCi"],
   fixCi: invoke("project:ciFix") as DesktopApi["fixCi"],
   addLane: invoke("project:addLane") as DesktopApi["addLane"],

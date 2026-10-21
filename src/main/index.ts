@@ -23,6 +23,8 @@ import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/app
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-request";
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
+import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
+import { taskModeOf } from "@shared/task-mode";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -360,6 +362,19 @@ async function runSchedules(now = new Date()) {
   }
 }
 
+/** Estimate calibration: what this start expected per plan item, compared later with what the run took. */
+async function readEstimates(p: Project): Promise<EstimateRecord[]> {
+  try {
+    const list = JSON.parse(await readFile(path.join(p.stateDir, ESTIMATES_FILE), "utf8"));
+    return Array.isArray(list) ? list.filter((r) => r && typeof r.at === "string" && r.perItem && typeof r.perItem.hours === "number") : [];
+  } catch { return []; }
+}
+async function recordEstimate(p: Project) {
+  const record = estimateRecord(await engine.runs(p), taskModeOf({ ...store.data.settings.workflow, ...p.workflowOverrides }));
+  if (!record) return;
+  await writeFile(path.join(p.stateDir, ESTIMATES_FILE), JSON.stringify([...(await readEstimates(p)), record].slice(-ESTIMATES_KEPT)));
+}
+
 /** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
 async function runControl(id: string, action: ControlAction, source = "app") {
   const p = project(id);
@@ -387,6 +402,7 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   if (starting) void warnUncappedKey(p).catch(() => {});
   const wasAlive = engine.isAlive(id);
   await engine.control(p, action, await launchArgs(p, check), providerEnv(p), source);
+  if (starting && action === "start" && engine.isAlive(id)) void recordEstimate(p).catch(() => {});
   if ((p.pendingTaskFile || p.ciNote) && !wasAlive && engine.isAlive(id)) {
     // The attached task and the CI failure note are for this start only.
     store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null, ciNote: null } : x));
@@ -1054,6 +1070,7 @@ function registerIpc() {
     notice({ kind: "success", message: created ? `Pull request opened: ${url}` : `Branch pushed; finish the pull request in your browser.` });
     return url;
   });
+  handle("project:estimates", (id: string) => readEstimates(project(id)));
   handle("project:ciStatus", (id: string) => ciStatusOf(project(id)));
   handle("project:ciRefresh", (id: string) => pollCi(id, true));
   handle("project:ciFix", async (id: string) => {

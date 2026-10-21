@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, ParallelRound, ParallelTaskStage, PlanPhase, PlanProposal, ProjectStatus, RunReport, TaskBoard } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration, engineStageLabel, num, plural, runFinished, sentenceCase, tokens } from "../../lib/format";
-import { modeEstimates, planEstimate } from "../../lib/estimate";
+import { modeEstimates, planEstimate, type EstimateRecord, type PlanEstimate } from "../../lib/estimate";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
@@ -242,11 +242,13 @@ export function ProgressTab() {
   const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunReport[]>([]);
+  const [records, setRecords] = useState<EstimateRecord[]>([]);
   const [, tick] = useState(0);
   useEffect(() => {
     if (!activeProject) return;
     let live = true;
     window.api.runs(activeProject.id).then((r) => live && setRuns(r), () => {});
+    window.api.estimates(activeProject.id).then((r) => live && setRecords(r), () => {});
     return () => { live = false; };
   }, [activeProject, s?.processAlive]);
   useEffect(() => {
@@ -303,14 +305,17 @@ export function ProgressTab() {
             if (!plan.total) return null;
             const remaining = plan.total - plan.completed;
             const hrs = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(1)} h`);
-            const text = (e: { hours: number; tokens: number; costUsd: number }) => `about ${hrs(e.hours)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · ${e.costUsd.toFixed(2)}` : ""}`;
+            // A range (the middle half of single runs) when there are enough runs, else one figure.
+            const time = (e: PlanEstimate) => (e.range && hrs(e.range.hours[0]) !== hrs(e.range.hours[1]) ? `${hrs(e.range.hours[0])}–${hrs(e.range.hours[1])}` : `about ${hrs(e.hours)}`);
+            const text = (e: PlanEstimate) => `${time(e)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · ${e.costUsd.toFixed(2)}` : ""}`;
+            const fixNote = (e?: PlanEstimate) => (e?.calibration ? ` Corrected by its last ${plural(e.calibration.runs, "estimate")} against what those runs took: time ×${e.calibration.hours.toFixed(2)}, tokens ×${e.calibration.tokens.toFixed(2)}.` : "");
             // Per task size, from runs that checked off plan items (0.35 on); otherwise per approved task.
-            const byMode = modeEstimates(remaining, runs);
+            const byMode = modeEstimates(remaining, runs, { records });
             const current = taskModeOf({ ...snap.settings.workflow, ...activeProject?.workflowOverrides });
             const modes = TASK_MODES.filter((m) => byMode[m.mode]);
             if (modes.length) {
               return (
-                <div className="sub" title="At this project's pace per finished plan item, from its recent runs in each task size.">
+                <div className="sub" title={`At this project's pace per finished plan item, from its recent runs in each task size (recent runs count more).${fixNote(byMode[current])}`}>
                   Estimate for the rest: {modes.map((m, i) => <span key={m.mode}>{i ? " · " : ""}<b style={{ fontWeight: m.mode === current ? 600 : 400 }}>{m.label}</b> {text(byMode[m.mode]!)}</span>)}
                 </div>
               );
