@@ -19,7 +19,7 @@ import { countCompactions, implementationUsage, readActivity, readOrchestratorUs
 import { dueScheduledStart } from "@shared/schedule";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
-import { addLaneWorktree, removeLaneWorktree } from "./lib/worktree";
+import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -823,6 +823,19 @@ function registerIpc() {
     await Promise.all([store.saveProjects(), store.saveSettings()]);
     lastStatus.delete(id);
     return store.data.projects;
+  });
+  // Kept parallel-task worktrees and branches. A lane shares its parent's git repo, so a run in any of
+  // them blocks cleanup (it could be creating or merging a parallel branch right now).
+  const repoRunning = (p: Project) => store.data.projects.some((x) => [x.id, x.parentId].some((id) => id === p.id || (!!p.parentId && id === p.parentId)) && engine.isAlive(x.id));
+  handle("project:parallelLeftovers", async (id: string) => {
+    const p = project(id);
+    if (!existsSync(p.path)) return { worktrees: [], branches: [] };
+    return listParallelLeftovers(p.path, p.stateDir).catch(() => ({ worktrees: [], branches: [] }));
+  });
+  handle("project:cleanParallel", async (id: string) => {
+    const p = project(id);
+    if (repoRunning(p)) throw new Error("Stop the automation for this project and its lanes first.");
+    return cleanParallelWorktrees(p.path, p.stateDir);
   });
   handle("wsl:check", async (distro: string) => {
     if (process.platform !== "win32") return { ok: false, lines: ["WSL isolation is for Windows."] };

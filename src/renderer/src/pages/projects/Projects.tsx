@@ -49,6 +49,7 @@ function WorkflowTab({ project }: { project: Project }) {
       })}
       <TaskModeRow project={project} />
       <ParallelRow project={project} />
+      <ParallelCleanupRow project={project} />
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
       {!project.parentId && <LanesRow project={project} />}
@@ -101,6 +102,44 @@ function ParallelRow({ project }: { project: Project }) {
       <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
         <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
       </select>
+    </div>
+  );
+}
+
+/** Kept parallel-task worktrees and branches (unfinished or unmerged tasks), cleared in one go. */
+function ParallelCleanupRow({ project }: { project: Project }) {
+  const { toast, statuses } = useApp();
+  const [left, setLeft] = useState<{ worktrees: { path: string; branch: string | null }[]; branches: string[] } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const running = statuses[project.id]?.processAlive === true;
+  const load = () => window.api.parallelLeftovers(project.id).then(setLeft, () => setLeft(null));
+  useEffect(() => { void load(); }, [project.id, running]);
+  if (!left || (left.worktrees.length === 0 && left.branches.length === 0)) return null;
+  const shown = left.branches.slice(0, 5);
+  const clean = async () => {
+    setBusy(true);
+    try {
+      const r = await window.api.cleanParallel(project.id);
+      setConfirming(false);
+      if (r.problems.length) toast("error", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es); ${r.problems.join(" ")}`);
+      else toast("success", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es)`);
+    } catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); void load(); }
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Kept parallel worktrees<Support kind="app" /></div><div className="ld">{left.worktrees.length} worktree(s) and {left.branches.length} agent-dock/parallel-… branch(es) kept from tasks that did not finish or merge. The project's own node_modules is never touched.</div></div>
+      <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => setConfirming(true)}>Clean up parallel worktrees</button>
+      {confirming && (
+        <Modal label="Clean up parallel worktrees" onClose={() => setConfirming(false)}>
+          <h2 className="h2">Clean up parallel worktrees?</h2>
+          <p className="sub" style={{ margin: 0 }}>Removes {left.worktrees.length} worktree(s) in {project.path.split(/[\\/]/).filter(Boolean).pop()}-parallel and deletes these branches. Unmerged work on them will be lost.</p>
+          {shown.length > 0 && <div className="mono sub" style={{ whiteSpace: "pre-wrap" }}>{shown.join("\n")}{left.branches.length > shown.length ? `\nand ${left.branches.length - shown.length} more` : ""}</div>}
+          <div className="row"><span className="grow" /><button className="btn ghost" onClick={() => setConfirming(false)}>Cancel</button>
+            <button className="btn danger-fill" disabled={busy || running} onClick={() => void clean()}>{busy ? "Cleaning up…" : "Clean up"}</button></div>
+        </Modal>
+      )}
     </div>
   );
 }

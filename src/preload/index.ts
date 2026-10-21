@@ -45,6 +45,8 @@ const api: DesktopApi = {
   openPullRequest: invoke("project:openPullRequest") as DesktopApi["openPullRequest"],
   addLane: invoke("project:addLane") as DesktopApi["addLane"],
   removeLane: invoke("project:removeLane") as DesktopApi["removeLane"],
+  parallelLeftovers: invoke("project:parallelLeftovers") as DesktopApi["parallelLeftovers"],
+  cleanParallel: invoke("project:cleanParallel") as DesktopApi["cleanParallel"],
   checkWsl: invoke("wsl:check") as DesktopApi["checkWsl"],
   exportRun: invoke("project:exportRun") as DesktopApi["exportRun"],
   exportDiagnostics: invoke("diagnostics:export") as DesktopApi["exportDiagnostics"],
