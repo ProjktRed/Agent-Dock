@@ -3,6 +3,7 @@ import type { AddProjectRequest, CliConnection, DirectoryInspection, Project } f
 import { cleanError, useApp } from "../../store";
 import { Modal, Spinner, St, Toggle } from "../../components/ui";
 import { plural } from "../../lib/format";
+import { planCounts } from "../../lib/plan-text";
 
 type Mode = "local" | "github" | "new";
 const MODES: { value: Mode; label: string; help: string }[] = [
@@ -34,8 +35,7 @@ function PlanStep({ project, connection, model, onDone }: { project: Project; co
       .finally(() => clearInterval(timer));
     return () => { live = false; clearInterval(timer); };
   }, [run]);
-  const phases = (text.match(/^##s+Phases+d+/gim) ?? []).length;
-  const tasks = (text.match(/^s*-s+[[ xX]]s+/gm) ?? []).length;
+  const { phases, tasks } = planCounts(text);
   const save = async () => {
     setSaving(true); setError(null);
     try { await window.api.savePlan(project.id, text); onDone(); } catch (e) { setError(cleanError(e)); } finally { setSaving(false); }
