@@ -47,6 +47,7 @@ const api: DesktopApi = {
   refreshCi: invoke("project:ciRefresh") as DesktopApi["refreshCi"],
   fixCi: invoke("project:ciFix") as DesktopApi["fixCi"],
   addLane: invoke("project:addLane") as DesktopApi["addLane"],
+  mergeLane: invoke("project:mergeLane") as DesktopApi["mergeLane"],
   removeLane: invoke("project:removeLane") as DesktopApi["removeLane"],
   parallelLeftovers: invoke("project:parallelLeftovers") as DesktopApi["parallelLeftovers"],
   cleanParallel: invoke("project:cleanParallel") as DesktopApi["cleanParallel"],

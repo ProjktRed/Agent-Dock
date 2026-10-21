@@ -284,16 +284,23 @@ function LanesRow({ project }: { project: Project }) {
     catch (error) { toast("error", cleanError(error)); }
     finally { setBusy(false); }
   };
+  const merge = async (laneId: string) => {
+    setBusy(true);
+    try { await window.api.mergeLane(laneId); }
+    catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); }
+  };
   return (
     <div className="setrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
       <div className="grow" style={{ minWidth: 260 }}>
         <div className="lt row" style={{ gap: 8 }}>Parallel lanes<Support kind="app" /></div>
-        <div className="ld">Run another objective at the same time in a git worktree of this project, on its own agent-dock/lane-… branch with its own engine. Each lane appears as its own project; merge its branch (or open a pull request) when you are happy with it. Lanes use your CLIs' limits in parallel.</div>
+        <div className="ld">Run another objective at the same time in a git worktree of this project, on its own agent-dock/lane-… branch with its own engine. Each lane appears as its own project; Merge brings its branch into this project's branch as one merge commit (a conflict merges nothing), or open a pull request from it. Lanes use your CLIs' limits in parallel.</div>
         {lanes.length > 0 && (
           <div className="stack" style={{ gap: 6, marginTop: 8 }}>
             {lanes.map((l) => (
               <div className="row" key={l.id} style={{ gap: 8 }}>
                 <span className="mono sub grow ellipsis" title={l.path}>{l.laneBranch ?? l.name}</span>
+                <button className="btn sm" disabled={busy || statuses[l.id]?.processAlive || statuses[project.id]?.processAlive} title={`Merge ${l.laneBranch ?? "the lane"} into the branch this project has checked out`} onClick={() => void merge(l.id)}>Merge</button>
                 <button className="btn sm" disabled={busy || statuses[l.id]?.processAlive} onClick={() => void act(() => window.api.removeLane(l.id, false), "Lane removed; its branch is kept")}>Remove</button>
               </div>
             ))}

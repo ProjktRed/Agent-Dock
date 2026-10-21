@@ -24,7 +24,7 @@ import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-request";
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
-import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
+import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -994,6 +994,16 @@ function registerIpc() {
     }
     await store.saveProjects();
     return store.data.projects;
+  });
+  handle("project:mergeLane", async (id: string) => {
+    const lane = project(id);
+    if (!lane.parentId || !lane.laneBranch) throw new Error("This project is not a parallel lane.");
+    const parent = project(lane.parentId);
+    if (engine.isAlive(id) || engine.isAlive(parent.id)) throw new Error("Stop the lane's and the project's automation first.");
+    const name = lane.name.startsWith(`${parent.name} · `) ? lane.name.slice(parent.name.length + 3) : lane.name;
+    const merged = await mergeLaneBranch(parent.path, lane.path, lane.laneBranch, name);
+    notice({ kind: "success", message: `Merged ${lane.laneBranch} into ${merged.into} (${merged.commits} commit${merged.commits === 1 ? "" : "s"}, ${merged.commit.slice(0, 7)}). Remove the lane when you no longer need it.` });
+    return merged;
   });
   handle("project:removeLane", async (id: string, force: boolean) => {
     const lane = project(id);

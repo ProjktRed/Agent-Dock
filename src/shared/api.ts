@@ -153,6 +153,8 @@ export interface DesktopApi {
   fixCi(projectId: string): Promise<CiStatus>;
   /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
   addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
+  /** Merges a lane's branch into the branch the main project has checked out (one merge commit; a conflict merges nothing). */
+  mergeLane(projectId: string): Promise<{ commit: string; into: string; commits: number }>;
   /** Removes a lane's worktree and its project entry; its branch and commits stay. */
   removeLane(projectId: string, force: boolean): Promise<Project[]>;
   /** Parallel tasks: the worktrees and agent-dock/parallel-… branches kept from earlier runs. */

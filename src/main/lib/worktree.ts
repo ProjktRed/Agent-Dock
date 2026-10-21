@@ -35,6 +35,29 @@ export async function removeLaneWorktree(projectPath: string, worktreePath: stri
   await git(projectPath, "worktree", "remove", ...(force ? ["--force"] : []), worktreePath);
 }
 
+/**
+ * Merges a lane's branch into the branch the project has checked out, as one merge commit. Both working
+ * trees must be clean (uncommitted lane work would be left behind). A conflict aborts the merge, so the
+ * project is exactly as it was, and the conflicting files are named.
+ */
+export async function mergeLaneBranch(projectPath: string, lanePath: string, laneBranch: string, laneName: string): Promise<{ commit: string; into: string; commits: number }> {
+  const into = await git(projectPath, "rev-parse", "--abbrev-ref", "HEAD");
+  if (into === "HEAD") throw new Error("The project has no branch checked out (detached HEAD), so there is nothing to merge into.");
+  if (await git(projectPath, "status", "--porcelain", "--untracked-files=all")) throw new Error(`The project has uncommitted changes on ${into}. Commit or discard them first.`);
+  if (existsSync(lanePath) && await git(lanePath, "status", "--porcelain", "--untracked-files=all")) throw new Error("The lane has uncommitted changes, which would not be merged. Let its run finish, or commit or discard them in its folder.");
+  const commits = Number(await git(projectPath, "rev-list", "--count", `${into}..${laneBranch}`));
+  if (!commits) throw new Error(`${laneBranch} has no commits that ${into} lacks.`);
+  const r = await run("git", ["merge", "--no-ff", "--no-edit", "-m", `Merge lane ${laneName} (${laneBranch})`, laneBranch], { cwd: projectPath, timeoutMs: 120_000 });
+  if (r.code !== 0) {
+    const conflicts = (await run("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: projectPath })).stdout.trim().split(/\r?\n/).filter(Boolean);
+    await run("git", ["merge", "--abort"], { cwd: projectPath, timeoutMs: 60_000 });
+    throw new Error(conflicts.length
+      ? `The lane conflicts with ${into} in ${conflicts.slice(0, 8).join(", ")}${conflicts.length > 8 ? ` and ${conflicts.length - 8} more` : ""}. Nothing was merged; merge it yourself, or open a pull request from ${laneBranch}.`
+      : `git merge failed: ${(r.stderr || r.stdout).trim().split(/\r?\n/).pop()}. Nothing was merged.`);
+  }
+  return { commit: await git(projectPath, "rev-parse", "HEAD"), into, commits };
+}
+
 // Parallel tasks (engine --parallel) keep a worktree, on an agent-dock/parallel-… branch, for each task
 // that did not finish or did not merge, in "<project>-parallel/<task>-<run>". Cleanup removes them all;
 // it only ever touches folders inside that "-parallel" folder and branches with that prefix.
