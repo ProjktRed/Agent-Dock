@@ -9,7 +9,7 @@ for(const phase of ['qa','correction-assessment','elevation']) {
   const operation=async input=>{calls++;received??=structuredClone(input);assert.deepEqual(input,received);throw new CodexUsageLimitError({message:'usage limit',retryAt:'try again at 10:07 PM'});};
   const first=startLoop({initialTask:null,review:operation,assessCorrection:operation,elevate:operation});
   await first.waitForEvent('waiting-for-codex');
-  assert.equal((await state.readLive()).stage,'WAITING_FOR_CODEX');
+  assert.equal((await state.readLive()).stage,'WAITING_FOR_LIMIT');
   assert.equal((await state.readLive()).correctionCount,3);await state.setControl('pause');await state.setControl('stop');assert.equal((await first).status,'stopped');
   const pending=await readPendingCodex(root);assert.deepEqual(pending.inputs,received);
   await state.setControl('resume');let runs=0;

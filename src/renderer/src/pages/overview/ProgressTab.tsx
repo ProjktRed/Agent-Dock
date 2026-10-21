@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
-import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus } from "@shared/types";
+import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
 import { useApp } from "../../store";
-import { clock, duration, engineStageLabel } from "../../lib/format";
+import { clock, duration, engineStageLabel, tokens } from "../../lib/format";
+import { modeEstimates, planEstimate } from "../../lib/estimate";
+import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
@@ -191,13 +193,21 @@ function checkKind(value: string): StatusKind {
 
 export function ProgressTab() {
   const { activeProject, activeStatus: s, snap } = useApp();
-  // Implementation runs on Cline (local model), Codex or Claude Code; label the step with the agent's CLI.
+  // Implementation runs on Cline or OpenCode (local or cloud provider), Codex or Claude Code; label the step with the agent's CLI.
   const impl = agentForRoleClient("implementation", activeProject, snap.agents);
   const implCli = snap.clis.find((c) => c.id === impl?.cliId);
-  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" ? `Cline · ${impl.provider === "ollama" ? "Ollama" : "llama.cpp"}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
+  const providerName = impl?.providerCliId ? snap.clis.find((c) => c.id === impl.providerCliId)?.name : impl?.provider === "ollama" ? "Ollama" : impl?.provider === "openai" ? "OpenAI-compatible" : "llama.cpp";
+  const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" || implCli?.kind === "opencode" ? `${implCli.name} · ${providerName ?? "provider"}${impl.model ? ` · ${impl.model}` : ""}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
   const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunReport[]>([]);
   const [, tick] = useState(0);
+  useEffect(() => {
+    if (!activeProject) return;
+    let live = true;
+    window.api.runs(activeProject.id).then((r) => live && setRuns(r), () => {});
+    return () => { live = false; };
+  }, [activeProject, s?.processAlive]);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
@@ -241,6 +251,26 @@ export function ProgressTab() {
             <span className="grow" />
             {plan.total ? <span>{plan.total - plan.completed} remaining</span> : null}
           </div>
+          {(() => {
+            if (!plan.total) return null;
+            const remaining = plan.total - plan.completed;
+            const hrs = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(1)} h`);
+            const text = (e: { hours: number; tokens: number; costUsd: number }) => `about ${hrs(e.hours)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · ${e.costUsd.toFixed(2)}` : ""}`;
+            // Per task size, from runs that checked off plan items (0.35 on); otherwise per approved task.
+            const byMode = modeEstimates(remaining, runs);
+            const current = taskModeOf({ ...snap.settings.workflow, ...activeProject?.workflowOverrides });
+            const modes = TASK_MODES.filter((m) => byMode[m.mode]);
+            if (modes.length) {
+              return (
+                <div className="sub" title="At this project's pace per finished plan item, from its recent runs in each task size.">
+                  Estimate for the rest: {modes.map((m, i) => <span key={m.mode}>{i ? " · " : ""}<b style={{ fontWeight: m.mode === current ? 600 : 400 }}>{m.label}</b> {text(byMode[m.mode]!)}</span>)}
+                </div>
+              );
+            }
+            const est = planEstimate(remaining, runs);
+            if (!est) return null;
+            return <div className="sub" title={`At this project's pace over its last ${est.basisTasks} approved task(s); each plan item counted as one task.`}>Estimate for the rest: {text(est)}</div>;
+          })()}
         </div>
         <div className="stack">
           <div className="row sub">
@@ -322,7 +352,7 @@ export function ProgressTab() {
                   <div className="mono log selectable">{s.task.prompt}</div>
                 </Disclosure>
                 <dl className="kv two">
-                  <div><dt>Implementation</dt><dd>{s.clineModel ? `Cline · ${s.clineModel}` : "Cline"}</dd></div>
+                  <div><dt>Implementation</dt><dd>{implLabel}</dd></div>
                   <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "None")}</dd></div>
                   <div><dt>QA command</dt><dd className="mono" title={s.task.qaCommand}>{s.task.qaCommand ?? "—"}</dd></div>
                   <div><dt>Context</dt><dd>{s.contextTokens ? `${s.contextTokens.toLocaleString()} tokens` : "—"}</dd></div>

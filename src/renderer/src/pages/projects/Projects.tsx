@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
+import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shared/schedule";
 import type { HistoryEntry } from "@shared/api";
-import type { Project, WorkflowSettings } from "@shared/types";
+import type { Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
 import { cleanError, useApp } from "../../store";
 import { ago, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle } from "../../components/ui";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { TaskModePicker } from "../../components/TaskMode";
+import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 
 type DetailTab = "overview" | "plan" | "agents" | "workflow" | "history";
 const ROLES = [
@@ -22,7 +25,7 @@ function WorkflowTab({ project }: { project: Project }) {
   const rows: { key: keyof WorkflowSettings; label: string; desc: string; support: "engine" | "app" }[] = [
     { key: "autoContinue", label: "Automatic continuation", desc: "Start the next task as soon as one is approved. Off: pause at each task boundary.", support: "app" },
     { key: "automaticElevation", label: "Automatic elevation", desc: "One automatic Elevation reassessment on a manual-review case (--sol-reassessment)", support: "engine" },
-    { key: "toolGuard", label: "Worker tool guard", desc: "Restrict Cline to approved tools, paths and commands (--tool-guard)", support: "engine" },
+    { key: "toolGuard", label: "Worker tool guard", desc: "Restrict Cline and OpenCode to approved tools, paths and commands (--tool-guard)", support: "engine" },
   ];
   const set = (key: keyof WorkflowSettings, value: boolean | undefined) => {
     const next = { ...project.workflowOverrides } as Record<string, unknown>;
@@ -44,10 +47,213 @@ function WorkflowTab({ project }: { project: Project }) {
           </div>
         );
       })}
+      <TaskModeRow project={project} />
+      <ParallelRow project={project} />
+      <ParallelCleanupRow project={project} />
+      <ScheduleRow project={project} />
+      <PullRequestRow project={project} />
+      {!project.parentId && <LanesRow project={project} />}
+      <WslRow project={project} />
       <div className="setrow">
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
         <button className="btn sm" onClick={() => window.api.openPath(project.stateDir)}>Open</button>
       </div>
+    </div>
+  );
+}
+
+/** This project's task size: inherited from Settings › Workflow rules, or its own. */
+function TaskModeRow({ project }: { project: Project }) {
+  const { snap, saveProject } = useApp();
+  const overridden = project.workflowOverrides.taskMode !== undefined;
+  const mode = taskModeOf({ ...snap.settings.workflow, ...project.workflowOverrides });
+  const set = (taskMode: WorkflowSettings["taskMode"] | undefined) => {
+    const next = { ...project.workflowOverrides };
+    if (taskMode === undefined) delete next.taskMode;
+    else next.taskMode = taskMode;
+    void saveProject({ ...project, workflowOverrides: next });
+  };
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap" }}>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Task size<Support kind="engine" /></div><div className="ld">{TASK_MODES.find((m) => m.mode === mode)!.desc}</div></div>
+      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
+      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <TaskModePicker value={mode} onChange={set} label="Task size for this project" />
+    </div>
+  );
+}
+
+/** This project's parallel tasks: inherited or its own. */
+function ParallelRow({ project }: { project: Project }) {
+  const { snap, saveProject } = useApp();
+  const overridden = project.workflowOverrides.parallelTasks !== undefined;
+  const value = overridden ? project.workflowOverrides.parallelTasks : snap.settings.workflow.parallelTasks ?? 1;
+  const set = (parallelTasks: number | undefined) => {
+    const next = { ...project.workflowOverrides };
+    if (parallelTasks === undefined) delete next.parallelTasks;
+    else next.parallelTasks = parallelTasks;
+    void saveProject({ ...project, workflowOverrides: next });
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent; off in Unattended mode.</div></div>
+      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
+      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
+        <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
+      </select>
+    </div>
+  );
+}
+
+/** Kept parallel-task worktrees and branches (unfinished or unmerged tasks), cleared in one go. */
+function ParallelCleanupRow({ project }: { project: Project }) {
+  const { toast, statuses } = useApp();
+  const [left, setLeft] = useState<{ worktrees: { path: string; branch: string | null }[]; branches: string[] } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const running = statuses[project.id]?.processAlive === true;
+  const load = () => window.api.parallelLeftovers(project.id).then(setLeft, () => setLeft(null));
+  useEffect(() => { void load(); }, [project.id, running]);
+  if (!left || (left.worktrees.length === 0 && left.branches.length === 0)) return null;
+  const shown = left.branches.slice(0, 5);
+  const clean = async () => {
+    setBusy(true);
+    try {
+      const r = await window.api.cleanParallel(project.id);
+      setConfirming(false);
+      if (r.problems.length) toast("error", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es); ${r.problems.join(" ")}`);
+      else toast("success", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es)`);
+    } catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); void load(); }
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Kept parallel worktrees<Support kind="app" /></div><div className="ld">{left.worktrees.length} worktree(s) and {left.branches.length} agent-dock/parallel-… branch(es) kept from tasks that did not finish or merge. The project's own node_modules is never touched.</div></div>
+      <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => setConfirming(true)}>Clean up parallel worktrees</button>
+      {confirming && (
+        <Modal label="Clean up parallel worktrees" onClose={() => setConfirming(false)}>
+          <h2 className="h2">Clean up parallel worktrees?</h2>
+          <p className="sub" style={{ margin: 0 }}>Removes {left.worktrees.length} worktree(s) in {project.path.split(/[\\/]/).filter(Boolean).pop()}-parallel and deletes these branches. Unmerged work on them will be lost.</p>
+          {shown.length > 0 && <div className="mono sub" style={{ whiteSpace: "pre-wrap" }}>{shown.join("\n")}{left.branches.length > shown.length ? `\nand ${left.branches.length - shown.length} more` : ""}</div>}
+          <div className="row"><span className="grow" /><button className="btn ghost" onClick={() => setConfirming(false)}>Cancel</button>
+            <button className="btn danger-fill" disabled={busy || running} onClick={() => void clean()}>{busy ? "Cleaning up…" : "Clean up"}</button></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Scheduled runs: start this project automatically at a set time on chosen days (while Agent Dock is open). */
+function ScheduleRow({ project }: { project: Project }) {
+  const { saveProject } = useApp();
+  const schedule: ProjectSchedule = project.schedule ?? { enabled: false, time: "02:00", days: [1, 2, 3, 4, 5] };
+  const save = (next: Partial<ProjectSchedule>) => void saveProject({ ...project, schedule: { ...schedule, ...next } });
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap" }}>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Scheduled runs<Support kind="app" /></div><div className="ld">{describeSchedule(project.schedule)}. Starts the automation at this local time while Agent Dock is open{schedule.whenClosed ? ", or launches it when it is closed (Windows Task Scheduler)" : ""}; a start missed by more than {SCHEDULE_GRACE_MINUTES} minutes is skipped. Combine with Unattended mode for overnight runs.</div></div>
+      {schedule.enabled && (
+        <div className="row wrap" style={{ gap: 6 }}>
+          <input className="input mono" type="time" style={{ width: 110 }} value={schedule.time} aria-label="Scheduled start time" onChange={(e) => scheduleMinutes(e.target.value) !== null && save({ time: e.target.value })} />
+          {DAY_NAMES.map((name, day) => (
+            <button key={name} className={`btn sm${schedule.days.includes(day) ? " primary" : ""}`} aria-pressed={schedule.days.includes(day)} onClick={() => save({ days: schedule.days.includes(day) ? schedule.days.filter((d) => d !== day) : [...schedule.days, day].sort() })}>{name}</button>
+          ))}
+          {/Windows/.test(navigator.userAgent) && (
+            <label className="row sub" style={{ gap: 6 }} title="Adds a task for you in Windows Task Scheduler that launches Agent Dock (minimized) at this time. No admin rights; it runs only while you are signed in.">
+              <Toggle on={schedule.whenClosed === true} onChange={(v) => save({ whenClosed: v })} label="Also when Agent Dock is closed" />Also when closed
+            </label>
+          )}
+        </div>
+      )}
+      <Toggle on={schedule.enabled} onChange={(v) => save({ enabled: v })} label="Scheduled runs" />
+    </div>
+  );
+}
+
+/** Pull-request mode: runs work on their own branch; you choose when to push it as a pull request. */
+function PullRequestRow({ project }: { project: Project }) {
+  const { saveProject, toast, statuses } = useApp();
+  const [busy, setBusy] = useState(false);
+  const running = statuses[project.id]?.processAlive === true;
+  const open = async () => {
+    setBusy(true);
+    try { await window.api.openPullRequest(project.id); }
+    catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="setrow">
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Pull-request mode<Support kind="app" /></div><div className="ld">Each new run works on its own agent-dock/run-… branch instead of {project.prBase ?? "your current branch"}. Nothing is pushed until you press Open pull request, which pushes the branch and opens the pull request with GitHub CLI (or GitHub's compare page).</div></div>
+      {project.prMode && <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => void open()}>{busy ? "Pushing…" : "Open pull request"}</button>}
+      <Toggle on={project.prMode === true} onChange={(v) => void saveProject({ ...project, prMode: v })} label="Pull-request mode" />
+    </div>
+  );
+}
+
+/** Parallel lanes: extra tasks side by side, each in its own git worktree, branch and engine. */
+function LanesRow({ project }: { project: Project }) {
+  const { snap, setProjects, toast, statuses } = useApp();
+  const [name, setName] = useState("");
+  const [objective, setObjective] = useState("");
+  const [busy, setBusy] = useState(false);
+  const lanes = snap.projects.filter((p) => p.parentId === project.id);
+  const act = async (fn: () => Promise<Project[]>, done: string) => {
+    setBusy(true);
+    try { setProjects(await fn()); toast("success", done); setName(""); setObjective(""); }
+    catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div className="grow" style={{ minWidth: 260 }}>
+        <div className="lt row" style={{ gap: 8 }}>Parallel lanes<Support kind="app" /></div>
+        <div className="ld">Run another objective at the same time in a git worktree of this project, on its own agent-dock/lane-… branch with its own engine. Each lane appears as its own project; merge its branch (or open a pull request) when you are happy with it. Lanes use your CLIs' limits in parallel.</div>
+        {lanes.length > 0 && (
+          <div className="stack" style={{ gap: 6, marginTop: 8 }}>
+            {lanes.map((l) => (
+              <div className="row" key={l.id} style={{ gap: 8 }}>
+                <span className="mono sub grow ellipsis" title={l.path}>{l.laneBranch ?? l.name}</span>
+                <button className="btn sm" disabled={busy || statuses[l.id]?.processAlive} onClick={() => void act(() => window.api.removeLane(l.id, false), "Lane removed; its branch is kept")}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+          <input className="input" style={{ width: 160 }} placeholder="Lane name" aria-label="Lane name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input grow" style={{ minWidth: 200 }} placeholder="Objective (defaults to this project's)" aria-label="Lane objective" value={objective} onChange={(e) => setObjective(e.target.value)} />
+          <button className="btn sm" disabled={busy || !name.trim()} onClick={() => void act(() => window.api.addLane(project.id, name, objective), "Lane added as its own project")}>Add lane</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Opt-in WSL isolation: the engine and its agent CLIs run inside a WSL distro. */
+function WslRow({ project }: { project: Project }) {
+  const { saveProject, toast, statuses } = useApp();
+  const wsl = project.wsl ?? { enabled: false, distro: "" };
+  const [distro, setDistro] = useState(wsl.distro);
+  const [check, setCheck] = useState<{ ok: boolean; lines: string[] } | null>(null);
+  const running = statuses[project.id]?.processAlive === true;
+  const save = (next: Partial<typeof wsl>) => void saveProject({ ...project, wsl: { ...wsl, ...next } });
+  const runCheck = async () => {
+    try { const result = await window.api.checkWsl(distro.trim()); setCheck(result); if (result.ok) save({ distro: distro.trim() }); }
+    catch (error) { toast("error", cleanError(error)); }
+  };
+  return (
+    <div className="setrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div className="grow" style={{ minWidth: 260 }}>
+        <div className="lt row" style={{ gap: 8 }}>WSL isolation (opt-in)<Support kind="engine" /></div>
+        <div className="ld">Runs the engine, and every agent CLI and command it starts, inside a WSL distro instead of Windows. Node.js, git and your agent CLIs must be installed and signed in inside the distro. Windows drives stay reachable under /mnt unless automount is off in the distro's /etc/wsl.conf; for the strongest separation keep the project in the distro (\\wsl$\…). Takes effect at the next start.</div>
+        <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+          <input className="input mono" style={{ width: 180 }} placeholder="Distro, e.g. Ubuntu" aria-label="WSL distro" value={distro} onChange={(e) => setDistro(e.target.value)} />
+          <button className="btn sm" disabled={!distro.trim()} onClick={() => void runCheck()}>Check distro</button>
+        </div>
+        {check && <div className={`mono sub ${check.ok ? "ok" : "err"}`} style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{check.lines.join("\n") || "No answer from WSL."}</div>}
+      </div>
+      <Toggle on={wsl.enabled} onChange={(v) => { if (v && !(wsl.distro || distro.trim())) return toast("warning", "Enter and check a distro first."); save({ enabled: v, distro: wsl.distro || distro.trim() }); }} label="WSL isolation" danger={running} />
     </div>
   );
 }
@@ -89,7 +295,13 @@ function AgentsTab({ project }: { project: Project }) {
 }
 
 function HistoryTab({ project }: { project: Project }) {
+  const { toast, statuses } = useApp();
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  const running = statuses[project.id]?.processAlive === true;
+  const rerun = async (taskId: string) => {
+    try { await window.api.rerunTask(project.id, taskId); toast("success", `Running ${taskId} again`); }
+    catch (error) { toast("error", cleanError(error)); }
+  };
   useEffect(() => {
     void window.api.history(project.id).then(setHistory);
   }, [project.id]);
@@ -99,7 +311,7 @@ function HistoryTab({ project }: { project: Project }) {
   return (
     <div className="fade-in well scroll-x" style={{ padding: 6 }}>
       <table className="tbl" style={{ minWidth: 640 }}>
-        <thead><tr><th>Task</th><th>Outcome</th><th>Attempts</th><th>Summary</th><th>When</th></tr></thead>
+        <thead><tr><th>Task</th><th>Outcome</th><th>Attempts</th><th>Summary</th><th>When</th><th /></tr></thead>
         <tbody>
           {history.map((h) => (
             <tr key={h.taskId}>
@@ -108,6 +320,7 @@ function HistoryTab({ project }: { project: Project }) {
               <td className="mono">{h.attempts || "—"}</td>
               <td className="sub" style={{ maxWidth: 360 }}><span className="ellipsis" style={{ display: "block" }} title={h.summary}>{h.summary || "—"}</span></td>
               <td className="sub nowrap">{ago(h.finishedAt)}</td>
+              <td>{h.canRerun && <button className="btn sm" disabled={running} title={running ? "Stop the automation first" : "Run this task again with the same prompt, files and check"} onClick={() => void rerun(h.taskId)}>Run again</button>}</td>
             </tr>
           ))}
         </tbody>

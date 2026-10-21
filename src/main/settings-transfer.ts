@@ -6,7 +6,7 @@ import type { Agent, CliConnection, Settings, WorkflowRole } from "@shared/types
 // settings (active project, setup status, skill folders, update source).
 
 export const SETTINGS_FORMAT = "agent-dock-settings";
-type PortableRole = Pick<WorkflowRole, "id" | "name" | "description" | "stage" | "gate" | "enabled" | "instructions">;
+type PortableRole = Pick<WorkflowRole, "id" | "name" | "description" | "stage" | "gate" | "fix" | "enabled" | "instructions">;
 
 export interface SettingsFile {
   format: typeof SETTINGS_FORMAT;
@@ -37,7 +37,7 @@ export function exportSettings(input: { settings: Settings; agents: Agent[]; cli
     agents: input.agents,
     // Secret variables keep their names, so the other machine shows which ones to fill in.
     clis: input.clis.map(({ collected: _models, hasSecret: _secret, modelsDir: _dir, ...c }) => ({ ...c, env: c.env.map((e) => (e.secret ? { ...e, value: "" } : e)) }) as CliConnection),
-    roles: input.roles.map(({ id, name, description, stage, gate, enabled, instructions }) => ({ id, name, description, stage, gate, enabled, instructions })),
+    roles: input.roles.map(({ id, name, description, stage, gate, fix, enabled, instructions }) => ({ id, name, description, stage, gate, ...(fix ? { fix: true } : {}), enabled, instructions })),
   };
 }
 

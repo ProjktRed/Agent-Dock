@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { wslEnv, wslLaunch } from "./lib/wsl";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -91,7 +92,7 @@ export class EngineManager {
     }
     if (this.verifiedPids.has(pid)) return true;
     const ok = process.platform === "win32"
-      ? /node|electron|codex cline/i.test((await run("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeoutMs: 5000 })).stdout)
+      ? /node|electron|codex cline|wsl/i.test((await run("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeoutMs: 5000 })).stdout)
       : await readFile(`/proc/${pid}/cmdline`, "utf8").then((cmd) => /node|electron/i.test(cmd), () => true);
     if (ok) this.verifiedPids.add(pid);
     return ok;
@@ -113,12 +114,17 @@ export class EngineManager {
 
   private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<ProcessRecord> {
     mkdirSync(project.stateDir, { recursive: true });
-    const { command, env } = await this.resolveNode();
+    // WSL isolation: wsl.exe runs the engine (and every CLI it starts) inside the distro.
+    const inWsl = process.platform === "win32" && project.wsl?.enabled && project.wsl.distro.trim();
+    const launch = inWsl
+      ? { ...wslLaunch(project.wsl!.distro.trim(), path.join(this.engineDir, "src", script), project.stateDir, args), env: { ...process.env, WSLENV: wslEnv(process.env.WSLENV, Object.keys(envDelta)) } }
+      : null;
+    const { command, env } = launch ?? (await this.resolveNode());
     rotateEngineLog(project.stateDir);
     const log = openSync(path.join(project.stateDir, "app-engine.log"), "a");
     try {
       // Detached with file-backed stdio: the engine keeps running safely if the window or app closes.
-      const child = spawn(command, [path.join(this.engineDir, "src", script), ...args], {
+      const child = spawn(command, launch ? launch.args : [path.join(this.engineDir, "src", script), ...args], {
         // Not the engine folder: processes the engine starts (a llama.cpp server keeps running on
         // purpose) inherit this, and a working directory inside the install blocks updates.
         cwd: project.stateDir,

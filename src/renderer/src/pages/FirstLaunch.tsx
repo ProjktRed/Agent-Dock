@@ -95,7 +95,7 @@ export function FirstLaunch() {
     { label: "Planning and QA", why: "Codex CLI or Claude Code chooses tasks, reviews every change and commits it", ok: planningOk,
       states: planningClis.length ? planningClis.map(stateOf) : ["no enabled QA, Assessment or Elevation agent"],
       fix: !planningOk && orchestrators[0] ? { label: `Use ${cliLabel(orchestrators[0])} for planning and QA`, run: () => assign(PLANNING_ROLES, orchestrators[0]) } : null },
-    { label: "Implementation", why: cloudImpl ? `${cliLabel(implCli)} edits the repository within each task's files` : "Cline with a local model (llama.cpp or Ollama), or Codex CLI / Claude Code, edits the repository", ok: implOk,
+    { label: "Implementation", why: cloudImpl ? `${cliLabel(implCli)} edits the repository within each task's files` : "Cline with a local model (llama.cpp or Ollama), or Codex CLI, Claude Code or OpenCode, edits the repository", ok: implOk,
       states: [...(implCli ? [stateOf(implCli)] : ["no enabled Implementation agent"]), ...(!cloudImpl && impl?.provider !== "openai" ? localRuntime.map(stateOf) : [])],
       fix: !implOk && orchestrators[0] ? { label: `Implement with ${cliLabel(orchestrators[0])} instead`, run: () => assign(["implementation"], orchestrators[0]) } : null },
   ];

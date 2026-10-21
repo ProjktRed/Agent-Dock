@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
-import { TUNING, taskSizingText } from "./engine-tuning.mjs";
+import { TUNING, readFilesText, taskScopeText, workerSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
@@ -323,7 +323,7 @@ export class CodexWorker {
       this.activeCount--;
       output ||= [stdoutOutput, stderrOutput].filter(Boolean).join("\n");
       await writeFile(path.join(invocation, "events.ndjson"), output);
-      noteUsage(codexUsage(stdoutOutput));
+      noteUsage(codexUsage(stdoutOutput), model);
     }
     return parse(await readFile(outputFile, "utf8"));
   }
@@ -338,8 +338,8 @@ export class CodexWorker {
     const result = await this.invoke([
       "You are Assessment, performing one assessment operation. Inspect this repository and its instructions.",
       managerHandoffSkill("assessment") + autoSkillCatalogText(),
-      "Choose exactly one small bounded implementation task toward the user's objective. Do not implement or commit anything.",
-      "Local worker sizing (98K context, but generation slows from about 48 to 17 tok/s as it fills, and it loses work exploring or patching large files): " + taskSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. Name the only files to read (at most " + TUNING.taskMaxReadFiles + ", with line ranges for large files). Give one qaCommand that runs only this task's test plus typecheck if needed.",
+      taskScopeText(),
+      workerSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. " + readFilesText() + " Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
       "planItems: the unchecked IMPLEMENTATION_PLAN.md items that will be finished once this task is approved, counting work already committed (for example, a tests task that completes an item whose code an earlier task added, or an item the repository already fully satisfies). Copy each item's text exactly, without the leading \"- [ ] \"; use [] when none. Do not add the plan file to allowedPaths for this: after QA approves the task, the engine checks these items off itself.",
       "qaCommand must use an existing project npm test/run script, or a supported local check (npx tsc, eslint, prettier, vitest or playwright), optionally chained with &&. No arbitrary executables, package installation, interpreters, shell expressions or output redirection. Protected paths cannot be inspected or edited; narrow file searches to public source directories and use git ls-files for discovery.",

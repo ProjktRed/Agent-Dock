@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { STAGES, stageLabel } from "../lib/stages";
 import type { RoleDraft } from "@shared/api";
 import type { Agent, RoleStage, WorkflowRole } from "@shared/types";
 import { cleanError, useApp } from "../store";
@@ -9,12 +10,6 @@ import { Icon } from "../components/Icon";
 import { Empty, Modal, Support, Toggle } from "../components/ui";
 import { SECOND_OPINION_ROLE_ID, SECOND_OPINION_TEMPLATE } from "@shared/workflow-templates";
 
-export const STAGES: { value: RoleStage; label: string; desc: string }[] = [
-  { value: "before-implementation", label: "Before implementation", desc: "Runs once per task before the worker starts. Its guidance is added to every implementation prompt for that task." },
-  { value: "before-qa", label: "Before QA", desc: "Reviews each finished attempt before QA. QA and Assessment read its findings; as a gate it can send the change back for correction." },
-  { value: "after-pass", label: "After QA passes", desc: "Runs after the task is committed. Writes a report (role-reports.ndjson in the project's state folder); never changes the result." },
-];
-export const stageLabel = (stage: RoleStage) => STAGES.find((s) => s.value === stage)?.label ?? stage;
 
 const TEMPLATES: (RoleDraft & { blurb: string })[] = [
   SECOND_OPINION_TEMPLATE,
@@ -36,7 +31,7 @@ const TEMPLATES: (RoleDraft & { blurb: string })[] = [
 ];
 
 const emptyDraft = (): RoleDraft => ({ name: "", description: "", stage: "before-qa", gate: false, enabled: true, instructions: "" });
-const toDraft = (r: WorkflowRole): RoleDraft => ({ id: r.id, name: r.name, description: r.description, stage: r.stage, gate: r.gate, enabled: r.enabled, instructions: r.instructions });
+const toDraft = (r: WorkflowRole): RoleDraft => ({ id: r.id, name: r.name, description: r.description, stage: r.stage, gate: r.gate, fix: r.fix === true, enabled: r.enabled, instructions: r.instructions });
 
 /** Agents that run a role: custom-role agents whose customRole is the role's id or name. */
 export function agentsForRole(role: Pick<WorkflowRole, "id" | "name">, agents: Agent[]) {
@@ -68,7 +63,7 @@ function Pipeline({ onPick, selected }: { onPick: (id: string) => void; selected
           const runner = agentsForRole(r, snap.agents).find((a) => a.enabled);
           return (
             <button key={r.id} className={`flow-step custom ${selected === r.id ? "on" : ""} ${r.enabled && runner ? "" : "off"}`} onClick={() => onPick(r.id)} title={stageLabel(r.stage)}>
-              <span className="eyebrow">{r.gate ? "Gate" : "Role"}</span>
+              <span className="eyebrow">{r.fix ? "Fixer" : r.gate ? "Gate" : "Role"}</span>
               <b>{r.name}</b>
               <span className="hint">{!r.enabled ? "Disabled" : runner ? runner.name : r.id === SECOND_OPINION_ROLE_ID ? "Assign an agent to start" : "No agent: skipped"}</span>
             </button>
@@ -165,7 +160,7 @@ function RoleEditor({ role, draft, setDraft, onSaved, onDelete }: { role: Workfl
         <span className="row" style={{ gap: 8 }}>When it runs<Support kind="engine" /></span>
         <div className="row wrap" style={{ gap: 10, alignItems: "stretch" }}>
           {STAGES.map((s) => (
-            <button key={s.value} className={`opt ${draft.stage === s.value ? "on" : ""}`} style={{ flex: 1, minWidth: 200, flexDirection: "column", alignItems: "flex-start", gap: 4 }} aria-pressed={draft.stage === s.value} onClick={() => setDraft({ ...draft, stage: s.value, gate: s.value === "before-qa" ? draft.gate : false })}>
+            <button key={s.value} className={`opt ${draft.stage === s.value ? "on" : ""}`} style={{ flex: 1, minWidth: 200, flexDirection: "column", alignItems: "flex-start", gap: 4 }} aria-pressed={draft.stage === s.value} onClick={() => setDraft({ ...draft, stage: s.value, gate: s.value === "before-qa" ? draft.gate : false, fix: s.value === "before-qa" ? draft.fix : false })}>
               <b style={{ fontWeight: 600 }}>{s.label}</b>
               <span className="hint" style={{ textAlign: "left" }}>{s.desc}</span>
             </button>
@@ -176,6 +171,12 @@ function RoleEditor({ role, draft, setDraft, onSaved, onDelete }: { role: Workfl
         <div className="row" style={{ gap: 12 }}>
           <Toggle on={draft.gate} onChange={(v) => set("gate", v)} label="Gate" />
           <div className="grow"><b style={{ fontWeight: 600 }}>Gate</b><div className="sub">On: a "changes needed" verdict sends the attempt back for correction instead of to QA. If the role can't run, the task is blocked rather than going unreviewed. Off: findings are advice for QA.</div></div>
+        </div>
+      )}
+      {draft.stage === "before-qa" && draft.gate && (
+        <div className="row" style={{ gap: 12 }}>
+          <Toggle on={draft.fix === true} onChange={(v) => set("fix", v)} label="Fixer" />
+          <div className="grow"><b style={{ fontWeight: 600 }}>Fixer</b><div className="sub">On: when it finds problems, the role fixes them itself once per attempt, then reviews the result again. The fix runs with the tool guard on and may edit only the task's approved files; it never commits. If problems remain, the attempt goes back for correction as usual.</div></div>
         </div>
       )}
       <div className="field">

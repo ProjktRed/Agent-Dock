@@ -62,7 +62,7 @@ test("usage-limited QA resumes the identical packet with telemetry and no second
       waiting,
       loop.then((result) => { throw new Error("Loop ended before usage-limit wait: " + JSON.stringify(result)); }),
     ]);
-    assert.equal((await state.readLive()).stage, "WAITING_FOR_CODEX");
+    assert.equal((await state.readLive()).stage, "WAITING_FOR_LIMIT");
     const pending = await readPendingCodex(stateDir);
     assert.deepEqual(pending.inputs, reviews[0]);
     assert.deepEqual(pending.inputs, JSON.parse(await readFile(path.join(stateDir, "qa-packet.json"), "utf8")));

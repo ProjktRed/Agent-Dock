@@ -108,12 +108,12 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     assert.deepEqual(pending.inputs, firstReviewInput);
     assert.equal(pending.attempt, 1);
     const status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
-    assert.equal(status.primaryStatus, "waiting for codex");
+    assert.equal(status.primaryStatus, "waiting for usage limit");
     assert.equal(status.task.id, task.id);
 
     await state.setControl("pause");
     assert.equal((await state.readControl()).pauseAfterCurrent, true);
-    assert.equal((await state.readLive()).stage, "WAITING_FOR_CODEX");
+    assert.equal((await state.readLive()).stage, "WAITING_FOR_LIMIT");
     await state.setControl("resume");
     const result = await loop;
     assert.equal(result.status, "done");
@@ -314,7 +314,7 @@ test("legacy usage-limit manual review is recovered as exact pending QA inputs",
     assert.equal(pending.attempt, 2);
     assert.equal(pending.waitingResumeGeneration, 4);
     const live = JSON.parse(await readFile(path.join(stateDir, "live.json"), "utf8"));
-    assert.equal(live.stage, "WAITING_FOR_CODEX");
+    assert.equal(live.stage, "WAITING_FOR_LIMIT");
     assert.equal(live.manualReview, false);
     assert.equal(live.attempt, 2);
     assert.equal(live.task.id, task.id);

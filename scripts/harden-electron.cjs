@@ -1,7 +1,8 @@
 const path = require('node:path');
 const {flipFuses,FuseVersion,FuseV1Options} = require('@electron/fuses');
 
-// electron-builder 25 has no electronFuses option. afterPack runs before code signing.
+// Fuses are flipped here (not electron-builder's electronFuses) so verify-packaged-security.mjs checks one
+// known list. afterPack runs before code signing.
 module.exports = async function hardenElectron(context) {
   const name=context.packager.appInfo.productFilename;
   const binary=context.electronPlatformName==='darwin'

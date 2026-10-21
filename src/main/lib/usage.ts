@@ -105,7 +105,8 @@ export async function readOrchestratorUsage(stateDir: string, projectId: string,
 }
 
 /**
- * llama.cpp metrics the engine samples for every Cline attempt (`cline-provider-metrics`). While an
+ * llama.cpp metrics the engine samples for every Cline attempt, or the usage Cline reports at the end of
+ * an attempt without them (Ollama, cloud providers), both as `cline-provider-metrics`. While an
  * attempt runs it writes partial samples (cumulative for that attempt, `runStartedAt` identifies
  * it); only the latest sample per attempt counts, and the final one replaces the partials.
  */
@@ -118,18 +119,22 @@ export function implementationUsage(events: EngineEvent[], projectId: string): T
     // Events are in time order: a newer sample replaces a partial one; the final sample stays.
     if (!current || current.partial === true) latest.set(key, e);
   });
-  return [...latest.values()].map((e) => ({
-    timestamp: e.timestamp,
-    role: "implementation" as const,
-    provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · local`,
-    model: typeof e.model === "string" ? e.model : null,
-    input: Number(e.promptTokens) || 0,
-    cached: 0,
-    output: Number(e.generatedTokens) || 0,
-    projectId,
-    taskId: e.taskId ?? null,
-    local: true,
-  }));
+  return [...latest.values()].map((e) => {
+    // Cline on a cloud provider reports its usage the same way (local: false).
+    const local = e.local !== false;
+    return {
+      timestamp: e.timestamp,
+      role: "implementation" as const,
+      provider: `${String(e.requestedProvider ?? e.provider ?? "local")} · ${local ? "local" : "cloud"}`,
+      model: typeof e.model === "string" ? e.model : null,
+      input: Number(e.promptTokens) || 0,
+      cached: Number(e.cachedTokens) || 0,
+      output: Number(e.generatedTokens) || 0,
+      projectId,
+      taskId: e.taskId ?? null,
+      local,
+    };
+  });
 }
 
 const COMPACTION_TEXT = /^auto-compact(?:ing|ed|ion-skipped)$/;

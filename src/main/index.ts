@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runReportHtml, runReportMarkdown } from "./lib/run-export";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
@@ -15,13 +16,17 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
-import { addProject, inspectDirectory, taskHistory } from "./projects";
+import { dueScheduledStart } from "@shared/schedule";
+import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
+import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
+import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
+import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
 import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
-import { ownerFixCommand, sharedGitOwnerProblem } from "./lib/git";
+import { ownerFixCommand, run, sharedGitOwnerProblem } from "./lib/git";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { interruptedWork } from "./lib/status";
 import { STAGING, Updater } from "./updater";
@@ -109,8 +114,9 @@ let models: ModelsService;
 async function applyUpdate() {
   const running = store.data.projects.filter((p) => engine.isAlive(p.id));
   if (running.length) throw new Error(`Stop the automation first (${running.map((p) => p.name).join(", ")}). Updating replaces the engine files.`);
-  await updater.apply(store.data.settings, () => {
+  await updater.apply(store.data.settings, (relaunch) => {
     quitting = true;
+    if (relaunch) app.relaunch({ execPath: relaunch, args: [] });
     app.quit();
   });
 }
@@ -270,12 +276,43 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
 }
 
 /** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
+/** Windows: keeps Task Scheduler in step with the schedules marked "also when closed" (packaged builds only). */
+async function syncWindowsSchedules() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  const problems = await syncOsSchedules(store.data.projects, process.execPath);
+  if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
+}
+
+/** Scheduled runs: once a minute, start each project whose scheduled slot is due and that is not running. */
+async function runSchedules(now = new Date()) {
+  for (const p of store.data.projects.filter((x) => !x.archived && x.schedule?.enabled)) {
+    const slot = dueScheduledStart(p.schedule, now, p.lastScheduledStart);
+    if (!slot) continue;
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot } : x));
+    await store.saveProjects();
+    if (engine.isAlive(p.id)) continue;
+    try {
+      await runControl(p.id, "start", "schedule");
+      notice({ kind: "info", message: `Scheduled run started on ${p.name}.` });
+    } catch (error) {
+      notice({ kind: "error", message: `Scheduled run on ${p.name} could not start: ${(error as Error).message}` });
+    }
+  }
+}
+
 async function runControl(id: string, action: ControlAction, source = "app") {
   const p = project(id);
   const check = launchCheck(p);
   const starting = ["start", "resume", "resolve", "retry-qa"].includes(action) && !engine.isAlive(id);
   if (starting && check.problems.length) throw new Error(check.problems.join(" "));
   if (starting && check.warnings.length) notice({ kind: "warning", message: check.warnings.join(" ") });
+  // Pull-request mode: a fresh start works on its own branch, never on the branch you had checked out.
+  if (starting && action === "start" && p.prMode) {
+    const runBranch = await ensureRunBranch(p.path, p.prBase ?? null);
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, prBase: runBranch.base } : x));
+    await store.saveProjects();
+    if (runBranch.created) notice({ kind: "info", message: `Pull-request mode: working on ${runBranch.branch} (from ${runBranch.base}).` });
+  }
   // QA commits in the repository's shared .git; Codex's Windows sandbox can only prepare it when the user owns it.
   if (starting) {
     const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
@@ -560,6 +597,18 @@ async function usage(projectId: string | null): Promise<UsageSummary> {
   return { records: records.sort((a, b) => a.timestamp.localeCompare(b.timestamp)), compactions, sessionStartedAt: alive?.startedAt ?? null, limit };
 }
 
+/** Overview › Runs › Export: one run's report as Markdown or HTML, saved where the user picks. */
+async function exportRunReport(projectId: string, startedAt: string, format: "md" | "html"): Promise<string | null> {
+  const p = project(projectId);
+  const report = (await engine.runs(p)).find((r) => r.startedAt === startedAt);
+  if (!report) throw new Error("That run's report was not found.");
+  const name = `${p.name.replace(/[^\w.-]+/g, "-")}-run-${startedAt.slice(0, 16).replace(/[:T]/g, "-")}.${format}`;
+  const result = await dialog.showSaveDialog(win!, { title: "Export run report", defaultPath: path.join(app.getPath("documents"), name), filters: [format === "md" ? { name: "Markdown", extensions: ["md"] } : { name: "Web page", extensions: ["html"] }] });
+  if (result.canceled || !result.filePath) return null;
+  await writeFile(result.filePath, format === "md" ? runReportMarkdown(report, p.name) : runReportHtml(report, p.name));
+  return result.filePath;
+}
+
 /** Settings › Advanced › Export settings: agents, roles, connections and settings, without secrets or projects. */
 async function exportSettingsFile(): Promise<string | null> {
   const result = await dialog.showSaveDialog(win!, { title: "Export settings", defaultPath: path.join(app.getPath("documents"), `agent-dock-settings-${new Date().toISOString().slice(0, 10)}.json`), filters: [{ name: "Agent Dock settings", extensions: ["json"] }] });
@@ -720,8 +769,11 @@ function registerIpc() {
   handle("planner:cancel", (projectId: string) => { planners.get(projectId)?.abort(); });
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? p : x));
+    const before = store.data.projects.find((x) => x.id === p.id);
+    // The scheduler owns lastScheduledStart; a window's older copy never resets it.
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, lastScheduledStart: x.lastScheduledStart ?? null } : x));
     await store.saveProjects();
+    if (JSON.stringify([before?.schedule, before?.archived]) !== JSON.stringify([p.schedule, p.archived])) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:remove", async (id: string, deleteHistory: boolean) => {
@@ -733,6 +785,7 @@ function registerIpc() {
     // Only ever delete app-managed engine state, never the workspace or a user-chosen state folder.
     if (deleteHistory && path.resolve(p.stateDir).startsWith(path.resolve(stateRoot))) await rm(path.dirname(p.stateDir), { recursive: true, force: true });
     lastStatus.delete(id);
+    if (p.schedule?.whenClosed) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:activate", async (id: string | null) => {
@@ -740,7 +793,76 @@ function registerIpc() {
     await store.saveSettings();
     void pollOnce();
   });
-  handle("project:history", async (id: string) => taskHistory(await readActivity(project(id).stateDir, 20_000)));
+  handle("project:history", async (id: string) => {
+    const p = project(id), saved = await savedTaskIds(p.stateDir);
+    return taskHistory(await readActivity(p.stateDir, 20_000)).map((h) => ({ ...h, canRerun: canRerun(saved, h.taskId) }));
+  });
+  handle("project:addLane", async (parentId: string, name: string, objective: string) => {
+    const parent = project(parentId);
+    if (parent.parentId) throw new Error("Add lanes to the main project, not to another lane.");
+    const lane = await addLaneWorktree(parent.path, String(name));
+    try {
+      const p = await addProject({ mode: "local", path: lane.path, name: `${parent.name} · ${String(name).trim()}`, objective: String(objective).trim() || parent.objective }, store.data.projects, stateRoot);
+      store.data.projects.push({ ...p, parentId, laneBranch: lane.branch, roleOverrides: { ...parent.roleOverrides }, workflowOverrides: { ...parent.workflowOverrides } });
+    } catch (error) {
+      await removeLaneWorktree(parent.path, lane.path, true).catch(() => {});
+      throw error;
+    }
+    await store.saveProjects();
+    return store.data.projects;
+  });
+  handle("project:removeLane", async (id: string, force: boolean) => {
+    const lane = project(id);
+    if (!lane.parentId) throw new Error("This project is not a parallel lane.");
+    if (engine.isAlive(id)) throw new Error("Stop the lane's automation first.");
+    const parent = store.data.projects.find((x) => x.id === lane.parentId);
+    try { await removeLaneWorktree(parent?.path ?? lane.path, lane.path, force === true); }
+    catch (error) { throw new Error(`${(error as Error).message} Commit or discard the lane's changes in its folder first.`); }
+    store.data.projects = store.data.projects.filter((x) => x.id !== id);
+    if (store.data.settings.activeProjectId === id) store.data.settings.activeProjectId = lane.parentId;
+    await Promise.all([store.saveProjects(), store.saveSettings()]);
+    lastStatus.delete(id);
+    return store.data.projects;
+  });
+  // Kept parallel-task worktrees and branches. A lane shares its parent's git repo, so a run in any of
+  // them blocks cleanup (it could be creating or merging a parallel branch right now).
+  const repoRunning = (p: Project) => store.data.projects.some((x) => [x.id, x.parentId].some((id) => id === p.id || (!!p.parentId && id === p.parentId)) && engine.isAlive(x.id));
+  handle("project:parallelLeftovers", async (id: string) => {
+    const p = project(id);
+    if (!existsSync(p.path)) return { worktrees: [], branches: [] };
+    return listParallelLeftovers(p.path, p.stateDir).catch(() => ({ worktrees: [], branches: [] }));
+  });
+  handle("project:cleanParallel", async (id: string) => {
+    const p = project(id);
+    if (repoRunning(p)) throw new Error("Stop the automation for this project and its lanes first.");
+    return cleanParallelWorktrees(p.path, p.stateDir);
+  });
+  handle("wsl:check", async (distro: string) => {
+    if (process.platform !== "win32") return { ok: false, lines: ["WSL isolation is for Windows."] };
+    if (!/^[\w.-]{1,64}$/.test(String(distro))) return { ok: false, lines: ["Enter the distro's name (wsl -l shows them)."] };
+    const r = await run("wsl.exe", ["-d", String(distro), "--exec", "sh", "-lc", "for c in node git codex claude cline opencode; do p=$(command -v $c) && echo \"$c: $p\" || echo \"$c: not found\"; done; node --version 2>/dev/null"], { timeoutMs: 60_000 });
+    const lines = (r.stdout || r.stderr).replace(/\0/g, "").trim().split(/\r?\n/).filter(Boolean);
+    return { ok: r.code === 0 && lines.some((l) => /^node: \//.test(l)) && lines.some((l) => /^git: \//.test(l)), lines };
+  });
+  handle("project:openPullRequest", async (id: string) => {
+    const p = project(id);
+    if (!p.prMode) throw new Error("Turn on pull-request mode for this project first.");
+    if (engine.isAlive(id)) throw new Error("Stop the automation first, so the branch is complete.");
+    const report = (await engine.runs(p))[0];
+    const body = [p.objective.trim(), "", report ? runReportMarkdown(report, p.name) : "", "_Opened by Agent Dock in pull-request mode._"].join("\n");
+    const { url, created } = await openPullRequest(p.path, p.prBase ?? "main", `${p.name}: ${p.objective.trim().split(/\r?\n/)[0].slice(0, 80)}`, body, pickRunnable(await whereAll("gh")));
+    void shell.openExternal(url);
+    notice({ kind: "success", message: created ? `Pull request opened: ${url}` : `Branch pushed; finish the pull request in your browser.` });
+    return url;
+  });
+  handle("project:rerunTask", async (id: string, taskId: string) => {
+    const p = project(id);
+    if (engine.isAlive(id)) throw new Error("Stop the automation first; the task runs again as the next start's first task.");
+    const file = await prepareRerun(p.stateDir, String(taskId));
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: file } : x));
+    await store.saveProjects();
+    await runControl(id, "start");
+  });
   handle("project:gitOwner", async (id: string) => {
     const problem = await sharedGitOwnerProblem(project(id).path);
     return problem ? { ...problem, command: ownerFixCommand(problem) } : null;
@@ -768,6 +890,7 @@ function registerIpc() {
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
   handle("project:runs", (id: string) => engine.runs(project(id)));
+  handle("project:exportRun", (id: string, startedAt: string, format: "md" | "html") => exportRunReport(id, String(startedAt), format === "html" ? "html" : "md"));
   handle("diagnostics:export", exportDiagnostics);
   handle("settings:export", exportSettingsFile);
   handle("settings:import", importSettingsFile);
@@ -851,7 +974,11 @@ async function resumeAfterRestart() {
   }
 }
 
-app.on("second-instance", showWindow);
+// Task Scheduler starts a second copy with --scheduled-run while the app is open: run the due schedules instead of showing the window.
+app.on("second-instance", (_event, argv) => {
+  if (argv.includes(SCHEDULED_RUN_FLAG)) void runSchedules().catch(() => {});
+  else showWindow();
+});
 
 app.on("before-quit", (event) => {
   if (quitting) return;
@@ -892,7 +1019,7 @@ app.whenReady().then(async () => {
     const conn = store.data.clis.find((c) => c.kind === kind);
     return conn ? pickRunnable(await whereAll(conn.location)) : null;
   };
-  limits = new LimitsService(path.join(store.dir, "limits.json"), resolveOrchestrator, (s) => send("limits", s));
+  limits = new LimitsService(path.join(store.dir, "limits.json"), resolveOrchestrator, (s) => send("limits", s), () => store.data.projects.filter((p) => !p.archived).map((p) => p.stateDir));
   await limits.load();
   models = new ModelsService(path.join(store.dir, "models.json"), resolveOrchestrator, (s) => send("models", s));
   await models.load();
@@ -919,6 +1046,10 @@ app.whenReady().then(async () => {
   setTimeout(() => void resumeAfterRestart(), 2500);
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);
   setTimeout(() => limits.schedule(store.data.settings), 3000);
+  setInterval(() => void runSchedules().catch(() => {}), 60_000);
+  // Launched by Task Scheduler: start what is due once the app is ready, then keep checking as usual.
+  if (process.argv.includes(SCHEDULED_RUN_FLAG)) setTimeout(() => void runSchedules().catch(() => {}), 5000);
+  if (store.data.projects.some((p) => p.schedule?.whenClosed)) setTimeout(() => void syncWindowsSchedules().catch(() => {}), 8000);
   // Model lists are free to read; refresh once a day or when missing.
   setTimeout(() => void models.refreshStale(24 * 60 * 60_000), 6000);
 });

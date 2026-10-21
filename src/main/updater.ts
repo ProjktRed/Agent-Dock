@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_RELEASE_REPO, FORMER_SOURCE, SOURCE_URL, updateChannel } from "@shared/defaults";
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
-import { checkRelease, downloadRelease, extractRelease, launchSwap, type ReleaseInfo } from "./release-channel";
+import { applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
@@ -162,7 +162,9 @@ export class Updater {
     const repo = settings.updates.releaseRepo?.trim() || DEFAULT_RELEASE_REPO;
     if (!quiet) this.set({ state: "checking", source: `github.com/${repo} (signed releases)`, branch: "", error: null });
     try {
-      this.release = await checkRelease(repo, this.appVersion, this.releaseKey);
+      const platform = releasePlatform();
+      if (!platform) throw new Error(`Signed releases are built for Windows and Linux, not ${process.platform}.`);
+      this.release = await checkRelease(repo, this.appVersion, this.releaseKey, fetch, platform);
     } catch (error) {
       this.release = null;
       this.set({ state: "error", checkedAt: new Date().toISOString(), error: (error as Error).message });
@@ -178,20 +180,49 @@ export class Updater {
   }
 
   /** Download, verify, extract and hand off to the new app's swap; no Node.js or git needed. */
-  private async applyRelease(onReadyToQuit: () => void): Promise<void> {
+  private async applyRelease(onReadyToQuit: (relaunch?: string) => void): Promise<void> {
     const info = this.release!;
     this.building = true;
     this.set({ state: "building", log: [], error: null });
     try {
       const dir = path.join(STAGING, "release");
+      const installDir = path.dirname(process.execPath);
+      // Smaller update first: only the files changed since this version, rebuilt and checked file by file.
+      let unpacked: string | null = null;
+      if (info.manifest.platform === "win-x64" && deltaUsable(info, this.appVersion)) {
+        this.append(`Downloading the changed files (${Math.max(1, Math.round(info.manifest.delta!.size / 1048576))} MB instead of ${Math.round(info.manifest.size / 1048576)} MB)…`);
+        try {
+          unpacked = await applyDelta(info, dir, installDir);
+          this.append(`Rebuilt ${info.manifest.version}; every file matches the signed index.`);
+        } catch (error) {
+          this.append(`The smaller update could not be used (${(error as Error).message}); downloading the full release.`);
+        }
+      }
+      if (unpacked) {
+        this.set({ state: "ready" });
+        const fd = openSync(path.join(STAGING, "swap.log"), "a");
+        try { launchSwap({ unpacked, installDir, waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
+        finally { closeSync(fd); }
+        onReadyToQuit();
+        return;
+      }
       this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
       const zip = await downloadRelease(info, dir);
       this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
-      const unpacked = await extractRelease(zip, path.join(dir, info.manifest.version));
-      this.append(`Extracted to ${unpacked}.`);
+      if (info.manifest.platform === "linux-x64") {
+        const target = process.env.APPIMAGE ?? "";
+        installAppImage(zip, target);
+        rmSync(zip, { force: true });
+        this.append(`Replaced ${target}; restarting.`);
+        this.set({ state: "ready" });
+        onReadyToQuit(target);
+        return;
+      }
+      const extracted = await extractRelease(zip, path.join(dir, info.manifest.version));
+      this.append(`Extracted to ${extracted}.`);
       this.set({ state: "ready" });
       const fd = openSync(path.join(STAGING, "swap.log"), "a");
-      try { launchSwap({ unpacked, installDir: path.dirname(process.execPath), waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd }); }
+      try { launchSwap({ unpacked: extracted, installDir, waitPid: process.pid, resultFile: path.join(STAGING, "last-swap.json"), logFd: fd, version: info.manifest.version }); }
       finally { closeSync(fd); }
       onReadyToQuit();
     } catch (error) {
@@ -217,7 +248,8 @@ export class Updater {
    * Build the new version in the staging clone (the app keeps running), then hand off to the
    * swap stage, which waits for this process to exit, replaces the files and relaunches.
    */
-  async apply(settings: Settings, onReadyToQuit: () => void): Promise<void> {
+  /** `onReadyToQuit` quits the app; with a path, it relaunches that executable afterwards (Linux AppImage). */
+  async apply(settings: Settings, onReadyToQuit: (relaunch?: string) => void): Promise<void> {
     if (!this.packaged || !this.installed) throw new Error("Updates apply to the installed app only.");
     if (this.building) throw new Error("An update is already being built.");
     if (this.status.state !== "available" || !this.status.latest) throw new Error("No update available. Check for updates first.");

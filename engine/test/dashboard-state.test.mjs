@@ -17,7 +17,7 @@ test("running fake task is represented in live state", async () => {
   const snapshot = await state.readLive();
   assert.equal(snapshot.task.id, "fake-task");
   assert.equal(snapshot.task.name, "Fake task");
-  assert.equal(snapshot.stage, "cline-working");
+  assert.equal(snapshot.stage, "implementing");
   assert.equal(snapshot.clineStatus, "running");
   assert.equal(snapshot.qaStatus, "waiting");
   assert.equal(snapshot.attempt, 2);
@@ -65,7 +65,7 @@ test("Cline process telemetry populates immediately and retains final elapsed du
   await rm(stateDir, { recursive: true, force: true });
 });
 
-test("QA evidence uses explicit categories and survives WAITING_FOR_CODEX", async () => {
+test("QA evidence uses explicit categories and survives WAITING_FOR_LIMIT", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "dashboard-state-"));
   const state = new DashboardState({ stateDir });
   await state.initialize({ task, workspace: "C:/fake", maxAttempts: 2 });
@@ -74,7 +74,7 @@ test("QA evidence uses explicit categories and survives WAITING_FOR_CODEX", asyn
   await state.record({ type: "codex-usage-limit", operation: "qa", attempt: 1, message: "limit" });
   const live = await state.readLive();
   assert.deepEqual(live.qaChecks, qaChecks);
-  assert.equal(live.stage, "WAITING_FOR_CODEX");
+  assert.equal(live.stage, "WAITING_FOR_LIMIT");
   await rm(stateDir, { recursive: true, force: true });
 });
 
@@ -152,4 +152,17 @@ test("pause resume and stop controls always leave valid JSON", async () => {
   });
   JSON.parse(await readFile(path.join(stateDir, "control.json"), "utf8"));
   await rm(stateDir, { recursive: true, force: true });
+});
+
+test("live state saved with the old stage names reads with the current ones", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "dashboard-legacy-"));
+  const { writeFile } = await import("node:fs/promises");
+  try {
+    for (const [old, current] of [["cline-working", "implementing"], ["cline-complete", "implemented"], ["codex-qa", "qa"], ["WAITING_FOR_CODEX", "WAITING_FOR_LIMIT"], ["BLOCKED", "BLOCKED"]]) {
+      await writeFile(path.join(stateDir, "live.json"), JSON.stringify({ stage: old, task }));
+      assert.equal((await new DashboardState({ stateDir }).readLive()).stage, current);
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });

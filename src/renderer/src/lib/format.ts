@@ -68,10 +68,14 @@ export function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** The engine's internal stage ids (some still named after Codex and Cline) in words for any CLI. */
+/** The engine's stage ids in words. */
 const STAGE_LABELS: Record<string, string> = {
   waiting: "Waiting",
   "current-task": "Assessment",
+  implementing: "Implementation",
+  implemented: "Implementation finished",
+  qa: "QA",
+  // Names from before 0.32, in older run state.
   "cline-working": "Implementation",
   "cline-complete": "Implementation finished",
   "codex-qa": "QA",
@@ -83,6 +87,7 @@ const STAGE_LABELS: Record<string, string> = {
   resolving: "Resolver",
   USER_ATTENTION: "Needs your attention",
   BLOCKED: "Blocked",
+  WAITING_FOR_LIMIT: "Waiting for usage limit",
   WAITING_FOR_CODEX: "Waiting for usage limit",
   paused: "Paused",
   stopped: "Stopped",

@@ -70,6 +70,11 @@ describe("run state", () => {
     expect(cycleStage({ stage: "cline-working", clineStatus: "running" })).toBe("implementation");
     expect(cycleStage({ stage: "codex-qa", qaStatus: "running" })).toBe("qa");
     expect(cycleStage({ stage: "retry" })).toBe("correction");
+    // Current stage names (the old ones above come from state saved before 0.32).
+    expect(cycleStage({ stage: "implementing" })).toBe("implementation");
+    expect(cycleStage({ stage: "implemented" })).toBe("implementation");
+    expect(cycleStage({ stage: "qa" })).toBe("qa");
+    expect(deriveRunState({ stage: "WAITING_FOR_LIMIT" }, {}, true).runState).toBe("waiting-limit");
   });
   it("computes elapsed only while Cline runs", () => {
     const base = { projectId: "p", control: {}, processAlive: true, pid: 1, events: [], git: { isRepo: true, branch: "main", head: null, remote: null, ahead: 0, behind: 0, changedFiles: [] }, plan: parseImplementationPlan(""), elevate: { available: false, reason: null }, resolver: { available: false, reason: null } };
@@ -93,6 +98,13 @@ describe("engine launch args", () => {
     const noLimit = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...s, workflow: { ...s.workflow, unattendedLimits: { ...s.workflow.unattendedLimits, maxCorrections: 0 } } } });
     expect(noLimit.problems).toContain("Unattended mode needs a correction limit of at least 1.");
     expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--unattended");
+  });
+  it("passes the price table only when it has rows, dropping rows without a model", () => {
+    const base = settings();
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: base }).args).not.toContain("--prices");
+    const s = { ...base, workflow: { ...base.workflow, prices: [{ model: " gpt-5* ", input: 1.25, cachedInput: 0.125, output: 10 }, { model: "", input: 3, cachedInput: 0, output: 0 }, { model: "x", input: -1, cachedInput: Number.NaN, output: 2 }] } };
+    const args = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(JSON.parse(args[args.indexOf("--prices") + 1])).toEqual([{ model: "gpt-5*", input: 1.25, cachedInput: 0.125, output: 10 }, { model: "x", input: 0, cachedInput: 0, output: 2 }]);
   });
   it("passes the Supervisor's mode and thresholds, and only the mode when it is off", () => {
     const base = settings();
@@ -435,6 +447,20 @@ describe("provider limits", () => {
     const result = parseClaudeUsage({ subscription_type: "max", rate_limits: { five_hour: { utilization: 100, resets_at: null, locked_reason: "rate_limited" } } });
     expect([result.plan, result.status, result.statusText]).toEqual(["Claude Max", "limited", "Limited: rate limited"]);
   });
+  it("uses the newest recent plan limits an engine run saved, across projects, before calling Claude Code", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const os = await import("node:os");
+    const { readRunLimits } = await import("../src/main/limits");
+    const [a, b, empty] = [0, 1, 2].map(() => mkdtempSync(path.join(os.tmpdir(), "run-limits-")));
+    const now = Date.parse("2026-10-19T08:00:00.000Z");
+    const save = (dir: string, minutesAgo: number, utilization: number) => writeFileSync(path.join(dir, "claude-rate-limit.json"), JSON.stringify({ fetchedAt: new Date(now - minutesAgo * 60_000).toISOString(), info: { status: "allowed", unifiedWindows: { five_hour: { utilization, resetsAt: 1792310400 } } } }));
+    save(a, 10, 0.4); save(b, 3, 0.55);
+    const limits = await readRunLimits([a, b, empty, path.join(empty, "missing")], 15 * 60_000, now);
+    expect([limits?.windows[0].usedPercent, limits?.source]).toEqual([55, "Claude Code · reported during the latest run"]);
+    expect(await readRunLimits([a, b], 2 * 60_000, now)).toBeNull();
+    writeFileSync(path.join(empty, "claude-rate-limit.json"), "{broken");
+    expect(await readRunLimits([empty], 15 * 60_000, now)).toBeNull();
+  });
   it("parses a real Codex account/rateLimits/read result", async () => {
     const { parseCodexLimits } = await import("../src/main/lib/limits-parse");
     const snap = { limitId: "codex", primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1791815431 }, secondary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: 1792299024 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "plus", rateLimitReachedType: null, spendControlReached: false };
@@ -487,6 +513,8 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(plan.problems).toEqual([]);
     const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings(), roles: [] });
     expect(none.args).not.toContain("--roles-file");
+    const fixer = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles: [role({ fix: true })] });
+    expect(fixer.roles[0].fix).toBe(true);
   });
 
   it("passes loop limits only with guardrails off, and only those that differ from the engine defaults", () => {
@@ -499,11 +527,51 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
+  it("passes parallel tasks only for a cloud Implementation agent outside Unattended mode", () => {
+    const s = settings();
+    s.workflow.parallelTasks = 3;
+    const local = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
+    expect(local.args).not.toContain("--parallel");
+    expect(local.warnings.join(" ")).toMatch(/need a cloud Implementation agent/);
+    const claude = clis().find((c) => c.kind === "claude")!;
+    const cloud = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: claude.id, provider: undefined, model: "claude-sonnet-5-5" } : a));
+    expect(flag(buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s }).args, "--parallel")).toBe("3");
+    s.workflow.unattended = true;
+    const unattended = buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s });
+    expect(unattended.args).not.toContain("--parallel");
+    expect(unattended.warnings.join(" ")).toMatch(/off in Unattended mode/);
+  });
+
+  it("passes the task size mode: eco by default, standard fixed, max with only the limits you set", () => {
+    const s = settings();
+    const eco = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(eco).not.toContain("--task-mode");
+    s.workflow.taskMode = "standard";
+    s.advanced.engineGuardrails = false;
+    s.tuning = { ...s.tuning, taskMaxFiles: 3 };
+    const standard = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
+    expect(flag(standard, "--task-mode")).toBe("standard");
+    expect(standard).not.toContain("--task-max-files");
+    s.workflow.taskMode = "eco";
+    const p = project({ workflowOverrides: { taskMode: "max", stepDown: false } });
+    s.workflow.maxLimits = { files: 25, newLines: 0, readFiles: 0, timeoutMinutes: 90 };
+    const max = buildEngineArgs({ project: p, agents: agents(), clis: clis(), settings: s }).args;
+    expect(flag(max, "--task-mode")).toBe("max");
+    expect(flag(max, "--step-down")).toBe("false");
+    expect(flag(max, "--task-max-files")).toBe("25");
+    expect(max).not.toContain("--task-max-new-lines");
+    expect(flag(max, "--timeout-seconds")).toBe("5400");
+  });
+
   it("ROLE.md round-trips, ids come from names, and a gate only applies before QA", () => {
     const text = serializeRole({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: true, enabled: true, instructions: "Look for injection.\n" });
     const parsed = parseRoleFile(text, "security-review", "dir");
     expect(parsed).toMatchObject({ name: "Security review", description: "Checks input handling", stage: "after-pass", gate: false, enabled: true, instructions: "Look for injection.", warnings: [] });
     expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: true }), "x", "d").gate).toBe(true);
+    // A fixer is a before-QA gate that may fix; without the gate the flag is dropped.
+    expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: true, fix: true }), "x", "d").fix).toBe(true);
+    expect(parseRoleFile(serializeRole({ ...parsed, stage: "before-qa", gate: false, fix: true }), "x", "d").fix).toBe(false);
+    expect(parseRoleFile("---\nname: X\nstage: after-pass\ngate: true\nfix: true\n---\nDo it", "x", "d").fix).toBe(false);
     expect(parseRoleFile("---\nname: X\nstage: sometime\n---\nDo it", "x", "d").warnings[0]).toMatch(/Unknown stage/);
     expect(roleSlug("Security Review (strict)!")).toBe("security-review-strict");
     expect(classifyPrompt("You are Strict QA bot, a custom workflow role in a bounded automation loop")).toBe("custom");
@@ -632,5 +700,16 @@ describe("engine stage labels", () => {
     expect(engineStageLabel("WAITING_FOR_CODEX")).toBe("Waiting for usage limit");
     expect(engineStageLabel("some-new_stage")).toBe("Some new stage");
     expect(engineStageLabel(null)).toBe("—");
+  });
+});
+
+describe("implementation usage records", () => {
+  it("keeps Cline's cloud-provider usage apart from local usage", () => {
+    const records = implementationUsage([
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:00:00Z", runStartedAt: "a", requestedProvider: "ollama", model: "qwen", promptTokens: 10, generatedTokens: 5, local: true },
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:01:00Z", runStartedAt: "b", requestedProvider: "openai", model: "glm", promptTokens: 30, cachedTokens: 20, generatedTokens: 7, local: false },
+      { type: "cline-provider-metrics", timestamp: "2026-10-19T00:02:00Z", runStartedAt: "c", requestedProvider: "llamacpp", promptTokens: 1, generatedTokens: 1 },
+    ] as EngineEvent[], "p");
+    expect(records.map((r) => [r.provider, r.local, r.cached])).toEqual([["ollama · local", true, 0], ["openai · cloud", false, 20], ["llamacpp · local", true, 0]]);
   });
 });

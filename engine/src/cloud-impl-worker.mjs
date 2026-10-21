@@ -11,6 +11,7 @@ import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
+import { saveClaudeRateLimit } from "./claude-limits.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // A usage limit ends the attempt cleanly (the CLI has exited, its partial changes are on disk): the loop
@@ -56,7 +57,7 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
-  return [...prefixArgs, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, ...hookArgs, ...launchArgs];
+  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, ...hookArgs, ...launchArgs];
 }
 
 function killTree(child) {
@@ -140,7 +141,8 @@ export class CloudImplementationWorker {
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
-    noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout));
+    noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout), this.model);
+    if (this.cli === "claude") await saveClaudeRateLimit(this.stateDir, stdout);
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };
     let summary = "";
     // Both CLIs log every protection decision next to the prompt; refusals show in Activity.

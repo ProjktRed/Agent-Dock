@@ -48,6 +48,7 @@ export interface EngineRoleEntry {
   name: string;
   stage: WorkflowRole["stage"];
   gate: boolean;
+  fix?: boolean;
   cli: "codex" | "claude";
   model?: string;
   effort?: string;
@@ -63,6 +64,8 @@ export interface HistoryEntry {
   attempts: number;
   finishedAt: string;
   summary: string;
+  /** The engine kept this task's definition, so Run again is possible. */
+  canRerun?: boolean;
 }
 
 export interface Notice {
@@ -119,6 +122,8 @@ export interface DesktopApi {
   exportDiagnostics(): Promise<string | null>;
   /** Finished runs of a project, newest first. */
   runs(projectId: string): Promise<RunReport[]>;
+  /** Saves one run's report as Markdown or HTML (save dialog); the path, or null when cancelled. */
+  exportRun(projectId: string, startedAt: string, format: "md" | "html"): Promise<string | null>;
   /** Supervisor plan proposals for a project, newest last. */
   planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */
@@ -128,6 +133,20 @@ export interface DesktopApi {
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;
   history(projectId: string): Promise<HistoryEntry[]>;
+  /** Runs one task from the history again as the next start's first task. */
+  rerunTask(projectId: string, taskId: string): Promise<void>;
+  /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
+  openPullRequest(projectId: string): Promise<string>;
+  /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
+  addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
+  /** Removes a lane's worktree and its project entry; its branch and commits stay. */
+  removeLane(projectId: string, force: boolean): Promise<Project[]>;
+  /** Parallel tasks: the worktrees and agent-dock/parallel-… branches kept from earlier runs. */
+  parallelLeftovers(projectId: string): Promise<{ worktrees: { path: string; branch: string | null }[]; branches: string[] }>;
+  /** Removes those worktrees (node_modules link first) and branches; unmerged work on them is lost. */
+  cleanParallel(projectId: string): Promise<{ worktrees: number; branches: number; problems: string[] }>;
+  /** WSL isolation: what the distro has (Node.js, git, agent CLIs). */
+  checkWsl(distro: string): Promise<{ ok: boolean; lines: string[] }>;
   /** Windows: the project's shared .git folder owned by another account, with the Administrator fix. */
   gitOwner(projectId: string): Promise<{ dir: string; owner: string; user: string; command: string } | null>;
   engineLog(projectId: string): Promise<string>;

@@ -1,7 +1,7 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.31.1",
+  "version": "0.35.1",
   "description": "Agent Dock: a Windows desktop app for running AI coding agents on your projects",
   "private": true,
   "license": "MIT",
@@ -17,33 +17,76 @@
     "package": "electron-vite build && electron-builder --win --dir --publish never",
     "package:installer": "electron-vite build && electron-builder --win nsis --publish never",
     "package:linux": "electron-vite build && electron-builder --linux --dir",
+    "package:appimage": "electron-vite build && electron-builder --linux AppImage --publish never",
     "release:local": "node scripts/release-local.mjs --launch"
   },
   "devDependencies": {
     "@electron/fuses": "1.8.0",
-    "@types/node": "22.10.2",
-    "@types/react": "18.3.12",
-    "@types/react-dom": "18.3.1",
-    "@vitejs/plugin-react": "4.3.4",
-    "electron": "44.5.0",
-    "electron-builder": "25.1.8",
-    "electron-vite": "2.3.0",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "typescript": "5.6.3",
-    "vite": "5.4.21",
-    "vitest": "2.1.9"
+    "@types/node": "22.18.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.9.0",
+    "electron-builder": "26.17.0",
+    "electron-vite": "5.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.11"
   },
   "build": {
     "appId": "local.agent-dock",
     "productName": "Agent Dock",
     "executableName": "AgentDock",
     "afterPack": "scripts/harden-electron.cjs",
-    "directories": { "buildResources": "build" },
-    "files": ["out/**", "package.json", "build-info.json"],
-    "extraResources": [{ "from": "engine", "to": "engine", "filter": ["src/**", "skills/**", "ui/**", "package.json"] }, { "from": "scripts", "to": "scripts", "filter": ["swap.mjs"] }],
-    "win": { "target": "dir", "icon": "build/icon.png" },
-    "nsis": { "oneClick": true, "perMachine": false, "include": "scripts/installer.nsh", "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}", "shortcutName": "Agent Dock", "uninstallDisplayName": "Agent Dock", "deleteAppDataOnUninstall": false },
-    "linux": { "target": "dir", "icon": "build/icon.png", "category": "Development" }
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**",
+      "package.json",
+      "build-info.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine",
+        "to": "engine",
+        "filter": [
+          "src/**",
+          "skills/**",
+          "ui/**",
+          "package.json"
+        ]
+      },
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": [
+          "swap.mjs"
+        ]
+      }
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "include": "scripts/installer.nsh",
+      "artifactName": "AgentDock-Setup-${version}-win-x64.${ext}",
+      "shortcutName": "Agent Dock",
+      "uninstallDisplayName": "Agent Dock",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": "dir",
+      "icon": "build/icon.png",
+      "category": "Development"
+    },
+    "appImage": {
+      "artifactName": "AgentDock-${version}-linux-x86_64.${ext}"
+    }
   }
 }

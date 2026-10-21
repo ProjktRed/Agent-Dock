@@ -102,8 +102,12 @@ test("without llama.cpp counters (Ollama), Cline's final usage counts toward bud
     });
     const { RUN, clineUsage } = await import("../src/run-budget.mjs");
     const before = { ...RUN.usage };
-    await worker.run("task", { onEvent: async () => {} });
+    const events = [];
+    await worker.run("task", { onEvent: async (event) => events.push(event) });
     assert.deepEqual([RUN.usage.input - before.input, RUN.usage.cached - before.cached, RUN.usage.output - before.output], [1000, 100, 120]);
+    // The Tokens tab gets the same usage as a metrics event, marked local.
+    const metrics = events.find((e) => e.type === "cline-provider-metrics");
+    assert.deepEqual([metrics.promptTokens, metrics.cachedTokens, metrics.generatedTokens, metrics.local], [1000, 100, 120, true]);
     assert.equal(clineUsage({ finishReason: "completed" }), null);
     assert.equal(clineUsage({ usage: { inputTokens: 1, outputTokens: 1 }, aggregateUsage: { inputTokens: 5, outputTokens: 2, totalCost: 0.25 } }).costUsd, 0.25);
   } finally { await rm(stateDir, { recursive: true, force: true }); }

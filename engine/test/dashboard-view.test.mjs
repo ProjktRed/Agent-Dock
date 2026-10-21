@@ -11,7 +11,7 @@ test("auto-compaction statuses cannot replace the latest useful Cline message or
     ...["auto-compacting", "auto-compacted", "auto-compaction-skipped"].map((message) => ({ type: "cline-message", message, action: message })),
   ];
   const original = structuredClone(events);
-  const view = dashboardView({ stage: "cline-working", clineStatus: "running", events });
+  const view = dashboardView({ stage: "implementing", clineStatus: "running", events });
   assert.equal(view.activity.latestMessage, message);
   assert.equal(view.activity.currentAction, message);
   assert.deepEqual(events, original, "Display filtering must not change stored events");
@@ -67,7 +67,7 @@ test("dashboard fields format configured context and timeout without inventing v
 test("running Cline state maps to implementation workflow and honest activity fallbacks", () => {
   const view = dashboardView({
     task: { id: "P1-008", name: "Campaign status", prompt: "Improve freshness" },
-    stage: "cline-working", clineStatus: "running", qaStatus: "waiting", attempt: 2,
+    stage: "implementing", clineStatus: "running", qaStatus: "waiting", attempt: 2,
     maxAttempts: null, changedFiles: [{ status: "M", path: "src/campaign.js" }],
     events: [
       { type: "cline-started", timestamp: "2026-09-13T12:00:00Z" },
@@ -88,12 +88,12 @@ test("running Cline state maps to implementation workflow and honest activity fa
 
 test("dashboard view distinguishes all supported lifecycle states", () => {
   const cases = [
-    ["cline-working", "running", "waiting", false, "implement", "Running"],
-    ["codex-qa", "idle", "running", false, "qa", "Running"],
+    ["implementing", "running", "waiting", false, "implement", "Running"],
+    ["qa", "idle", "running", false, "qa", "Running"],
     ["pass", "idle", "pass", false, "complete", "Complete"],
     ["fail", "idle", "fail", false, "qa", "Failed"],
     ["retry", "idle", "waiting", false, "implement", "Retrying"],
-    ["WAITING_FOR_CODEX", "idle", "waiting-for-codex", false, "qa", "Waiting for Codex"],
+    ["WAITING_FOR_LIMIT", "idle", "waiting-for-codex", false, "qa", "Waiting for usage limit"],
     ["paused", "idle", "waiting", false, "implement", "Paused"],
     ["manual-review", "idle", "fail", true, "qa", "User Attention"],
     ["waiting", "idle", "waiting", false, "implement", "Waiting"],
@@ -107,7 +107,7 @@ test("dashboard view distinguishes all supported lifecycle states", () => {
 
 test("QA checks and unavailable task metadata use explicit non-invented labels", () => {
   const view = dashboardView({
-    task: { id: "T-1", name: "Task" }, stage: "codex-qa", qaStatus: "running",
+    task: { id: "T-1", name: "Task" }, stage: "qa", qaStatus: "running",
     qaChecks: { tests: "PASS", scopeCheck: "RUNNING" }, events: [],
   });
   assert.deepEqual(view.qaChecks, {
@@ -121,7 +121,7 @@ test("QA checks and unavailable task metadata use explicit non-invented labels",
 
 test("activity uses real structured event details when available", () => {
   const view = dashboardView({
-    stage: "cline-working", clineStatus: "running", events: [
+    stage: "implementing", clineStatus: "running", events: [
       { type: "cline-file-read", path: "schema.ts", timestamp: "2026-09-13T12:00:00Z" },
       { type: "cline-file-modified", path: "service.ts", timestamp: "2026-09-13T12:00:01Z" },
       { type: "cline-message", message: "Updating freshness logic", timestamp: "2026-09-13T12:00:02Z" },
@@ -134,13 +134,13 @@ test("activity uses real structured event details when available", () => {
 
 test("all ten requested fake dashboard states render explicit labels", () => {
   const states = [
-    ["Cline Running", { stage: "cline-working", clineStatus: "running", qaStatus: "waiting" }, "Running", "NOT RUN"],
-    ["Cline Finished to QA Running", { stage: "codex-qa", clineStatus: "idle", qaStatus: "running", qaChecks: { tests: "RUNNING" } }, "Running", "RUNNING"],
+    ["Cline Running", { stage: "implementing", clineStatus: "running", qaStatus: "waiting" }, "Running", "NOT RUN"],
+    ["Cline Finished to QA Running", { stage: "qa", clineStatus: "idle", qaStatus: "running", qaChecks: { tests: "RUNNING" } }, "Running", "RUNNING"],
     ["QA PASS", { stage: "pass", clineStatus: "idle", qaStatus: "pass", qaChecks: { tests: "PASS" } }, "Complete", "PASS"],
     ["QA FAIL", { stage: "fail", clineStatus: "idle", qaStatus: "fail", qaChecks: { tests: "FAIL" } }, "Failed", "FAIL"],
     ["QA INCONCLUSIVE", { stage: "fail", clineStatus: "idle", qaStatus: "fail", qaChecks: { tests: "INCONCLUSIVE" } }, "Failed", "INCONCLUSIVE"],
     ["Retry attempt", { stage: "retry", clineStatus: "idle", qaStatus: "waiting", attempt: 2 }, "Retrying", "NOT RUN"],
-    ["WAITING_FOR_CODEX", { stage: "WAITING_FOR_CODEX", interruptedOperation: "qa", qaStatus: "waiting-for-codex" }, "Waiting for Codex", "NOT RUN"],
+    ["WAITING_FOR_LIMIT", { stage: "WAITING_FOR_LIMIT", interruptedOperation: "qa", qaStatus: "waiting-for-codex" }, "Waiting for usage limit", "NOT RUN"],
     ["Paused", { stage: "paused", clineStatus: "idle", qaStatus: "waiting" }, "Paused", "NOT RUN"],
     ["User Attention", { stage: "manual-review", manualReview: true, qaStatus: "fail" }, "User Attention", "NOT RUN"],
     ["Idle", { stage: "waiting", clineStatus: "idle", qaStatus: "waiting", task: null }, "Waiting", "NOT RUN"],

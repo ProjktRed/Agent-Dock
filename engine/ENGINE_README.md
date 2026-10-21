@@ -200,7 +200,7 @@ automatic restart, preserving work for manual review.
 
 A structured Codex usage-limit or credit-exhaustion failure is recoverable rather
 than QA FAIL. The loop writes `.state/pending-codex.json`, enters
-`WAITING_FOR_CODEX`, and waits for a manual Resume. Resume reruns only the saved
+`WAITING_FOR_LIMIT` (`WAITING_FOR_CODEX` before 0.32), and waits for a manual Resume. Resume reruns only the saved
 Codex assessment or QA operation with the same inputs; it does not rerun Cline or
 change the attempt number. Any reported retry/reset text is displayed verbatim.
 

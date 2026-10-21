@@ -11,10 +11,10 @@ import {ELEVATE_MODEL} from './codex-worker.mjs';
 import {compactCorrections,correctionInstructions,correctionText,packetForPrompt,qaEnvironmentFailure,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
-import {TUNING} from './engine-tuning.mjs';
+import {TUNING,stepDown,noteStepDownApproval} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
-import {gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
+import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -33,7 +33,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
   readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
-  knowledgeFile,roles=[],runRole=null,
+  knowledgeFile,roles=[],runRole=null,fixWorkers={},
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
   const stageRoles=stage=>runRole?roles.filter(role=>role.stage===stage):[];
@@ -299,12 +299,31 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             // Reviews travel with the packet: QA and Assessment read them.
             r.qaPacket.roleReviews=reviews.results.map(x=>({role:x.name,gate:x.gate,...x.result}));
             const gate=reviews.results.find(x=>x.gate&&x.result.verdict==='changes-needed');
+            // A fixer makes its own requested fix once per attempt; the result goes through evidence and review again.
+            if(gate&&roles.find(role=>role.id===gate.id)?.fix&&fixWorkers[gate.id]&&!r.fixes?.[r.attempt]) {
+              (r.fixes??={})[r.attempt]={attempt:r.attempt,roleId:gate.id,roleName:gate.name,text:gateFailureText(gate),started:false};
+              r.phase='fixing';await save();continue;
+            }
             if(gate) {
               r.failure={status:'fail',output:gateFailureText(gate),correction:'',commit:'',manualReviewCause:null,gateRole:gate.name};
               await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
               r.history.push({attempt:r.attempt,prompt:r.prompt,workerResult:r.workerResult,qa:r.failure});
               r.phase='decision';await save();await emit('role-gate-failed',{attempt:r.attempt,roleName:gate.name,qa:r.failure.output});
             } else {r.phase='qa';await save();}
+          }
+          if(r.phase==='fixing') {
+            const fix=r.fixes[r.attempt],fixer=fixWorkers[fix.roleId];
+            // Resumed after a crash mid-fix: never rerun it; whatever it left is checked like any change.
+            if(!fix.started&&fixer) {
+              if(codex.activeCount!==0)throw new Error('Cannot launch the fixer while Codex is alive');
+              await codex.assertIdle?.();
+              fix.started=true;await save();
+              const started=Date.now();await emit('role-fix-started',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName});
+              try{const result=await fixer.run(fixPromptText(task,fix,{workspace}),{task,onEvent:async({type,...event})=>{await emit(type,{...event,attempt:r.attempt});}});fix.exitCode=result.exitCode;}
+              catch(error){fix.error=String(error?.message??error).slice(0,500);}
+              await emit('role-fix-finished',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName,exitCode:fix.exitCode??null,error:fix.error??null,durationMs:Date.now()-started});
+            }
+            r.forceFreshQa=true;r.phase='evidence';await save();continue;
           }
           if(r.phase==='qa') {
             if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');
@@ -338,6 +357,17 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const control=await readControl();
             const manual=manualElevation || Number(control.elevateGeneration??0)>Number(r.elevateGeneration??0);
             if(manual)r.elevateGeneration=control.elevateGeneration;
+            // Step-down: a standard- or max-sized task that failed review twice is set aside (work stashed) and redone one size smaller.
+            const failedReviews=r.history.filter(h=>h.qa&&h.qa.status!=='pass').length;
+            if(!manual&&TUNING.stepDown&&TUNING.taskMode!=='eco'&&failedReviews>=2) {
+              const from=TUNING.taskMode,to=from==='max'?'standard':'eco',reason=`Stepped down from ${from} to ${to} size after ${failedReviews} failed reviews`;
+              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason,stepDown:{from,to}});
+              if(deferred.blocked)return block(deferred.blocked);
+              stepDown(task);
+              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+              await emit('task-stepped-down',{taskId:task.id,from,to,reason,stash:deferred.entry.stash?.message??null});
+              return{status:'stepped-down',reason};
+            }
             const auto=solReassessmentEnabled&&elevationAllowed()&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
             // Optional correction limit: stop for the user; Resume grants another round of corrections.
             if(!manual&&!auto&&TUNING.maxCorrections>0&&r.correctionCount-(r.correctionLimitBase??0)>=TUNING.maxCorrections) {
@@ -386,8 +416,13 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(!result){await emit('queued');await sleep(pollMs);continue;}
       if(result.status==='blocked')result=await block(result.output??r?.blockedReason??'Recovery is blocked');
       if(result.status==='resolver-ready')continue;
+      // One task's engine (parallel run) never asks Assessment for another task: the parent plans the next round.
+      // (A reassess comes only from this loop's own Assessment, which such an engine never runs.)
+      if(stopAfterTask&&['deferred','stepped-down'].includes(result.status))return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
       if(result.status==='reassess'){previous={task:result.task,result:result.qa};task=null;continue;}
       if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
+      if(result.status==='stepped-down'){previous={task,result:result.reason};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
+      if(result.status==='passed'){const restored=noteStepDownApproval(task);if(restored)await emit('task-mode-restored',{mode:restored.mode,from:restored.from});}
       if(result.status!=='passed'||stopAfterTask)return result;
       previous={task,result:result.qa};task=null;r=null;saved=null;
     }

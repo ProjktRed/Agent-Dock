@@ -3,6 +3,7 @@ import path from "node:path";
 import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { SECOND_OPINION_ROLE_ID } from "@shared/workflow-templates";
+import { maxLimitsOf, taskModeOf } from "@shared/task-mode";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -11,6 +12,14 @@ export function effectiveWorkflow(settings: Settings, project: Project): Workflo
 }
 
 /** The agent filling a workflow role for a project: project override first, then the first enabled agent with that role. */
+/** --prices JSON for the engine: valid rows only, or null when the table is empty. */
+export function pricesArg(prices: WorkflowSettings["prices"]): string | null {
+  const usd = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
+  const rows = (prices ?? []).filter((p) => p && typeof p.model === "string" && p.model.trim())
+    .map((p) => ({ model: p.model.trim(), input: usd(p.input), cachedInput: usd(p.cachedInput), output: usd(p.output) }));
+  return rows.length ? JSON.stringify(rows) : null;
+}
+
 export function agentForRole(role: EngineRole, project: Project, agents: Agent[]): Agent | null {
   const overrideId = project.roleOverrides[role];
   if (overrideId) {
@@ -270,7 +279,7 @@ export function buildEngineArgs(input: {
     }
     usedKinds.add(kind);
     useConnection(agent, role.name);
-    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
+    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, ...(role.stage === "before-qa" && role.gate && role.fix ? { fix: true } : {}), cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
   // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.
@@ -295,9 +304,32 @@ export function buildEngineArgs(input: {
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
   if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // Parallel tasks: cloud Implementation agents only (a local model server answers one request at a time),
+  // and not in Unattended mode, whose run limits count one engine.
+  const parallel = Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  if (parallel > 1) {
+    const local = (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl?.provider !== "openai";
+    if (unattended) warnings.push(`Parallel tasks are off in Unattended mode; tasks run one at a time.`);
+    else if (local) warnings.push(`Parallel tasks need a cloud Implementation agent (a local model server works on one request at a time); tasks run one at a time.`);
+    else args.push("--parallel", String(parallel));
+  }
+  // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
+  const taskMode = taskModeOf(workflow);
+  if (taskMode !== "eco") args.push("--task-mode", taskMode);
+  if (taskMode !== "eco" && workflow.stepDown === false) args.push("--step-down", "false");
+  if (taskMode === "max") {
+    const max = maxLimitsOf(workflow);
+    if (max.files) args.push("--task-max-files", String(max.files));
+    if (max.newLines) args.push("--task-max-new-lines", String(Math.max(10, max.newLines)));
+    if (max.readFiles) args.push("--task-max-read-files", String(max.readFiles));
+    // Max limits' timeout replaces the Implementation agent's own.
+    const at = args.indexOf("--timeout-seconds");
+    if (max.timeoutMinutes && at >= 0) args[at + 1] = String(max.timeoutMinutes * 60);
+  }
   // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
   if (!guarded) {
     for (const [key, flag] of TUNING_FLAGS) {
+      if (taskMode !== "eco" && key.startsWith("taskMax")) continue;
       const value = settings.tuning?.[key];
       if (typeof value === "number" && value !== DEFAULT_SETTINGS.tuning[key]) args.push(flag, String(value));
     }
@@ -342,6 +374,8 @@ export function buildEngineArgs(input: {
       "--max-tokens", String(Math.round(whole(limits.maxMillionTokens) * 1_000_000)), "--max-cost", String(whole(limits.maxCostUsd)),
       "--max-tokens-day", String(Math.round(whole(limits.maxMillionTokensDay) * 1_000_000)), "--max-cost-day", String(whole(limits.maxCostUsdDay)));
   }
+  const prices = pricesArg(workflow.prices);
+  if (prices) args.push("--prices", prices);
 
   return {
     args,

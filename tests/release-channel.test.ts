@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkRelease, downloadRelease, newerVersion, verifyManifest } from "../src/main/release-channel";
+import { checkRelease, downloadRelease, installAppImage, newerVersion, releasePlatform, verifyManifest } from "../src/main/release-channel";
 import { buildManifest, generateKeyPair, signManifest } from "../scripts/sign-release.mjs";
-import { isUninstaller, swap } from "../scripts/swap.mjs";
+import { isUninstaller, swap, uninstallVersionScript } from "../scripts/swap.mjs";
 import { stagingDir } from "../src/main/updater";
 import { DEFAULT_RELEASE_REPO, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL, updateChannel } from "../src/shared/defaults";
 
@@ -73,6 +73,44 @@ describe("signed releases", () => {
     await expect(checkRelease("ProjktRed/Agent-Dock", "0.22.1", keys.publicKeyPem, missing)).rejects.toThrow(/No published release/);
   });
 
+  it("Linux: a signed AppImage has its own manifest, and neither platform accepts the other's", async () => {
+    expect([releasePlatform("win32"), releasePlatform("linux"), releasePlatform("darwin")]).toEqual(["win-x64", "linux-x64", null]);
+    const dir = await tmp();
+    const appImage = path.join(dir, "AgentDock-0.33.0-linux-x86_64.AppImage");
+    writeFileSync(appImage, Buffer.from("ELF fake AppImage"));
+    await expect(buildManifest({ zip: appImage, version: "0.33.0", commit: COMMIT })).rejects.toThrow(/must end in .zip/);
+    const manifest = await buildManifest({ zip: appImage, version: "0.33.0", commit: COMMIT, platform: "linux-x64" });
+    const sig = signManifest(manifest, keys.privateKeyPem);
+    expect(verifyManifest(manifest, sig, keys.publicKeyPem, "linux-x64").file).toBe(path.basename(appImage));
+    expect(() => verifyManifest(manifest, sig, keys.publicKeyPem)).toThrow(/not agent-dock\/win-x64/);
+    const win = await signedRelease();
+    expect(() => verifyManifest(win.manifest, win.sig, keys.publicKeyPem, "linux-x64")).toThrow(/not agent-dock\/linux-x64/);
+    const fetchImpl = (async (url: string) => {
+      if (String(url).endsWith("/releases/latest")) return new Response(JSON.stringify({ tag_name: "v0.33.0", assets: [
+        { name: "manifest.json", browser_download_url: "https://dl/manifest.json" }, { name: "manifest.sig", browser_download_url: "https://dl/manifest.sig" },
+        { name: "manifest-linux-x64.json", browser_download_url: "https://dl/manifest-linux-x64.json" }, { name: "manifest-linux-x64.sig", browser_download_url: "https://dl/manifest-linux-x64.sig" },
+        { name: path.basename(appImage), browser_download_url: "https://dl/appimage" }] }), { status: 200 });
+      if (String(url).endsWith("manifest-linux-x64.json")) return new Response(manifest);
+      if (String(url).endsWith("manifest-linux-x64.sig")) return new Response(sig);
+      if (String(url).endsWith("manifest.json")) return new Response(win.manifest);
+      if (String(url).endsWith("manifest.sig")) return new Response(win.sig);
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    const info = await checkRelease("o/r", "0.32.0", keys.publicKeyPem, fetchImpl, "linux-x64");
+    expect([info?.manifest.platform, info?.zipUrl]).toEqual(["linux-x64", "https://dl/appimage"]);
+  });
+
+  it("Linux: the AppImage is replaced whole and stays executable; a missing AppImage path is refused", async () => {
+    const dir = await tmp();
+    const target = path.join(dir, "Agent Dock.AppImage"), downloaded = path.join(dir, "new.AppImage");
+    writeFileSync(target, "old"); writeFileSync(downloaded, "new");
+    installAppImage(downloaded, target);
+    expect(readFileSync(target, "utf8")).toBe("new");
+    expect(existsSync(`${target}.update`)).toBe(false);
+    expect(() => installAppImage(downloaded, "")).toThrow(/not running from an AppImage/);
+    expect(() => installAppImage(downloaded, path.join(dir, "missing.AppImage"))).toThrow(/not running from an AppImage/);
+  });
+
   it("keeps a download only when its size and SHA-256 match the signed manifest", async () => {
     const r = await signedRelease();
     const out = await tmp();
@@ -133,3 +171,84 @@ function generateKeyPairRsa(): string {
   const { generateKeyPairSync } = require("node:crypto") as typeof import("node:crypto");
   return generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 }
+
+describe("Apps list version after an update", () => {
+  it("targets the uninstall entry whose uninstaller is in the install folder, with a plain version only", () => {
+    const script = uninstallVersionScript(String.raw`C:\Users\A\AppData\Local\Programs\AgentDock\ `.trim(), "0.31.2")!;
+    expect(script).toContain(String.raw`Contains('c:\users\a\appdata\local\programs\agentdock\')`);
+    expect(script).toContain("DisplayVersion '0.31.2'");
+    expect(uninstallVersionScript(String.raw`C:\App`, "0.31.2-beta.1")).toContain("'0.31.2-beta.1'");
+    for (const bad of [undefined, "", "1.2", "1.2.3'; Remove-Item x", "1.2.3 x"]) expect(uninstallVersionScript(String.raw`C:\App`, bad)).toBeNull();
+  });
+});
+
+describe("smaller (delta) updates", () => {
+  const write = (dir: string, rel: string, text: string) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
+
+  it("indexes a build, finds changed files, and signs both into the manifest", async () => {
+    const { buildIndex, changedFiles } = await import("../scripts/release-delta.mjs");
+    const oldBuild = await tmp(), newBuild = await tmp();
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "old app"], ["resources/gone.txt", "x"]]) write(oldBuild, rel, text);
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(newBuild, rel, text);
+    const [oldIndex, newIndex] = [await buildIndex(oldBuild), await buildIndex(newBuild)];
+    expect(newIndex.files.map((f: { path: string }) => f.path)).toEqual(["AgentDock.exe", "resources/added.txt", "resources/app.asar"]);
+    expect(changedFiles(newIndex, oldIndex)).toEqual(["resources/added.txt", "resources/app.asar"]);
+    const dir = await tmp();
+    const zip = path.join(dir, "AgentDock-0.34.0-win-x64.zip"), index = path.join(dir, "AgentDock-0.34.0-win-x64.files.json"), delta = path.join(dir, "AgentDock-0.34.0-from-0.33.0-win-x64.zip");
+    writeFileSync(zip, "full"); writeFileSync(index, JSON.stringify(newIndex)); writeFileSync(delta, "changed");
+    await expect(buildManifest({ zip, version: "0.34.0", commit: COMMIT, delta, deltaFrom: "0.33.0" })).rejects.toThrow(/needs the file index/);
+    const manifest = await buildManifest({ zip, version: "0.34.0", commit: COMMIT, index, delta, deltaFrom: "0.33.0" });
+    const m = verifyManifest(manifest, signManifest(manifest, keys.privateKeyPem), keys.publicKeyPem);
+    expect([m.index?.file, m.delta?.from, m.delta?.size]).toEqual([path.basename(index), "0.33.0", 7]);
+    const bad = manifest.replace('"from": "0.33.0"', '"from": "latest"');
+    expect(() => verifyManifest(bad, signManifest(bad, keys.privateKeyPem), keys.publicKeyPem)).toThrow(/malformed/);
+  });
+
+  it("uses a delta only from its exact base version, and rebuilds only files that match the signed index", async () => {
+    const { buildIndex } = await import("../scripts/release-delta.mjs");
+    const { assembleFromDelta, deltaUsable } = await import("../src/main/release-channel");
+    const asset = { file: "a.json", sha256: "a".repeat(64), size: 1 };
+    const info = { manifest: { delta: { ...asset, file: "d.zip", from: "0.33.0" }, index: asset }, indexUrl: "i", deltaUrl: "d" } as unknown as Parameters<typeof deltaUsable>[0];
+    expect([deltaUsable(info, "0.33.0"), deltaUsable(info, "0.32.0"), deltaUsable({ ...info, deltaUrl: undefined }, "0.33.0")]).toEqual([true, false, false]);
+    const installed = await tmp(), target = await tmp(), changed = await tmp(), out = path.join(await tmp(), "rebuilt");
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "old app"], ["Uninstall AgentDock.exe", "u"]]) write(installed, rel, text);
+    for (const [rel, text] of [["AgentDock.exe", "exe"], ["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(target, rel, text);
+    for (const [rel, text] of [["resources/app.asar", "new app"], ["resources/added.txt", "y"]]) write(changed, rel, text);
+    const index = await buildIndex(target);
+    await assembleFromDelta(index, changed, installed, out);
+    expect(readFileSync(path.join(out, "resources", "app.asar"), "utf8")).toBe("new app");
+    expect(existsSync(path.join(out, "Uninstall AgentDock.exe"))).toBe(false);
+    writeFileSync(path.join(changed, "resources", "app.asar"), "tampered");
+    await expect(assembleFromDelta(index, changed, installed, out)).rejects.toThrow(/app\.asar does not match/);
+    await expect(assembleFromDelta({ files: [{ path: "../evil", sha256: "a".repeat(64), size: 1 }] }, changed, installed, out)).rejects.toThrow(/Unsafe path/);
+  });
+
+  it("ships a large changed file as a small binary patch that rebuilds it exactly", async () => {
+    const { buildIndex, collectChanged } = await import("../scripts/release-delta.mjs");
+    const { makePatch, applyPatch } = await import("../src/shared/block-patch");
+    const { assembleFromDelta } = await import("../src/main/release-channel");
+    let seed = 7;
+    const random = (n: number) => Buffer.from(Array.from({ length: n }, () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255));
+    const oldExe = random(3 * 1024 * 1024);
+    // A new build: a few bytes changed (like the embedded integrity hash) and a short insertion.
+    const newExe = Buffer.concat([oldExe.subarray(0, 1_000_000), Buffer.from("inserted bytes"), oldExe.subarray(1_000_000)]);
+    newExe.write("0123456789abcdef", 2_500_000, "latin1");
+    const patch = makePatch(oldExe, newExe);
+    expect(patch.length).toBeLessThan(20_000);
+    expect(applyPatch(oldExe, patch).equals(newExe)).toBe(true);
+    expect(() => applyPatch(random(oldExe.length), patch)).toThrow(/not the one this patch was made from/);
+    expect(applyPatch(Buffer.from("abc"), makePatch(Buffer.from("abc"), Buffer.from("abcd"))).toString()).toBe("abcd");
+
+    const installed = await tmp(), target = await tmp(), delta = await tmp(), out = path.join(await tmp(), "rebuilt");
+    write(installed, "resources/app.asar", "old app"); writeFileSync(path.join(installed, "AgentDock.exe"), oldExe);
+    write(target, "resources/app.asar", "new app"); writeFileSync(path.join(target, "AgentDock.exe"), newExe);
+    const summary = collectChanged(["AgentDock.exe", "resources/app.asar"], target, delta, installed);
+    expect([summary.patched, summary.copied]).toEqual([1, 1]);
+    expect(existsSync(path.join(delta, "AgentDock.exe"))).toBe(false);
+    await assembleFromDelta(await buildIndex(target), delta, installed, out);
+    expect(readFileSync(path.join(out, "AgentDock.exe")).equals(newExe)).toBe(true);
+    // A different installed exe cannot be patched: the update falls back to the full download.
+    writeFileSync(path.join(installed, "AgentDock.exe"), random(100));
+    await expect(assembleFromDelta(await buildIndex(target), delta, installed, out)).rejects.toThrow(/not the one this patch was made from/);
+  });
+});

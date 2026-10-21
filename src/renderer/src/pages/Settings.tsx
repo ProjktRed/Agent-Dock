@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import type { Agent, EngineTuning, LibraryPreview, NotifyChannel, Settings, SkillInfo } from "@shared/types";
+import { takeSettingsSection, type SettingsSection } from "../lib/nav";
+import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
 import { connectionMeta, roleLabel, tokens } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { Empty, Modal, ProvenanceChip, SetRow, St, Support, Tabs, Toggle } from "../components/ui";
+import { TaskModeCard } from "../components/TaskMode";
 
-type Section = "general" | "skills" | "workflow" | "context" | "safety" | "updates" | "advanced";
+type Section = SettingsSection;
 const SECTIONS: { value: Section; label: string }[] = [
   { value: "general", label: "General" },
   { value: "skills", label: "Skills" },
@@ -26,6 +28,9 @@ const ACCENTS = [
   ["Amber", "#DAB777"],
   ["Rose", "#D98291"],
 ];
+
+/** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
+const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
 
 function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
@@ -116,6 +121,15 @@ function General() {
             <option value="last">Last active project</option>
             {snap.projects.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+        </SetRow>
+      </section>
+      <section className="card pad">
+        <h2 className="h2" style={{ marginBottom: 4 }}>Help</h2>
+        <SetRow title="User guide" desc="Getting started, task sizes, unattended runs, spend, pull requests, lanes and troubleshooting">
+          <a className="btn sm" href={docUrl(snap.version, "user-guide.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+        </SetRow>
+        <SetRow title="How it works" desc="Where each number comes from, the loop's roles, limits and safeguards, and known limitations">
+          <a className="btn sm" href={docUrl(snap.version, "how-it-works.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
         </SetRow>
       </section>
     </div>
@@ -325,10 +339,16 @@ function Workflow() {
         </div>
         <span className="hint">Choosing a default enables that agent and disables other agents with the same role. Projects can still override a role.</span>
       </section>
+      <TaskModeCard />
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
         <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
+        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent; off in Unattended mode." support="engine">
+          <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
+            <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
+          </select>
+        </SetRow>
         <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
         <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
         <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>
@@ -383,9 +403,9 @@ function Context() {
           <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Files per task" desc="Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
-        <SetRow title="New file size" desc="Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
-        <SetRow title="Files to read" desc="Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
+        <SetRow title="Files per task" desc="Eco mode: Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
+        <SetRow title="New file size" desc="Eco mode: Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
+        <SetRow title="Files to read" desc="Eco mode: Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>
@@ -445,7 +465,7 @@ function Safety() {
               ["maxCorrections", "Corrections per task", "then stop for you (at least 1)"],
               ["maxElevations", "Automatic Elevations per run", "0 = no limit"],
               ["maxMillionTokens", "Token budget per run (millions)", "cache reads not counted; 0 = no limit"],
-              ["maxCostUsd", "Spend budget per run (USD)", "Claude Code and OpenCode report cost; 0 = no limit"],
+              ["maxCostUsd", "Spend budget per run (USD)", "reported cost, or the price table below; 0 = no limit"],
               ["maxMillionTokensDay", "Token budget per day (millions)", "this project, all runs today"],
               ["maxCostUsdDay", "Spend budget per day (USD)", "this project, all runs today"],
             ] as const).map(([key, label, hint]) => {
@@ -461,6 +481,7 @@ function Safety() {
           </div>
         )}
       </section>
+      <PriceTableCard />
       <SupervisorCard />
       <StopAllCard />
       <section className="card pad stack" style={{ gap: 12 }}>
@@ -468,7 +489,7 @@ function Safety() {
         <ul className="list">
           {[
             "Each task declares its allowed paths; edits elsewhere fail the scope check",
-            "Cline never commits; QA makes exactly one commit per approved task",
+            "Implementation agents never commit; QA makes exactly one commit per approved task",
             "A non-PASS result must leave HEAD unchanged",
             "Failed work is left in place for inspection, never reset or committed automatically",
             "A dirty baseline after a crash blocks automatic restart",
@@ -490,7 +511,7 @@ function Safety() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Processes</h2>
-        <SetRow title="Timeout handling" desc="Each Cline attempt is bounded by the Implementation agent's timeout" support="engine"><span className="chip mut">Per agent</span></SetRow>
+        <SetRow title="Timeout handling" desc="Each implementation attempt is bounded by the Implementation agent's timeout" support="engine"><span className="chip mut">Per agent</span></SetRow>
         <SetRow title="Process termination" desc="Stop now terminates the engine's process tree (taskkill /T /F); the engine recovers from saved state" support="app"><span className="chip mut">On request</span></SetRow>
         <SetRow title="Crash recovery" desc="Interrupted orchestrator operations are saved and replayed with identical inputs on Resume" support="engine"><span className="chip mut">Fixed by engine</span></SetRow>
       </section>
@@ -506,6 +527,43 @@ const NOTIFY_ROWS: { kind: NotifyChannel; title: string; help: string; fields: {
   { kind: "telegram", title: "Telegram", help: "A bot from @BotFather and the chat it writes to. Send your bot a message first, then use your numeric chat ID (for example from @userinfobot).", fields: [{ key: "token", label: "bot token", placeholder: "123456789:ABC…", secret: true }, { key: "chatId", label: "chat ID", placeholder: "chat ID" }] },
   { kind: "email", title: "Email (AgentMail)", help: "Sent from your AgentMail inbox with its API key. Only what needs you, never routine alerts or digests.", fields: [{ key: "apiKey", label: "API key", placeholder: "AgentMail API key", secret: true }, { key: "inbox", label: "from inbox", placeholder: "you@agentmail.to" }, { key: "to", label: "send to", placeholder: "me@example.com" }] },
 ];
+
+/** Prices for CLIs that report tokens but no cost (Codex), so spend budgets and reports cover them. */
+function PriceTableCard() {
+  const { snap } = useApp();
+  const patch = useSettingsPatch();
+  const [rows, setRows] = useState<ModelPrice[]>(snap.settings.workflow.prices ?? []);
+  useEffect(() => setRows(snap.settings.workflow.prices ?? []), [snap.settings.workflow.prices]);
+  const save = (next: ModelPrice[]) => { setRows(next); void patch("workflow", { prices: next.filter((p) => p.model.trim()) }); };
+  const edit = (i: number, model: string) => setRows(rows.map((r, j) => (j === i ? { ...r, model } : r)));
+  const commit = (i: number, key: keyof ModelPrice, raw: string) => {
+    if (key === "model") return save(rows.map((r, j) => (j === i ? { ...r, model: raw.trim() } : r)));
+    const v = Number(raw);
+    save(rows.map((r, j) => (j === i ? { ...r, [key]: Number.isFinite(v) && v >= 0 ? v : 0 } : r)));
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Price table</h2>
+      <div className="sub">USD per million tokens. Claude Code, OpenCode and Cline report their own cost; Codex reports only tokens, so its spend counts toward budgets and run reports only for models listed here. A model ending in * matches every model that starts with it (for example gpt-5*). Check your provider's current prices.</div>
+      {rows.length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
+          {rows.map((r, i) => (
+            <div className="grid-4" key={i} style={{ alignItems: "end" }}>
+              <label className="field"><span>Model</span>
+                <input className="input mono" value={r.model} aria-label="Model" placeholder="gpt-5*" onChange={(e) => edit(i, e.target.value)} onBlur={(e) => commit(i, "model", e.target.value)} /></label>
+              {([["input", "Input"], ["cachedInput", "Cached input"], ["output", "Output"]] as const).map(([key, label]) => (
+                <label className="field" key={key}><span>{label}</span>
+                  <input className="input mono" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
+              ))}
+              <div><button className="btn sm" onClick={() => save(rows.filter((_, j) => j !== i))}>Remove</button></div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div><button className="btn" onClick={() => setRows([...rows, { model: "", input: 0, cachedInput: 0, output: 0 }])}>Add model</button></div>
+    </section>
+  );
+}
 
 /** Supervisor v1 (monitors, what it may do) and the remote notification channels. */
 function SupervisorCard() {
@@ -783,18 +841,8 @@ function Advanced() {
   );
 }
 
-let pendingSection: Section | null = null;
-/** Open a specific section the next time the Settings page mounts (call before go("settings")). */
-export const openSettingsSection = (section: Section) => {
-  pendingSection = section;
-};
-
 export function SettingsPage() {
-  const [section, setSection] = useState<Section>(() => {
-    const initial = pendingSection ?? "workflow";
-    pendingSection = null;
-    return initial;
-  });
+  const [section, setSection] = useState<Section>(() => takeSettingsSection() ?? "workflow");
   return (
     <>
       <div><h1 className="h1">Settings</h1><div className="sub">Changes save immediately. Labels show whether the engine enforces a setting, the app applies it, or it is saved for later.</div></div>

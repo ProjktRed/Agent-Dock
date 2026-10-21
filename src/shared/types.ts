@@ -30,6 +30,29 @@ export interface Project {
   workflowOverrides: Partial<WorkflowSettings>;
   /** Optional first task (engine --task JSON). Used once, then cleared. */
   pendingTaskFile?: string | null;
+  /** Scheduled runs: start automatically at a local time on chosen weekdays while the app is open. */
+  schedule?: ProjectSchedule;
+  /** The last scheduled start slot (ISO), so each slot starts at most once. */
+  lastScheduledStart?: string | null;
+  /** Pull-request mode: runs work on an agent-dock/ branch; Open pull request pushes it. */
+  prMode?: boolean;
+  /** The branch the current run branch was made from (the pull request's base). */
+  prBase?: string | null;
+  /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
+  parentId?: string | null;
+  laneBranch?: string | null;
+  /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
+  wsl?: { enabled: boolean; distro: string };
+}
+
+export interface ProjectSchedule {
+  enabled: boolean;
+  /** "HH:MM", 24-hour local time. */
+  time: string;
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[];
+  /** Windows: also start while Agent Dock is closed (a per-user Task Scheduler task launches it). */
+  whenClosed?: boolean;
 }
 
 export interface Agent {
@@ -127,14 +150,31 @@ export interface WorkflowSettings {
   /** Unattended mode: guards locked on, automatic continuation, and run-wide limits the engine enforces. */
   unattended: boolean;
   /** 0 = no limit, except corrections, which always need a limit when unattended. Token budgets are in millions;
-   *  spend budgets in USD count only what the CLIs report (Claude Code, OpenCode). */
+   *  spend budgets in USD count what the CLIs report, plus estimates from `prices` for CLIs that report none (Codex). */
   unattendedLimits: {
     maxTasks: number; maxHours: number; maxCorrections: number; maxElevations: number;
     maxMillionTokens?: number; maxCostUsd?: number; maxMillionTokensDay?: number; maxCostUsdDay?: number;
   };
+  /** Price table for spend: USD per million tokens. A model ending in * matches by prefix. */
+  prices?: ModelPrice[];
+  /** Task size (engine --task-mode): eco splits plan items into small tasks, standard does one plan item per task,
+   *  max has no fixed size apart from maxLimits. */
+  taskMode?: TaskMode;
+  /** Standard or max: a task that fails review twice is set aside and redone one size smaller (default on). */
+  stepDown?: boolean;
+  /** Max mode's own limits (Max limits in the sidebar); 0 = no limit. */
+  maxLimits?: MaxLimits;
+  /** Tasks run side by side in one run, each in its own git worktree (engine --parallel); 1 = one at a time. */
+  parallelTasks?: number;
   /** Supervisor v1: deterministic monitors; may alert, and pause or stop when allowed. */
   supervisor?: SupervisorSettings;
 }
+
+export type TaskMode = "eco" | "standard" | "max";
+export interface MaxLimits { files: number; newLines: number; readFiles: number; timeoutMinutes: number }
+
+/** One model's price in USD per million tokens; cachedInput is for input read from a prompt cache. */
+export interface ModelPrice { model: string; input: number; cachedInput: number; output: number }
 
 export interface SupervisorSettings {
   /** off: no monitors · alert: alerts only · pause / stop: alerts, and serious ones pause or stop the run at the next safe point. */
@@ -363,6 +403,10 @@ export interface RunReport {
   needsAttention: number;
   supervisorAlerts: number;
   approved?: { taskId: string | null; name: string | null; at: string }[];
+  /** From 0.35: the configured task size, plan items checked off, and step-downs. Older reports: eco. */
+  taskMode?: TaskMode;
+  planItems?: number;
+  stepDowns?: number;
   usage: { tokens: number; input: number; cached: number; output: number; costUsd: number; calls: number };
   actionLog: { ok: boolean; entries?: number; reason?: string };
 }
@@ -495,6 +539,8 @@ export interface WorkflowRole {
   stage: RoleStage;
   /** Before QA only: a "changes-needed" verdict sends the change back for correction instead of to QA. */
   gate: boolean;
+  /** Gates only: the role makes its own requested fix once per attempt (guarded, task files only) before a correction. */
+  fix?: boolean;
   enabled: boolean;
   instructions: string;
   dir: string;

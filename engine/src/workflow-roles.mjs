@@ -2,9 +2,12 @@ import { readFile } from "node:fs/promises";
 import { managerHandoffSkill } from "./task-handoff-skill.mjs";
 import { REASONING_EFFORTS } from "./loop-options.mjs";
 import { READ_ONLY_SANDBOX } from "./codex-worker.mjs";
+import { describeAllowedPaths } from "./workflow.mjs";
 
-// User-defined workflow roles (--roles-file). Every role is read-only: it never edits files,
+// User-defined workflow roles (--roles-file). Every role reviews read-only: it never edits files,
 // commits or changes HEAD, so scope/HEAD verification and QA's single commit stay intact.
+// A fixer (a before-QA gate with fix: true) may then make its own requested fix once per attempt,
+// as a guarded implementation run limited to the task's allowed paths; the result is checked again.
 export const ROLE_STAGES = ["before-implementation", "before-qa", "after-pass"];
 const STAGE_PURPOSE = {
   "before-implementation": "You run once per task before the implementation worker starts. Give the implementer concise, concrete guidance for this task in `guidance`.",
@@ -54,6 +57,7 @@ export function parseRoles(value) {
       stage: role.stage,
       // Only a review before QA can hold the change back.
       gate: role.stage === "before-qa" && role.gate === true,
+      fix: role.stage === "before-qa" && role.gate === true && role.fix === true,
       cli: role.cli,
       model: role.model || null,
       effort: role.effort || null,
@@ -107,6 +111,21 @@ export function roleGuidanceText(results) {
   const lines = results.filter((r) => r.result?.guidance?.trim()).map((r) => `- ${r.name}: ${r.result.guidance.trim()}`);
   if (!lines.length) return "";
   return ["Guidance from workflow roles (advisory; the task, allowed paths and QA command above take precedence):", ...lines].join("\n");
+}
+
+/** The fixer's prompt: its own findings, the original task and the same scope rules as a correction. */
+export function fixPromptText(task, fix, { workspace } = {}) {
+  return [
+    `Fix for task ${task.id} (attempt ${fix.attempt}), requested by the workflow role ${fix.roleName}:`,
+    fix.text,
+    "Original task and acceptance criteria (preserve; do not redo completed work):",
+    task.prompt,
+    task.allowedPaths?.length ? `Change only these approved paths: ${task.allowedPaths.join(", ")}.` : "Change only files required by the original task.",
+    describeAllowedPaths(task, workspace),
+    "Make only the fixes listed above. Do not commit or change git HEAD; QA owns the task commit.",
+    `Run this check before finishing: ${task.qaCommand}`,
+    "The change is reviewed and checked again after you finish; your completion claim is not trusted.",
+  ].filter(Boolean).join("\n\n");
 }
 
 export function gateFailureText(entry) {

@@ -146,7 +146,7 @@ export function TokensTab() {
           </div>
           {byRole.length === 0 ? (
             <div className="sub" style={{ padding: "8px 18px 18px" }}>
-              {local ? "No local usage yet. llama.cpp usage is sampled every 30 s while the worker runs." : "No cloud usage yet. Codex and Claude Code report usage when each call finishes."}
+              {local ? "No local usage yet. llama.cpp usage is sampled every 30 s while the worker runs; Ollama's arrives when each attempt ends." : "No cloud usage yet. Each CLI reports usage when its call finishes."}
             </div>
           ) : (
             <div className="scroll-x" style={{ padding: "0 6px 8px" }}>

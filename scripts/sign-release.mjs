@@ -1,10 +1,13 @@
 // Signed releases (0.22.1). The release workflow zips the Windows build and runs this script:
 //
-//   sign-release.mjs --zip <file.zip> --version <x.y.z> --commit <sha> --out <dir>
+//   sign-release.mjs --zip <file.zip> --version <x.y.z> --commit <sha> --out <dir> [--platform win-x64|linux-x64]
 //     writes <dir>/manifest.json (name, version, commit, platform, file, sha256, size, builtAt) and
 //     <dir>/manifest.sig: an Ed25519 signature over the exact bytes of manifest.json, made with the
 //     private key in the RELEASE_SIGNING_KEY environment variable (PEM). The app installs a release
 //     only when this signature verifies against the public key built into it.
+//     --platform linux-x64 (0.33) signs the AppImage instead and writes manifest-linux-x64.json/.sig.
+//     --index <files.json> [--delta <zip> --delta-from <x.y.z>] (0.33) add the file index and the
+//     changed-files zip (scripts/release-delta.mjs) to the manifest, each with its SHA-256 and size.
 //
 //   sign-release.mjs --generate-key <private-key.pem>
 //     creates a new key pair once: the private key goes to the given file (store it as the GitHub
@@ -17,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 export const PRODUCT = "agent-dock";
 export const PLATFORM = "win-x64";
+export const PLATFORMS = { "win-x64": { ext: ".zip", manifest: "manifest" }, "linux-x64": { ext: ".AppImage", manifest: "manifest-linux-x64" } };
 
 export async function sha256File(file) {
   const hash = createHash("sha256");
@@ -25,10 +29,19 @@ export async function sha256File(file) {
 }
 
 /** The manifest's exact bytes are what gets signed and verified, so no canonical form is needed. */
-export async function buildManifest({ zip, version, commit, now = new Date() }) {
+export async function buildManifest({ zip, version, commit, platform = PLATFORM, index, delta, deltaFrom, now = new Date() }) {
+  if (!PLATFORMS[platform]) throw new Error(`platform must be one of ${Object.keys(PLATFORMS).join(", ")}`);
+  if (!zip.endsWith(PLATFORMS[platform].ext)) throw new Error(`a ${platform} release file must end in ${PLATFORMS[platform].ext}`);
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`version must be x.y.z, got ${version}`);
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("commit must be a full 40-character SHA");
-  const manifest = { name: PRODUCT, version, commit, platform: PLATFORM, file: path.basename(zip), sha256: await sha256File(zip), size: statSync(zip).size, builtAt: now.toISOString() };
+  const manifest = { name: PRODUCT, version, commit, platform, file: path.basename(zip), sha256: await sha256File(zip), size: statSync(zip).size, builtAt: now.toISOString() };
+  const describe = async (file) => ({ file: path.basename(file), sha256: await sha256File(file), size: statSync(file).size });
+  if (index) manifest.index = await describe(index);
+  if (delta) {
+    if (!index) throw new Error("a delta needs the file index");
+    if (!/^\d+\.\d+\.\d+$/.test(deltaFrom ?? "")) throw new Error("--delta-from must be the x.y.z version the delta starts from");
+    manifest.delta = { from: deltaFrom, ...(await describe(delta)) };
+  }
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
@@ -63,9 +76,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const pem = process.env.RELEASE_SIGNING_KEY;
       if (!pem) throw new Error("RELEASE_SIGNING_KEY is not set (the release workflow reads it from the repository secret)");
       if (!args.zip || !args.version || !args.commit || !args.out) throw new Error("usage: sign-release.mjs --zip <file> --version <x.y.z> --commit <sha> --out <dir>");
-      const manifest = await buildManifest({ zip: args.zip, version: args.version, commit: args.commit });
-      writeFileSync(path.join(args.out, "manifest.json"), manifest);
-      writeFileSync(path.join(args.out, "manifest.sig"), `${signManifest(manifest, pem)}\n`);
+      const platform = args.platform ? String(args.platform) : PLATFORM;
+      const manifest = await buildManifest({ zip: args.zip, version: args.version, commit: args.commit, platform, index: args.index, delta: args.delta, deltaFrom: args["delta-from"] });
+      const base = PLATFORMS[platform].manifest;
+      writeFileSync(path.join(args.out, `${base}.json`), manifest);
+      writeFileSync(path.join(args.out, `${base}.sig`), `${signManifest(manifest, pem)}\n`);
       console.log(`Signed ${path.basename(args.zip)} ${args.version} (${args.commit.slice(0, 7)}).`);
     }
   } catch (error) {
