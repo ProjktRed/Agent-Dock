@@ -98,8 +98,9 @@ suggests Max and never changes the mode by itself.
 **Step down** (on by default): in Standard or Max, a task that fails review twice is set aside, its
 work kept in a named git stash, and redone one size smaller (Max to Standard, Standard to Eco).
 Assessment is told to redo that work now, starting with its first part. The configured size comes
-back once the set-aside task's plan items are checked off, or after 5 approved tasks. A new run
-always starts at the configured size. Run reports show the task size, step-downs and plan items
+back once the set-aside task's plan items are checked off, or after 5 approved tasks. The
+step-down is saved in the run's state folder, so Stop/Run, an app restart or crash recovery keeps it;
+it is dropped if you change the task size or turn step-down off before running again. Run reports show the task size, step-downs and plan items
 finished; Overview's estimate compares the sizes this project has run in.
 
 ## Loop limits
@@ -189,14 +190,26 @@ All per project in Projects › Workflow, unless noted.
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
 - **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
   round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
-  (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>`)
-  on an `agent-dock/parallel-…` branch, at the same time. The run then applies each approved change
+  (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>-<run>`)
+  on an `agent-dock/parallel-…` branch, at the same time. A task's engine does not step down (while the
+  run itself is stepped down, it works at the smaller size, and merged tasks count toward ending the
+  step-down); a task that is set aside ends there, is listed with the run's deferred tasks, and goes
+  back to Assessment. The run then applies each approved change
   to your branch without committing, runs that task's check on the combined code, and commits only if
   it passes. A change that does not apply or fails stays on its branch and goes back to Assessment;
-  a task that did not finish keeps its worktree for you to inspect. Stop reaches every running task.
-  Needs a cloud Implementation agent (a local model server answers one request at a time) and is off
-  in Unattended mode; a task in progress finishes on its own before parallel rounds start. Plan items
-  are checked off as each change is merged.
+  the second time the same task fails to merge, the run stops for you. A task that did not finish
+  keeps its worktree for you to inspect (a merged task's worktree is removed after its `node_modules`
+  link, so the project's own `node_modules` is never touched). Stop, Pause and Resume reach every
+  running task; a task waiting out a usage limit shows in Activity, and Resume continues it as in a
+  normal run;
+  between rounds the run pauses and stops as it does between tasks, so with Automatic continuation off
+  it pauses after a round that merged a change. Each task's tokens and spend count toward the run's
+  report and the day's budgets, and Overview shows the round in progress. Needs a cloud Implementation
+  agent (a local model server answers one request at a time) and is off in Unattended mode; a task in
+  progress finishes on its own before parallel rounds start. Plan items are checked off as each change
+  is merged. Projects › Workflow › **Clean up parallel worktrees** removes the kept worktrees (each
+  `node_modules` link first) and every `agent-dock/parallel-…` branch, after you confirm; unmerged work
+  on them is lost, and it waits while a run of the project or its lanes is active.
 - **Parallel lanes**: run another objective at the same time in a linked git worktree
   (`<project>-lanes/<name>`) on its own `agent-dock/lane-…` branch. Each lane is its own project with
   its own engine and state folder; merge its branch when you are happy with it. Removing a lane keeps
