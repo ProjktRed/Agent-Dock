@@ -45,3 +45,20 @@ export function wslEnv(base: string | undefined, keys: string[]): string {
   for (const key of keys) if (/^[A-Za-z_]\w*$/.test(key)) entries.add(`${key}/u`);
   return [...entries].join(":");
 }
+
+/**
+ * Stop now under WSL isolation: ends the engine (engine-pid.json) and every process under it inside the
+ * distro. Ending wsl.exe on Windows does not reach them. The pid must still be an Agent Dock engine
+ * (its command line runs cli.mjs or elevate-cli.mjs), so a pid reused by another process is left alone.
+ */
+export function wslKillTree(distro: string, pid: number): { command: string; args: string[] } {
+  if (!/^[\w.-]{1,64}$/.test(distro)) throw new Error("Enter the WSL distro's name (wsl -l shows them).");
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error("Not an engine process id.");
+  const script = [
+    'tr "\0" " " < /proc/$1/cmdline 2>/dev/null | grep -qE "(^|/)(elevate-)?cli\.mjs( |$)" || exit 3',
+    'kids() { pgrep -P "$1" 2>/dev/null || ps -o pid= --ppid "$1" 2>/dev/null; }',
+    'k() { kill -STOP "$1" 2>/dev/null; for c in $(kids "$1"); do k "$c"; done; kill -KILL "$1" 2>/dev/null; }',
+    'k "$1"',
+  ].join("\n");
+  return { command: "wsl.exe", args: ["-d", distro, "--exec", "sh", "-c", script, "agent-dock-stop", String(pid)] };
+}

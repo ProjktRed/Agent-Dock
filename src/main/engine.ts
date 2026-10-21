@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { wslEnv, wslLaunch } from "./lib/wsl";
+import { wslEnv, wslKillTree, wslLaunch } from "./lib/wsl";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -177,6 +177,14 @@ export class EngineManager {
     if (action === "start") return this.start(project, args, false, envDelta);
     if (action === "stop-now") {
       if (!running) return;
+      // WSL isolation: the engine and its CLIs live inside the distro, outside wsl.exe's Windows process tree.
+      if (process.platform === "win32" && project.wsl?.enabled && project.wsl.distro.trim()) {
+        const own = await readJson<{ pid?: number; platform?: string; startedAt?: string } | null>(path.join(project.stateDir, "engine-pid.json"), null);
+        if (own?.platform === "linux" && Number.isInteger(own.pid) && Date.parse(own.startedAt ?? "") >= Date.parse(running.startedAt) - 60_000) {
+          const kill = wslKillTree(project.wsl.distro.trim(), own.pid!);
+          await run(kill.command, kill.args, { timeoutMs: 15_000 });
+        }
+      }
       if (process.platform === "win32") await run("taskkill", ["/PID", String(running.pid), "/T", "/F"], { timeoutMs: 10_000 });
       else {
         try { process.kill(-running.pid, "SIGKILL"); } catch { /* already gone */ }

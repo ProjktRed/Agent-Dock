@@ -23,6 +23,7 @@ import { createReviewer } from "./supervisor-review.mjs";
 import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./parallel-run.mjs";
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
+import { writeEnginePid } from "./engine-pid.mjs";
 
 installTopLevelDiagnostics();
 
@@ -35,6 +36,7 @@ if (!options.workspace || !options.objective) {
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
+writeEnginePid(stateDir);
 const maxAttempts = null;
 const pollMs = Number(options["poll-seconds"] ?? 2) * 1000;
 if (!Number.isFinite(pollMs) || pollMs < 100) throw new Error("Invalid polling interval");

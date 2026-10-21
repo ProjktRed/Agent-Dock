@@ -1,5 +1,9 @@
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { toWslPath, wslEngineArgs, wslEnv, wslLaunch } from "../src/main/lib/wsl";
+import { toWslPath, wslEngineArgs, wslEnv, wslKillTree, wslLaunch } from "../src/main/lib/wsl";
 
 describe("WSL isolation", () => {
   it("translates Windows and \\\\wsl$ paths for the distro", () => {
@@ -20,5 +24,36 @@ describe("WSL isolation", () => {
     expect(launch).toEqual({ command: "wsl.exe", args: ["-d", "Ubuntu", "--cd", "/mnt/c/state/p1", "--exec", "node", "/mnt/c/App/resources/engine/src/cli.mjs", "--state-dir", "/mnt/c/state/p1"] });
     expect(() => wslLaunch("bad name;rm", "x", String.raw`C:\s`, [])).toThrow(/distro's name/);
     expect(wslEnv("PATH/l", ["OPENAI_API_KEY", "bad-key", "OPENAI_API_KEY"])).toBe("PATH/l:OPENAI_API_KEY/u");
+  });
+
+  it("Stop now ends the engine and its processes inside the distro, and only an engine", async () => {
+    const kill = wslKillTree("Ubuntu", 4242);
+    expect(kill.args.slice(0, 5)).toEqual(["-d", "Ubuntu", "--exec", "sh", "-c"]);
+    expect(kill.args.slice(-2)).toEqual(["agent-dock-stop", "4242"]);
+    expect(() => wslKillTree("Ubuntu", 1)).toThrow(/process id/);
+    expect(() => wslKillTree("a b", 5)).toThrow(/distro's name/);
+    if (process.platform !== "linux") return;
+    // On Linux (CI) the same script runs for real: a fake engine with a child, and an unrelated process.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wsl-stop-"));
+    const engine = path.join(dir, "cli.mjs");
+    writeFileSync(engine, `require("node:child_process").spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" }); setInterval(() => {}, 1000);`);
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "commonjs" }));
+    const parent = spawn(process.execPath, [engine], { stdio: "ignore" });
+    const other = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 800));
+    const childPid = Number(execFileSync("pgrep", ["-P", String(parent.pid)], { encoding: "utf8" }).trim().split("\n")[0]);
+    const script = kill.args[5];
+    const runScript = (pid: number) => spawnSync("sh", ["-c", script, "agent-dock-stop", String(pid)]);
+    expect(runScript(other.pid!).status).toBe(3);
+    expect(runScript(parent.pid!).status).toBe(0);
+    await new Promise((r) => setTimeout(r, 300));
+    // Gone, or a zombie waiting to be reaped: either way it no longer runs.
+    const alive = (pid: number) => {
+      if (!existsSync(`/proc/${pid}/stat`)) return false;
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+    };
+    expect([alive(parent.pid!), alive(childPid), alive(other.pid!)]).toEqual([false, false, true]);
+    other.kill("SIGKILL");
   });
 });
