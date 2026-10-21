@@ -6,6 +6,7 @@ import { Icon } from "../../components/Icon";
 import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../components/ui";
 import { AddCliDialog } from "./AddCliDialog";
 import { effortLabel, useModelCatalog } from "../../lib/models";
+import { CAPPED_KEY_HINT } from "@shared/key-limit";
 
 type DetailTab = "connection" | "models" | "caps" | "env" | "logs";
 
@@ -38,7 +39,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
         {cli.kind === "openai" ? (
           <label className="field"><span>API key</span>
             <input className="input mono" type="password" autoComplete="off" value={secret ?? ""} placeholder={cli.hasSecret ? "•••••••• stored · type to replace" : "Not set"} onChange={(e) => setSecret(e.target.value)} />
-            <span className="hint">Encrypted with Windows DPAPI. Never displayed.</span>
+            <span className="hint">Encrypted with Windows DPAPI. Never displayed. {CAPPED_KEY_HINT}</span>
           </label>
         ) : (
           <div className="field"><span>Stored credential</span><div className="row" style={{ minHeight: 36 }} ><span className="sub">{exe ? "Managed by the CLI itself" : "None required"}</span></div></div>

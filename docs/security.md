@@ -26,6 +26,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - API keys entered in Agent Dock are encrypted with your Windows account (DPAPI through Electron
   `safeStorage`), never leave the main process except as environment variables for the process that
   needs them, and are redacted from logs, prompts, notifications and the diagnostics export.
+- A Cline or OpenCode worker on a cloud provider gets that key in its environment, so a worker could
+  read it. The control that bounds a leak is a spending limit on the key itself: use a key made only for
+  Agent Dock, with a low limit set at the provider (for example an OpenRouter per-key credit limit). The
+  run and daily budgets stay the limit inside the app. Before a run, Agent Dock asks OpenRouter whether
+  the key has a limit (`GET /api/v1/key`, at most hourly) and warns when it has none.
 - Notification channel settings (webhook URLs, the Telegram bot token, the AgentMail API key) go only
   to the engine, which reads them once at startup and removes them from its environment. Check
   commands, model CLIs, workers and parallel task engines never inherit them; only the engine that

@@ -89,6 +89,8 @@ For local models, add Cline or OpenCode with [llama.cpp](https://github.com/ggml
   Dock's own folders are off limits to every agent.
 - API keys you enter are encrypted with your Windows account and kept out of logs, prompts,
   notifications and diagnostics.
+- Use cloud API keys made only for Agent Dock, with a low spending limit set at the provider: a leaked
+  key then costs at most that limit. Before a run, Agent Dock warns when an OpenRouter key has no limit.
 - Every action is written to a tamper-evident log per project that you can verify.
 
 These guards are not an operating-system sandbox: the project's own scripts still run as you. See

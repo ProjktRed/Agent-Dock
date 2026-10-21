@@ -1,7 +1,7 @@
 {
   "name": "agent-dock",
   "productName": "Agent Dock",
-  "version": "0.37.0",
+  "version": "0.37.1",
   "description": "Agent Dock: a Windows desktop app for running AI coding agents on your projects",
   "private": true,
   "license": "MIT",

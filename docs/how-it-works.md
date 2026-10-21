@@ -268,8 +268,9 @@ All per project in Projects › Workflow, unless noted.
   usually antivirus or indexing). The engine retries a blocked rename for about five seconds; if a
   lock lasts longer, excluding the engine state folders from real-time scanning is the usual fix.
 - A Cline or OpenCode worker on an OpenAI-compatible cloud provider receives that provider's API key
-  in its environment, because the CLI calls the provider itself. Use a key limited to that provider
-  and project, with a spending cap at the provider.
+  in its environment, because the CLI calls the provider itself. Use a key made only for Agent Dock,
+  with a low spending limit at the provider; CLIs shows this where the key is entered, and a start
+  warns when an OpenRouter key reports no limit.
 - Spend budgets count the cost a CLI reports (Claude Code, OpenCode, and Cline on a cloud provider).
   Codex reports only tokens, so its spend counts only for models listed in Settings › Execution & safety
   › Price table, which estimates cost from the tokens. Local model servers (llama.cpp, Ollama) cost

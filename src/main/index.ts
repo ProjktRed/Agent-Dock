@@ -22,6 +22,7 @@ import { dueScheduledStart, lastPassedSlot, missedScheduledStart, SCHEDULE_GRACE
 import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-request";
+import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -268,15 +269,31 @@ function notifyDetails(): Partial<Record<NotifyChannel, string>> {
   return { ...(telegram?.chatId ? { telegram: `chat ${telegram.chatId}` } : {}), ...(email?.inbox ? { email: `${email.inbox} → ${(email.to ?? []).join(", ")}` } : {}) };
 }
 
-function providerEnv(p: Project): NodeJS.ProcessEnv {
+/** The OpenAI-compatible connection the project's Implementation agent uses, if any. */
+function implProvider(p: Project): CliConnection | undefined {
   const impl = agentForRole("implementation", p, agents());
-  if (!impl || impl.provider !== "openai") return notifyEnv(p);
+  if (!impl || impl.provider !== "openai") return undefined;
   const selected = impl.providerCliId ? store.data.clis.find((c) => c.id === impl.providerCliId) : undefined;
-  const provider = selected
+  return selected
     ? selected.kind === "openai" ? selected : undefined
     : store.data.clis.find((c) => c.kind === "openai");
+}
+
+function providerEnv(p: Project): NodeJS.ProcessEnv {
+  const provider = implProvider(p);
   const secret = provider ? store.getSecret(provider.id) : null;
   return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}) };
+}
+
+/** Before a start: a warning when the provider reports that the key has no spending limit (asked at most hourly per key). */
+const keyLimitChecked = new Map<string, number>();
+async function warnUncappedKey(p: Project) {
+  const provider = implProvider(p);
+  if (!provider || !isOpenRouter(provider.location)) return;
+  const secret = store.getSecret(provider.id);
+  if (!secret || Date.now() - (keyLimitChecked.get(provider.id) ?? 0) < 60 * 60_000) return;
+  keyLimitChecked.set(provider.id, Date.now());
+  if ((await openRouterKeyLimit(secret)) === "uncapped") notice({ kind: "warning", message: `The OpenRouter key in ${provider.name} has no credit limit. Set a low limit for it on openrouter.ai (Settings › Keys), so a leaked key can cost at most that.` });
 }
 
 /** Windows: keeps Task Scheduler in step with the schedules marked "also when closed" (packaged builds only). */
@@ -367,6 +384,7 @@ async function runControl(id: string, action: ControlAction, source = "app") {
       notice({ kind: "warning", message });
     }
   }
+  if (starting) void warnUncappedKey(p).catch(() => {});
   const wasAlive = engine.isAlive(id);
   await engine.control(p, action, await launchArgs(p, check), providerEnv(p), source);
   if ((p.pendingTaskFile || p.ciNote) && !wasAlive && engine.isAlive(id)) {
