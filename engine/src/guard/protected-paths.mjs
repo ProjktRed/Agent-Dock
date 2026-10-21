@@ -5,7 +5,9 @@ import {fileURLToPath} from 'node:url';
 import {stripCheckOutputFilter} from './check-output-filter.mjs';
 
 const engineRoot=fileURLToPath(new URL('../../',import.meta.url));
-const DEFAULTS=['.git/','.env*','secrets/'];
+// Same list as src/shared/defaults.ts: secrets, plus the folders and files that configure tools which run code
+// (agent CLI settings and hooks, git hooks, CI workflows, editor tasks).
+export const DEFAULTS=['.git/','.env*','secrets/','.claude/','.codex/','.opencode/','.clinerules','.husky/','.github/workflows/','.vscode/'];
 const normalize=value=>process.platform==='win32'?value.replaceAll('\\','/').toLowerCase():value;
 const within=(root,file)=>{const r=path.relative(root,file);return r===''||(!r.startsWith('..'+path.sep)&&r!=='..'&&!path.isAbsolute(r));};
 

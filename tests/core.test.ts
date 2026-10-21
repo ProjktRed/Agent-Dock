@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Agent, CliConnection, EngineEvent, Project, Settings, WorkflowRole } from "@shared/types";
 import { parseLlamaSlots } from "../src/main/local-models";
 import { isHiddenEvent } from "../src/renderer/src/lib/events";
+import { runFinished } from "../src/renderer/src/lib/format";
 import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
 import { buildStatus, cycleStage, deriveRunState, interruptedWork } from "../src/main/lib/status";
@@ -636,6 +637,8 @@ describe("shared .git folder", () => {
     try {
       const repo = path.join(root, "repo");
       mkdirSync(path.join(repo, ".git", "worktrees", "wt"), { recursive: true });
+      mkdirSync(path.join(repo, ".git", "objects"));
+      writeFileSync(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
       mkdirSync(path.join(repo, "src"));
       writeFileSync(path.join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
       const wt = path.join(root, "wt");
@@ -665,6 +668,22 @@ describe("restart notice", () => {
     expect(interruptedWork(status(["cline-started"], { processAlive: true }))).toBeNull();
     expect(interruptedWork(status(["cline-started"], { runState: "paused" }))).toBeNull();
     expect(interruptedWork(status([]))).toBeNull();
+  });
+  it("never reports a usage-limit wait for an engine that is not running", () => {
+    expect(deriveRunState({ stage: "WAITING_FOR_LIMIT" }, {}, false).runState).toBe("idle");
+    expect(deriveRunState({ stage: "WAITING_FOR_CODEX" }, {}, false).runState).toBe("idle");
+  });
+  it("a run with every plan item checked is not finished when its engine died mid-step", () => {
+    const plan = { ...parseImplementationPlan(""), total: 2, completed: 2 };
+    const base = { projectId: "p", control: {}, processAlive: false, pid: null, git: { isRepo: true, branch: "main", head: null, remote: null, ahead: 0, behind: 0, changedFiles: [] }, plan, elevate: { available: false, reason: null }, resolver: { available: false, reason: null } };
+    const events = (types: string[]) => types.map((type) => ({ type, timestamp: "" })) as EngineEvent[];
+    const died = buildStatus({ ...base, live: { stage: "implementing" }, events: events(["qa-pass", "cline-started"]) });
+    expect(died.interrupted).toBe("Implementation");
+    expect(runFinished(died)).toBe(false);
+    const rested = buildStatus({ ...base, live: { stage: "pass" }, events: events(["cline-started", "cline-finished", "qa-pass"]) });
+    expect(rested.interrupted).toBeNull();
+    expect(runFinished(rested)).toBe(true);
+    expect(runFinished(buildStatus({ ...base, live: { stage: "complete" }, events: events(["loop-complete"]) }))).toBe(true);
   });
 });
 

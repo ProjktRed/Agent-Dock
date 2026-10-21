@@ -1,6 +1,8 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
+import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -106,9 +108,19 @@ export function downloadRelease(info: ReleaseInfo, dir: string, fetchImpl: Fetch
 /** The delta applies only to the exact version it was made from, and only with its index. */
 export const deltaUsable = (info: ReleaseInfo, installed: string): boolean => Boolean(info.manifest.delta && info.manifest.index && info.deltaUrl && info.indexUrl && info.manifest.delta.from === installed);
 
+/**
+ * File access for the installed app and the rebuilt update. In Electron's main process the patched fs
+ * treats every .asar file as a folder (resources/app.asar would be "missing", unreadable as one file and
+ * copied wrongly), so the delta update fell back to the full download every time. Electron's own
+ * original-fs is the unpatched module; plain Node (tests, the swap script) has no asar support and no
+ * original-fs, so it uses node:fs. (A builtin resolves from any require; process.execPath is just an absolute
+ * path that works in the bundled CommonJS main and in ESM tests alike.)
+ */
+const rawFs: typeof nodeFs = process.versions.electron ? (createRequire(process.execPath)("original-fs") as typeof nodeFs) : nodeFs;
+
 const fileSha256 = async (file: string) => {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  for await (const chunk of rawFs.createReadStream(file)) hash.update(chunk);
   return hash.digest("hex");
 };
 
@@ -120,6 +132,7 @@ const fileSha256 = async (file: string) => {
  */
 export async function assembleFromDelta(index: { files: { path: string; sha256: string; size: number }[] }, changedDir: string, installDir: string, outDir: string): Promise<string> {
   if (!Array.isArray(index?.files) || !index.files.length) throw new Error("The file index is empty.");
+  const { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = rawFs;
   if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
   for (const entry of index.files) {
     const rel = String(entry.path);
@@ -150,7 +163,8 @@ export async function applyDelta(info: ReleaseInfo, dir: string, installDir: str
 
 /** Expands a verified zip into an empty folder with Windows' own Expand-Archive. */
 async function expandZip(zip: string, dir: string): Promise<void> {
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  // The folder may hold an earlier try's resources/app.asar: removed as the file it is (rawFs).
+  if (rawFs.existsSync(dir)) rawFs.rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const quote = (p: string) => `'${p.replaceAll("'", "''")}'`;
   await new Promise<void>((resolve, reject) => {

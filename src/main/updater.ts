@@ -125,7 +125,8 @@ export class Updater {
     }
     // A quiet check keeps the current status (and any update notice) visible while it runs.
     if (!quiet) this.set({ state: "checking", source, branch, error: null });
-    const remote = await run("git", ["ls-remote", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
+    // "--": the source is always a repository, never read as an option.
+    const remote = await run("git", ["ls-remote", "--", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
     const latest = remote.code === 0 ? parseLsRemote(remote.stdout, branch) : null;
     if (!latest) {
       this.set({ state: "error", checkedAt: new Date().toISOString(), error: remote.code === 0 ? `Branch “${branch}” not found in ${source}` : `Could not read ${source}: ${remote.stderr.trim().split(/\r?\n/).pop()}` });
@@ -145,10 +146,10 @@ export class Updater {
   private async listCommits(source: string, branch: string, latest: string): Promise<UpdateStatus["commits"]> {
     mkdirSync(STAGING, { recursive: true });
     if (!existsSync(path.join(REPO, ".git"))) {
-      const clone = await run("git", ["clone", "--no-checkout", source, REPO], { timeoutMs: 10 * 60_000 });
+      const clone = await run("git", ["clone", "--no-checkout", "--", source, REPO], { timeoutMs: 10 * 60_000 });
       if (clone.code !== 0) return [];
     } else {
-      await run("git", ["remote", "set-url", "origin", source], { cwd: REPO });
+      await run("git", ["remote", "set-url", "--", "origin", source], { cwd: REPO });
     }
     await run("git", ["fetch", "--force", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: REPO, timeoutMs: 10 * 60_000 });
     const known = await run("git", ["cat-file", "-e", `${this.installed!.commit}^{commit}`], { cwd: REPO });

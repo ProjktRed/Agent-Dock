@@ -137,7 +137,8 @@ export async function previewLibraryImport(input: string, fetchImpl: Fetch = fet
     if (!skillFile) continue;
     const parsed = parseSkillFile(skillFile.text);
     const name = parsed.name ?? path.posix.basename(dir || source.repo);
-    if (!/^[\w .:-]{1,80}$/.test(name)) { skills.push({ name: name.slice(0, 80), description: parsed.description, path: dir, files: [], skipped, findings: [{ level: "block", file: "SKILL.md", message: "The skill name has unsupported characters." }] }); continue; }
+    // A name made only of dots (and spaces) would name a parent folder.
+    if (!/^[\w .:-]{1,80}$/.test(name) || /^[. ]+$/.test(name)) { skills.push({ name: name.slice(0, 80), description: parsed.description, path: dir, files: [], skipped, findings: [{ level: "block", file: "SKILL.md", message: "The skill name has unsupported characters." }] }); continue; }
     contents.set(name, files);
     skills.push({ name, description: parsed.description, path: dir, files: files.map((f) => ({ path: f.path, size: Buffer.byteLength(f.text) })), skipped, findings: scanSkillFiles(files, trusted) });
   }
@@ -159,6 +160,9 @@ export async function installLibraryImport(token: string, names: string[], libra
     if (!skill || !files) throw new Error(`Skill “${name}” is not in this preview.`);
     if (skill.findings.some((f) => f.level === "block")) throw new Error(`Skill “${name}” has a blocking finding and cannot be imported.`);
     const folder = path.join(libraryRoot, `${entry.preview.owner}__${entry.preview.repo}`, name.replace(/[^\w.-]+/g, "-"));
+    // Only ever replace a skill folder inside the library: two levels below its root.
+    const inside = path.relative(path.resolve(libraryRoot), path.resolve(folder)).split(path.sep);
+    if (inside.length !== 2 || inside.some((part) => !part || /^\.+$/.test(part)) || path.isAbsolute(inside.join(path.sep))) throw new Error(`Skill “${name}” has a name that cannot be used as a folder name.`);
     const staging = `${folder}.${randomUUID()}.tmp`;
     try {
       for (const file of files) {

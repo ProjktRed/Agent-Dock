@@ -6,13 +6,13 @@ import path from "node:path";
 import type { CliConnection } from "@shared/types";
 import { isGitRepo, run } from "./lib/git";
 import { parseImplementationPlan, PLAN_FILE } from "./lib/plan";
-import { shellLine, stopAndClean } from "./proc";
+import { stopAndClean } from "./proc";
+import { cmdLine, resolveProgram } from "./lib/cmd-line";
 
 /** Planner kinds offered when creating a project: cloud CLIs read the workspace themselves; local models get a summary. */
 export const PLANNER_KINDS = ["codex", "claude", "llamacpp", "ollama", "openai"] as const;
 const PLAN_MAX_CHARS = 30_000;
 const TIMEOUT_MS = 10 * 60_000;
-const quote = (p: string) => (/[\s&()]/.test(p) && !p.startsWith('"') ? `"${p}"` : p);
 
 export function buildPlannerPrompt(objective: string, context: string | null): string {
   return [
@@ -123,7 +123,10 @@ type Fetch = (url: string, init: { method: string; headers: Record<string, strin
 
 function runCli(command: string, args: string[], cwd: string, prompt: string, signal: AbortSignal, env: NodeJS.ProcessEnv, outputFile?: string, tempDir?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(shellLine(quote(command), args), { shell: true, windowsHide: true, cwd, env });
+    // Windows: through cmd.exe so npm's .cmd launchers run, with every argument escaped for it.
+    const child = process.platform === "win32"
+      ? spawn(cmdLine(resolveProgram(command), args), { shell: true, windowsHide: true, cwd, env })
+      : spawn(command, args, { windowsHide: true, cwd, env });
     let stdout = "", stderr = "", done = false;
     const finish = (error: Error | null, value = "") => {
       if (done) return;
@@ -161,15 +164,15 @@ export async function callPlanner(workspace: string, objective: string, planner:
   const kind = connection.kind;
   if (kind === "codex" || kind === "claude") {
     const prompt = buildPlannerPrompt(objective, null) + feedback;
-    const command = connection.location.trim() || kind;
+    const command = connection.location.trim().replace(/^"(.+)"$/, "$1") || kind;
     if (kind === "codex") {
       const temp = await mkdtemp(path.join(os.tmpdir(), "agent-dock-plan-"));
       const out = path.join(temp, "plan.md");
-      const args = ["exec", "--ephemeral", "--color", "never", "--sandbox", "read-only", "--skip-git-repo-check", ...(model ? ["-m", model] : []), "--cd", quote(workspace), "--output-last-message", quote(out), "-"];
+      const args = ["exec", "--ephemeral", "--color", "never", "--sandbox", "read-only", "--skip-git-repo-check", ...(model ? ["-m", model] : []), "--cd", workspace, "--output-last-message", out, "-"];
       return runCli(command, args, workspace, prompt, signal, process.env, out, temp);
     }
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
-    const args = ["-p", "--output-format", "text", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read", "Grep", "Glob", ...(model ? ["--model", model] : [])];
+    const args = ["-p", "--output-format", "text", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read", "Grep", "Glob", ...(model ? ["--model", model] : [])];
     return runCli(command, args, workspace, prompt, signal, env);
   }
   if (!["llamacpp", "ollama", "openai"].includes(kind)) throw new Error(`${connection.name} cannot be used as a planner.`);

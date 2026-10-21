@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
 import { useApp } from "../../store";
-import { clock, duration, engineStageLabel, num, plural, sentenceCase, tokens } from "../../lib/format";
+import { clock, duration, engineStageLabel, num, plural, runFinished, sentenceCase, tokens } from "../../lib/format";
 import { modeEstimates, planEstimate } from "../../lib/estimate";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
@@ -222,10 +222,10 @@ export function ProgressTab() {
   const activeIndex = CYCLE.findIndex((c) => c.key === s.cycle);
   const paused = ["paused", "pausing"].includes(s.runState);
   const noRuns = !s.task && s.events.length === 0;
-  // Finished: the engine is not running and either reported "Objective complete" or stopped/idled with every plan item checked.
+  // Finished (runFinished): not running, nothing interrupted mid-step, and "Objective complete" or every plan item checked.
   // Attention, blocked, paused and waiting states never count, and nothing below changes while a run is active.
   const planDone = plan.total > 0 && plan.completed >= plan.total;
-  const finished = !s.processAlive && (s.runState === "complete" || (planDone && (s.runState === "idle" || s.runState === "stopped")));
+  const finished = runFinished(s);
 
   return (
     <div className="stack" style={{ gap: 20 }}>

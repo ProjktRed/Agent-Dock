@@ -25,6 +25,9 @@ const QA_TOOLS = [...READ_ONLY_TOOLS, ...shell([
 const NEVER_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch"];
 const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]limit|credit balance is too low|resets? (?:at|in))/i;
 
+/** Every Claude Code session reads the user's own settings only, never the workspace's .claude/ settings (hooks, permissions). */
+export const CLAUDE_SETTING_SOURCES = ["--setting-sources", "user"];
+
 /** Child sessions must not inherit the launching Claude session's host/session wiring. */
 export function claudeChildEnv(env = process.env) {
   return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
@@ -67,7 +70,7 @@ export class ClaudeWorker extends CodexWorker {
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
     const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
     const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
-      "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, "--permission-mode", "dontAsk",
+      "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
       ...protectionArgs,

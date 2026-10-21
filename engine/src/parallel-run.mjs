@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson, DashboardState } from "./dashboard-state.mjs";
@@ -21,7 +22,7 @@ import { addRunUsage } from "./run-budget.mjs";
 // continuation off pauses after a round that merged a change). A task that fails to merge twice stops for you.
 
 const exec = promisify(execFile);
-const git = (cwd, args) => exec("git", args, { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const git = (cwd, args) => exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.trim());
 const firstLine = (text, max) => String(text ?? "").split(/\r?\n/)[0].slice(0, max);
 
 const overlaps = (a, b) => a.allowedPaths.some((x) => b.allowedPaths.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
@@ -55,15 +56,52 @@ async function removeWorktree(workspace, worktree) {
 
 const SIZE_FLAGS = ["--task-mode", "--task-max-files", "--task-max-new-lines", "--task-max-read-files"];
 
+/** --supervisor, --supervisor-* and --sv-*: the parent's Supervisor watches the run; a task's engine runs none. */
+const supervisorFlag = (name) => name === "--supervisor" || name.startsWith("--supervisor-") || name.startsWith("--sv-");
+
+/** --protected-paths for a task's engine: an absolute entry inside the project names the same path in the worktree. */
+function rebaseProtected(value, workspace, worktree) {
+  let paths;
+  try { paths = JSON.parse(value); } catch { return value; }
+  if (!workspace || !Array.isArray(paths)) return value;
+  return JSON.stringify(paths.map((entry) => {
+    if (typeof entry !== "string" || !path.isAbsolute(entry.trim())) return entry;
+    const rel = path.relative(path.resolve(workspace), path.resolve(entry.trim()));
+    return rel.startsWith("..") || path.isAbsolute(rel) ? entry : path.join(worktree, rel);
+  }));
+}
+
 /** Child engine arguments: the parent's, for one task in its worktree with its own state folder.
  *  No step-down in a task's engine: the parent plans the next round. sizing (the parent's tuning while it is
- *  stepped down) replaces the configured task size, so the task's engine works at the size it was planned for. */
+ *  stepped down) replaces the configured task size, so the task's engine works at the size it was planned for.
+ *  No Supervisor either (no alerts, model review or digests of its own): the parent supervises the whole run. */
 export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null }) {
   const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--single-task", "--auto-continue", "--step-down", ...(sizing ? SIZE_FLAGS : [])]);
+  let workspace = null;
+  for (let i = 0; i < argv.length; i += 2) if (argv[i] === "--workspace") workspace = argv[i + 1];
   const out = [];
-  for (let i = 0; i < argv.length; i += 2) if (!drop.has(argv[i])) out.push(argv[i], argv[i + 1]);
+  for (let i = 0; i < argv.length; i += 2) {
+    if (drop.has(argv[i]) || supervisorFlag(argv[i])) continue;
+    out.push(argv[i], argv[i] === "--protected-paths" ? rebaseProtected(argv[i + 1], workspace, worktree) : argv[i + 1]);
+  }
   const size = sizing ? ["--task-mode", sizing.taskMode, "--task-max-files", String(sizing.taskMaxFiles), "--task-max-new-lines", String(sizing.taskMaxNewLines), "--task-max-read-files", String(sizing.taskMaxReadFiles)] : [];
-  return [...out, ...size, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false"];
+  return [...out, ...size, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off"];
+}
+
+/** A task engine's environment: the parent's without AGENT_DOCK_NOTIFY, so only the parent sends notifications. */
+export function childEnv(env = process.env) {
+  const out = {};
+  for (const [name, value] of Object.entries(env)) if (name.toUpperCase() !== "AGENT_DOCK_NOTIFY") out[name] = value;
+  return out;
+}
+
+/** child.json in a task engine's state folder: its pid and parent, when it ended, and whether its usage was imported. */
+const CHILD_RECORD = "child.json";
+export const readChildRecord = (childState) => { try { return JSON.parse(readFileSync(path.join(childState, CHILD_RECORD), "utf8")); } catch { return null; } };
+export function writeChildRecord(childState, fields) {
+  const next = { ...(readChildRecord(childState) ?? {}), ...fields };
+  try { mkdirSync(childState, { recursive: true }); writeFileSync(path.join(childState, CHILD_RECORD), `${JSON.stringify(next, null, 2)}\n`); } catch {}
+  return next;
 }
 
 /** onMerged for a run: a merged task counts toward ending a step-down, as an approved task does in the normal loop. */
@@ -75,9 +113,12 @@ export const endStepDown = (onEvent) => async (task) => {
 /** Runs one child engine to the end of its task; resolves with its loop result, approved commit and usage. */
 export function spawnChildEngine({ cliPath, args, stateDir, env = process.env }) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath, ...args], { env, windowsHide: true, stdio: "ignore" });
+    const child = spawn(process.execPath, [cliPath, ...args], { env: childEnv(env), windowsHide: true, stdio: "ignore" });
+    // Its pid, so a run that restarts after this one crashed finds the engine still at work (stopOrphanChildren).
+    if (child.pid) writeChildRecord(stateDir, { pid: child.pid, parentPid: process.pid, startedAt: new Date().toISOString(), exitedAt: null });
     child.on("error", (error) => resolve({ status: "blocked", output: error.message }));
     child.on("close", () => {
+      if (child.pid) writeChildRecord(stateDir, { exitedAt: new Date().toISOString() });
       const read = (name) => { try { return JSON.parse(readFileSync(path.join(stateDir, name), "utf8")); } catch { return null; } };
       const result = read("loop-result.json") ?? { status: "blocked", output: "The task's engine ended without a result." };
       resolve({ ...result, commit: read("last-result.json")?.result?.qa?.commit ?? null, usage: read("run-report.json")?.usage ?? null });
@@ -118,6 +159,103 @@ export async function importChildUsage({ childState, stateDir, taskId, onEvent }
   for (const event of latest.values()) await onEvent({ ...event, taskId, parallel: true });
 }
 
+/** Counts a task engine's usage toward the run once: its run totals, each role's share, then marks it imported. */
+async function importChild({ childState, stateDir, taskId, usage, addUsage, onEvent }) {
+  if (readChildRecord(childState)?.usageImported) return;
+  if (usage) await addUsage(usage);
+  await importChildUsage({ childState, stateDir, taskId, onEvent }).catch(() => {});
+  writeChildRecord(childState, { usageImported: true });
+}
+
+/** Whether a pid recorded in child.json is still that task engine: alive, started since this boot, and the same program. */
+export async function engineAlive(pid, startedAt) {
+  try { process.kill(pid, 0); } catch (error) { if (error.code !== "EPERM") return false; }
+  // A pid from before the last boot belongs to some other process now.
+  if (Date.parse(startedAt) < Date.now() - os.uptime() * 1000) return false;
+  if (process.platform !== "win32") return true;
+  const { stdout } = await exec("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { windowsHide: true, timeout: 10_000 }).catch(() => ({ stdout: "" }));
+  return stdout.toLowerCase().includes(path.basename(process.execPath).toLowerCase());
+}
+
+async function killEngine(pid) {
+  if (process.platform === "win32") await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 10_000 });
+  else process.kill(pid, "SIGTERM");
+}
+
+/**
+ * Task engines a crashed run left behind (child.json with a live pid and no end): each gets Stop, then up to
+ * waitMs to reach its safe point, and is ended if it has not. A new round never starts beside them.
+ * Returns the state folders of the engines found.
+ */
+export async function stopOrphanChildren({ stateDir, waitMs = 60_000, pollMs = 1000, isAlive = engineAlive, kill = killEngine }) {
+  const root = path.join(stateDir, "parallel");
+  const found = [];
+  for (const name of await readdir(root).catch(() => [])) {
+    const dir = path.join(root, name);
+    const record = readChildRecord(dir);
+    if (!Number.isInteger(record?.pid) || record.exitedAt || record.parentPid === process.pid) continue;
+    if (await isAlive(record.pid, record.startedAt)) found.push({ dir, ...record });
+    else writeChildRecord(dir, { exitedAt: new Date().toISOString() });
+  }
+  if (!found.length) return [];
+  await forwardStop(found.map((f) => f.dir));
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const alive = [];
+    for (const f of found) if (await isAlive(f.pid, f.startedAt)) alive.push(f);
+    if (!alive.length) break;
+    if (Date.now() >= deadline) { for (const f of alive) await kill(f.pid).catch(() => {}); break; }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  for (const f of found) writeChildRecord(f.dir, { exitedAt: new Date().toISOString(), orphaned: true });
+  return found.map((f) => f.dir);
+}
+
+/** Usage of task engines whose run ended before it could count it (a crash, a kill): counted now, once. */
+export async function importLeftoverUsage({ stateDir, addUsage, onEvent }) {
+  const root = path.join(stateDir, "parallel");
+  for (const name of await readdir(root).catch(() => [])) {
+    const dir = path.join(root, name);
+    const record = readChildRecord(dir);
+    // Only engines this version started and recorded, so the state of earlier runs is never counted twice.
+    if (!Number.isInteger(record?.pid) || record.usageImported || !record.exitedAt) continue;
+    const read = (file) => { try { return JSON.parse(readFileSync(path.join(dir, file), "utf8")); } catch { return null; } };
+    await importChild({ childState: dir, stateDir, taskId: read("task.json")?.id ?? name, usage: read("run-report.json")?.usage ?? null, addUsage, onEvent });
+  }
+}
+
+/** Paths (from the repository root) that differ from HEAD, untracked ones included. */
+async function dirtyPaths(top) {
+  const { stdout } = await exec("git", ["-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  return stdout.split("\0").filter(Boolean).map((entry) => entry.slice(3));
+}
+
+/** Puts each path back as HEAD has it: checked out from HEAD, or removed when HEAD has no such file. */
+async function restorePaths(top, paths) {
+  for (const file of new Set(paths)) {
+    try { await git(top, ["--literal-pathspecs", "checkout", "HEAD", "--", file]); continue; } catch {}
+    await git(top, ["--literal-pathspecs", "rm", "-q", "--cached", "--force", "--ignore-unmatch", "--", file]).catch(() => {});
+    try { rmSync(path.join(top, file), { force: true }); } catch {}
+  }
+}
+
+/**
+ * After a failed merge, puts back the commit's own paths when the rollback left them. Nothing else is touched:
+ * a file that changed while the check ran may be yours, so it is reported, never restored or deleted.
+ * Returns the paths cleaned and those still differing from HEAD.
+ */
+async function restoreToHead(workspace, commit = null) {
+  const top = await git(workspace, ["rev-parse", "--show-toplevel"]);
+  const before = await dirtyPaths(top);
+  if (!before.length) return { cleaned: [], left: [] };
+  if (commit) {
+    const changed = await exec("git", ["-c", "core.fsmonitor=false", "diff-tree", "-r", "-z", "--no-commit-id", "--name-only", "--no-renames", commit], { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.split("\0").filter(Boolean), () => []);
+    await restorePaths(top, changed);
+  }
+  const left = await dirtyPaths(top);
+  return { cleaned: before.filter((p) => !left.includes(p)), left };
+}
+
 /** Default check runner: the task's approved check command in the project, as QA runs it. */
 async function defaultRunCheck(command, cwd) {
   const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";
@@ -144,13 +282,19 @@ async function beforeRound({ readControl, onEvent, pollMs }) {
   }
 }
 
-export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, addUsage = addRunUsage, pollMs = 3000 }) {
+export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, addUsage = addRunUsage, pollMs = 3000, onChildActivity = async () => {}, stopOrphans = stopOrphanChildren }) {
   let previous = null;
   const mergeFailures = new Map();
+  // As the normal loop's block() and correction limit: the ending is recorded (Activity, notifications, Overview) before the run returns.
+  const end = async (status, output) => { await onEvent({ type: status, qa: output }); return { status, output }; };
   for (let round = 1; ; round++) {
     if (!(await beforeRound({ readControl, onEvent, pollMs }))) return { status: "stopped", ...(previous ? { output: previous.result } : {}) };
+    // Task engines a crashed run left at work end first, and their usage counts; then the round can start.
+    const orphans = await stopOrphans({ stateDir });
+    if (orphans.length) await onEvent({ type: "parallel-orphans-stopped", count: orphans.length, folders: orphans.map((dir) => path.basename(dir)) });
+    await importLeftoverUsage({ stateDir, addUsage, onEvent }).catch(() => {});
     await betweenTasks();
-    if (await git(workspace, ["status", "--porcelain", "--untracked-files=all"])) return { status: "blocked", output: "Parallel tasks need a clean working tree between rounds." };
+    if (await git(workspace, ["status", "--porcelain", "--untracked-files=all"])) return end("blocked", "Parallel tasks need a clean working tree between rounds.");
     const head = await git(workspace, ["rev-parse", "HEAD"]);
     const batch = [];
     let done = false, qaRejections = 0;
@@ -159,14 +303,14 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       const text = (await objectiveWithDeferred(stateDir, objective)) + (taken ? `\n\nAlready running in parallel this round: ${taken}. Choose a different task whose allowedPaths share no file or folder with these, or return done when no such task remains.` : "");
       const result = await assess({ objective: text, previous });
       if (result.status === "done") { done = !batch.length; break; }
-      if (result.status !== "task") { if (!batch.length) return { status: "blocked", output: result.output ?? "Assessment could not produce a safe task" }; break; }
+      if (result.status !== "task") { if (!batch.length) return end("blocked", result.output ?? "Assessment could not produce a safe task"); break; }
       const task = result.task;
       try { validateTask(task); }
-      catch (error) { if (!batch.length) return { status: "blocked", output: error.message }; break; }
+      catch (error) { if (!batch.length) return end("blocked", error.message); break; }
       // As in the normal loop: an unapproved check command sends Assessment back once, with the reason.
       try { assertSafeQaCommand({ workspace, stateDir, command: task.qaCommand }); qaRejections = 0; }
       catch (error) {
-        if (++qaRejections > 1) { if (!batch.length) return { status: "blocked", output: `${error.message}: ${task.qaCommand}` }; break; }
+        if (++qaRejections > 1) { if (!batch.length) return end("blocked", `${error.message}: ${task.qaCommand}`); break; }
         await onEvent({ type: "assessment-rejected", qa: `Check command "${task.qaCommand}" is not allowed. Assessment chooses again.` });
         previous = { task, result: `Rejected before implementation: qaCommand "${task.qaCommand}" is not an approved check. Use an existing npm script (npm test, npm run <script>) or npx tsc/eslint/prettier/vitest/playwright.` };
         continue;
@@ -180,9 +324,11 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
     // Stop, Pause and Resume reach the running tasks: each task's engine stops (or pauses) at its own next safe point.
     // Resume also ends a task's usage-limit wait, which waits for a Resume of its own engine.
     const children = [];
-    let forwarded = false, paused = false, ticking = false;
+    let forwarded = false, paused = false, ticking = false, limitWait = false;
     let resumes = Number((await readControl().catch(() => ({}))).resumeGeneration ?? 0);
     const stopAll = async () => { if (!forwarded) { forwarded = true; await forwardStop(children.map((c) => c.state)); } };
+    // The run's stage leaves WAITING_FOR_LIMIT once no task waits any more (and at the latest when the round ends).
+    const clearLimitWait = async () => { if (limitWait) { limitWait = false; await onEvent({ type: "parallel-limit-cleared", parallel: true }); } };
     const watch = setInterval(async () => {
       if (forwarded || ticking) return;
       ticking = true;
@@ -193,12 +339,19 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
         if (Number(control.resumeGeneration ?? 0) > resumes) { resumes = Number(control.resumeGeneration); paused = false; await forwardControl(states, "resume"); }
         if (Boolean(control.pauseAfterCurrent) !== paused) { paused = !paused; await forwardControl(states, paused ? "pause" : "resume"); }
         // A task waiting out a usage limit holds up the round: say so once per wait.
+        let active = false;
         for (const child of children) {
           const live = await child.state.readLive().catch(() => null);
           const waiting = live?.stage === "WAITING_FOR_LIMIT";
-          if (waiting && !child.waiting) await onEvent({ type: "waiting-for-codex", taskId: child.taskId, parallel: true, operation: live.interruptedOperation ?? null, message: live.codexLimitMessage ?? null, retryAt: live.codexRetryAt ?? null });
+          if (waiting && !child.waiting) { limitWait = true; await onEvent({ type: "waiting-for-codex", taskId: child.taskId, parallel: true, operation: live.interruptedOperation ?? null, message: live.codexLimitMessage ?? null, retryAt: live.codexRetryAt ?? null }); }
           child.waiting = waiting;
+          // A task engine that records anything is at work: the run's Supervisor counts that as activity of the run.
+          const mark = `${live?.updatedAt ?? ""}|${(await stat(child.state.activityPath).catch(() => null))?.mtimeMs ?? ""}`;
+          if (mark !== "|" && mark !== child.mark) active = true;
+          child.mark = mark;
         }
+        if (!children.some((c) => c.waiting)) await clearLimitWait();
+        if (active) await onChildActivity();
       } finally { ticking = false; }
     }, pollMs);
     // One name per run and try, so a worktree kept from an earlier run never blocks this one.
@@ -222,17 +375,19 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       await atomicWriteJson(taskFile, task);
       await onEvent({ type: "parallel-task-started", taskId: task.id, name: task.name ?? task.id, branch, worktree });
       const result = await runChild({ task, worktree, stateDir: childState, taskFile });
-      // The task's tokens and spend count toward this run: its engine kept them in its own state folder.
-      if (result.usage) await addUsage(result.usage);
-      // And each role's share, which Overview reads from the run's own state folder.
-      await importChildUsage({ childState, stateDir, taskId: task.id, onEvent }).catch(() => {});
+      // Whatever the result: the task's tokens and spend count toward this run (its engine kept them in its own
+      // state folder), and each role's share, which Overview reads from the run's own state folder.
+      await importChild({ childState, stateDir, taskId: task.id, usage: result.usage, addUsage, onEvent });
       await onEvent({ type: "parallel-task-finished", taskId: task.id, status: result.status, commit: result.commit ?? null, branch });
       return { task, worktree, branch, childState, result };
     })).finally(() => clearInterval(watch));
+    // The interval may still be inside a tick: let it finish before the round reports, so no wait is announced after it.
+    while (ticking) await new Promise((r) => setTimeout(r, 5));
+    await clearLimitWait();
     const runs = settled.map((s, i) => (s.status === "fulfilled" ? s.value : { task: batch[i], startError: firstLine(s.reason?.message ?? s.reason, 300) }));
 
-    const notes = [];
-    for (const run of runs) {
+    const notes = [], cleanups = [];
+    for (const [index, run] of runs.entries()) {
       const { task, worktree, branch, result } = run;
       if (run.startError) { notes.push(`${task.id} could not start: ${run.startError}`); continue; }
       // A task its engine set aside is listed for the run's Assessment too (one at a time: one list file).
@@ -244,34 +399,46 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       if (!why) {
         const check = await runCheck(task.qaCommand, workspace);
         if (check.exitCode === 0) {
-          await git(workspace, ["commit", "--no-edit", "-C", result.commit]);
-          merged = true;
+          // A pre-commit hook that refuses it, or a change already on your branch (nothing to commit), is a merge that failed.
+          try { await git(workspace, ["commit", "--no-edit", "-C", result.commit]); merged = true; }
+          catch (error) { why = `could not be committed on the combined code (${firstLine(String(error.stderr ?? "").trim() || String(error.stdout ?? "").trim() || error.message, 200)})`; }
         } else why = `its check failed on the combined code: ${String(check.output).trim().split(/\r?\n/).slice(-3).join(" ").slice(0, 300)}`;
       }
       if (!merged) {
         // The change stays on its branch; your branch is back where it was.
         await git(workspace, ["reset", "--merge"]).catch(() => {});
         await git(workspace, ["cherry-pick", "--quit"]).catch(() => {});
+      }
+      // What a failed rollback left of the change is undone; any other file that differs from HEAD stops the round.
+      const restored = await restoreToHead(workspace, merged ? null : result.commit).catch((error) => ({ cleaned: [], left: [`(${firstLine(error.message, 200)})`] }));
+      if (restored.cleaned.length) cleanups.push(`${task.id}: restored ${restored.cleaned.length === 1 ? "1 file" : `${restored.cleaned.length} files`} left after its merge (${restored.cleaned.slice(0, 5).join(", ")}${restored.cleaned.length > 5 ? ", ..." : ""})`);
+      if (!merged) {
         notes.push(`${task.id} ${why}; kept on branch ${branch}`);
         mergeFailures.set(task.id, (mergeFailures.get(task.id) ?? 0) + 1);
         await onEvent({ type: "parallel-merge-failed", taskId: task.id, branch, message: why });
-        continue;
+      } else {
+        const commit = await git(workspace, ["rev-parse", "HEAD"]);
+        await onEvent({ type: "parallel-merged", taskId: task.id, commit, branch });
+        await onEvent({ type: "qa-pass", taskId: task.id, qa: `Merged from ${branch}`, parallel: true, ...(Number.isInteger(result.attempts) ? { attempt: result.attempts } : {}), ...(task.planItems?.length ? { planItems: task.planItems } : {}) });
+        await onMerged(task);
+        await removeWorktree(workspace, worktree).catch(() => {});
+        await git(workspace, ["branch", "-D", branch]).catch(() => {});
       }
-      const commit = await git(workspace, ["rev-parse", "HEAD"]);
-      await onEvent({ type: "parallel-merged", taskId: task.id, commit, branch });
-      await onEvent({ type: "qa-pass", taskId: task.id, qa: `Merged from ${branch}`, parallel: true, ...(Number.isInteger(result.attempts) ? { attempt: result.attempts } : {}), ...(task.planItems?.length ? { planItems: task.planItems } : {}) });
-      await onMerged(task);
-      await removeWorktree(workspace, worktree).catch(() => {});
-      await git(workspace, ["branch", "-D", branch]).catch(() => {});
+      if (restored.left.length) {
+        // Nothing more is merged onto a tree that is not clean: the remaining approved tasks stay on their branches.
+        const rest = runs.slice(index + 1).filter((r) => !r.startError && r.result.status === "passed" && r.result.commit).map((r) => `${r.task.id} (branch ${r.branch})`);
+        return end("user-attention", `Parallel round ${round}: after ${merged ? "merging" : "rolling back"} ${task.id}, the working tree still differs from HEAD in ${restored.left.slice(0, 10).join(", ")}${restored.left.length > 10 ? ", ..." : ""}, which Agent Dock leaves alone (a check that writes files, or your own edits). Check and clean the working tree, then Run again.${rest.length ? ` Not merged yet: ${rest.join(", ")}.` : ""}${notes.length ? ` ${notes.join("; ")}` : ""}`);
+      }
     }
-    previous = { task: batch.at(-1), result: notes.length ? `Parallel round ${round}: ${notes.join("; ")}` : `Parallel round ${round}: ${batch.length === 1 ? "its task" : `all ${batch.length} tasks`} merged.` };
-    if (runs.some((r) => r.startError)) return { status: "blocked", output: previous.result };
+    const summary = notes.length ? `Parallel round ${round}: ${notes.join("; ")}` : `Parallel round ${round}: ${batch.length === 1 ? "its task" : `all ${batch.length} tasks`} merged.`;
+    previous = { task: batch.at(-1), result: cleanups.length ? `${summary} ${cleanups.join("; ")}.` : summary };
+    if (runs.some((r) => r.startError)) return end("blocked", previous.result);
     if ((await readControl()).stopAfterSafePoint) { await onEvent({ type: "stopped" }); return { status: "stopped", output: previous.result }; }
     // Nothing merged and nothing left to try: stop for you instead of repeating the same round.
-    if (notes.length === runs.length) return { status: "user-attention", output: previous.result };
+    if (notes.length === runs.length) return end("user-attention", previous.result);
     // Nor pick the same change again after it failed to merge twice.
     const repeated = [...mergeFailures].filter(([, n]) => n >= 2).map(([id]) => id);
-    if (repeated.length) return { status: "user-attention", output: `${repeated.join(", ")} failed to merge twice. ${previous.result}` };
+    if (repeated.length) return end("user-attention", `${repeated.join(", ")} failed to merge twice. ${previous.result}`);
   }
 }
 

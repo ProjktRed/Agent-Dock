@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSchedule, dueScheduledStart, scheduleMinutes } from "../src/shared/schedule";
+import { describeSchedule, dueScheduledStart, lastPassedSlot, missedScheduledStart, scheduleMinutes } from "../src/shared/schedule";
 
 const weekdays = { enabled: true, time: "02:30", days: [1, 2, 3, 4, 5] };
 // Monday 19 October 2026, local time.
@@ -16,6 +16,37 @@ describe("scheduled runs", () => {
     expect(dueScheduledStart(weekdays, at(3, 1))).toBeNull();
     expect(dueScheduledStart(weekdays, at(2, 31, 18))).toBeNull();
     expect(dueScheduledStart({ ...weekdays, enabled: false }, at(2, 30))).toBeNull();
+  });
+  it("keeps the grace period across midnight", () => {
+    const monday = { enabled: true, time: "23:50", days: [1] };
+    const slot = at(23, 50).toISOString();
+    expect(dueScheduledStart(monday, at(23, 55))).toBe(slot);
+    // Tuesday 00:05 is still Monday's 23:50 start, on time.
+    expect(dueScheduledStart(monday, at(0, 5, 20))).toBe(slot);
+    expect(dueScheduledStart(monday, at(0, 20, 20))).toBe(slot);
+    expect(dueScheduledStart(monday, at(0, 5, 20), slot)).toBeNull();
+    expect(dueScheduledStart(monday, at(0, 21, 20))).toBeNull();
+    // Only the slot's own day counts: a Tuesday-only 23:50 is not due early on Tuesday.
+    expect(dueScheduledStart({ ...monday, days: [2] }, at(0, 5, 20))).toBeNull();
+    // Across a month end: Saturday 31 October 23:50, checked Sunday 1 November 00:05.
+    expect(dueScheduledStart({ ...monday, days: [6] }, at(0, 5, 32))).toBe(new Date(2026, 9, 31, 23, 50).toISOString());
+  });
+  it("reports a missed start once, only after a start or schedule change", () => {
+    const friday = at(2, 30, 16).toISOString(), monday = at(2, 30).toISOString();
+    expect(lastPassedSlot(weekdays, at(8, 0))).toBe(monday);
+    expect(missedScheduledStart(weekdays, at(8, 0), friday)).toBe(monday);
+    expect(missedScheduledStart(weekdays, at(8, 0), monday)).toBeNull();
+    // Nothing to compare with yet (never started, or a fresh schedule): nothing reported.
+    expect(missedScheduledStart(weekdays, at(8, 0), null)).toBeNull();
+    // Inside the grace period it is still due, not missed.
+    expect(missedScheduledStart(weekdays, at(3, 0), friday)).toBeNull();
+    expect(dueScheduledStart(weekdays, at(3, 0), friday)).toBe(monday);
+    expect(missedScheduledStart(weekdays, at(3, 1), friday)).toBe(monday);
+    // Over the weekend the last passed slot is Friday's.
+    expect(lastPassedSlot(weekdays, at(12, 0, 18))).toBe(friday);
+    expect(missedScheduledStart({ ...weekdays, enabled: false }, at(8, 0), friday)).toBeNull();
+    // Across midnight: Monday 23:50, checked Tuesday 00:30.
+    expect(missedScheduledStart({ enabled: true, time: "23:50", days: [1] }, at(0, 30, 20), friday)).toBe(at(23, 50).toISOString());
   });
   it("describes the schedule in plain words", () => {
     expect(describeSchedule(weekdays)).toBe("Weekdays at 02:30");

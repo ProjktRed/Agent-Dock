@@ -39,7 +39,8 @@ export function deriveRunState(live: EngineLive | null, control: EngineControl, 
   const stage = stageOf(live) ?? "waiting";
   if (live.resolverRunning || stage === "resolving") return { runState: "running", label: "Resolving block" };
   if (stage === "BLOCKED") return { runState: "blocked", label: "Blocked" };
-  if (stage === "WAITING_FOR_LIMIT") return { runState: "waiting-limit", label: "Waiting: usage limit" };
+  // Only a running engine waits out a limit: a stage left behind by one that ended (or crashed) is not a wait.
+  if (stage === "WAITING_FOR_LIMIT" && processAlive) return { runState: "waiting-limit", label: "Waiting: usage limit" };
   if (live.elevateRunning || stage === "elevating") return { runState: "running", label: "Running · Elevation" };
   if (stage === "USER_ATTENTION" || live.manualReview || stage === "manual-review") return { runState: "attention", label: "Attention required" };
   if (stage === "paused") return { runState: "paused", label: "Paused" };
@@ -127,6 +128,7 @@ export function buildStatus(args: {
     resolverReason: args.resolver.reason,
     assessmentRetry: args.assessmentRetry ?? false,
     qaRetry: args.qaRetry ?? false,
+    interrupted: interruptedWork({ processAlive: args.processAlive, runState, events: args.events }),
     events: args.events,
     git: args.git,
     plan: args.plan,

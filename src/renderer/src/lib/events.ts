@@ -86,6 +86,8 @@ export function describeEvent(e: EngineEvent): string {
     case "parallel-task-finished": return `Task ${e.taskId ?? ""} finished: ${e.status ?? ""}`;
     case "parallel-merged": return `Task ${e.taskId ?? ""} merged into your branch after its check passed on the combined code${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}`;
     case "parallel-merge-failed": return `Task ${e.taskId ?? ""} not merged: ${first(e.message)} It stays on branch ${e.branch ?? ""}.`;
+    case "parallel-limit-cleared": return "No parallel task waits for a usage limit any more; the round continues";
+    case "parallel-orphans-stopped": return `Stopped ${e.count === 1 ? "a task engine" : `${e.count ?? ""} task engines`} an earlier run left running before starting the next round`;
     case "task-stepped-down": return `Task ${e.taskId ?? ""} failed review twice at ${e.from ?? ""} size: set aside and redone ${e.to ?? ""}-sized.${e.stash ? ` The first attempt is in git stash "${e.stash}".` : ""}`;
     case "task-mode-restored": return `The stepped-down work is done: back to ${e.mode ?? ""} size.`;
     case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;

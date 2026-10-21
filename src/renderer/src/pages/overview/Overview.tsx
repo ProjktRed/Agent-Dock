@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../store";
-import { engineStageLabel, runTone, roleLabel } from "../../lib/format";
+import { engineStageLabel, runFinished, runTone, roleLabel } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { RunControls } from "../../components/Shell";
 import { Empty, Tabs } from "../../components/ui";
@@ -34,8 +34,8 @@ export function OverviewPage() {
   }
 
   const s = activeStatus;
-  // A finished run keeps its last task in status; show it as done, like Progress does.
-  const finished = !!s && !s.processAlive && s.runState === "complete";
+  // A finished run keeps its last task in status; show it as done, as Progress does (same rule: runFinished).
+  const finished = !!s && runFinished(s);
   const tone = s ? runTone[s.runState] : runTone.idle;
   const stageText = s?.cycle ? roleLabel[s.cycle === "next" ? "assessment" : s.cycle] ?? s.cycle : s?.stage && s.stage !== "waiting" ? engineStageLabel(s.stage) : "—";
 

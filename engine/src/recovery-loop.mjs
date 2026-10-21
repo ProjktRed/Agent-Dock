@@ -149,7 +149,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       // QA was killed after committing but before reporting: accept the commit only if the engine's own checks pass.
       // Retry QA after such a block (HEAD moved by the unreported commit) uses the same check.
       if(!completedPass&&((pending?.operation==='qa'&&pending.status!=='completed'&&['review','qa'].includes(r.phase))||(r.forceFreshQa&&r.phase==='evidence'))){
-        const recovered=await interruptedQaCommit({workspace,task,baselineSha:r.baselineSha});
+        const recovered=await interruptedQaCommit({workspace,task,baselineSha:r.baselineSha,stateDir});
         if(recovered){
           completedPass=recovered;r.failure=recovered;r.phase='decision';r.forceFreshQa=false;r.blockedReason=null;
           await rm(path.join(stateDir,'pending-codex.json'),{force:true});pending=null;

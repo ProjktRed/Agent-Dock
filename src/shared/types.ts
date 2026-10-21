@@ -53,6 +53,8 @@ export interface ProjectSchedule {
   days: number[];
   /** Windows: also start while Agent Dock is closed (a per-user Task Scheduler task launches it). */
   whenClosed?: boolean;
+  /** Windows, with whenClosed: Task Scheduler may wake the PC from sleep for the start. Off by default. */
+  wakeToRun?: boolean;
 }
 
 export interface Agent {
@@ -239,6 +241,8 @@ export interface Settings {
   };
   safety: {
     protectedPaths: string[];
+    /** TOOL_CONFIG_PATHS were added to these settings once (a path removed later stays removed). */
+    toolConfigPathsAdded?: boolean;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
@@ -499,6 +503,8 @@ export interface ProjectStatus {
   assessmentRetry: boolean;
   /** Blocked with a finished, in-scope attempt: Retry QA reviews it again. */
   qaRetry: boolean;
+  /** The engine stopped in the middle of this step (crash, reboot, killed process), or null (interruptedWork). */
+  interrupted: string | null;
   events: EngineEvent[];
   git: GitInfo;
   plan: PlanProgress;
@@ -607,7 +613,8 @@ export interface AppSnapshot {
   settings: Settings;
   engine: EngineInfo;
   roles: WorkflowRole[];
-  paths: { config: string; projectState: string; stopAll: string };
+  /** docs: the guides bundled with the app (file name to absolute path), only those found on disk. */
+  paths: { config: string; projectState: string; stopAll: string; docs?: Partial<Record<"user-guide.md" | "how-it-works.md", string>> };
   notifyChannels: Record<NotifyChannel, boolean>;
   /** Non-secret description of saved channels (Telegram chat, email inbox and recipients). */
   notifyDetails: Partial<Record<NotifyChannel, string>>;

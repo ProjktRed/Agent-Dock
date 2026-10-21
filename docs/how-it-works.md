@@ -28,9 +28,12 @@ All **Reported** by the provider's own CLI, with an "as of" time.
 - **Tokens**: Codex `turn.completed` usage and Claude Code `result` usage from each invocation under
   `<state>\codex\`, plus llama.cpp `/metrics` samples the engine logs per Cline attempt. Local tokens count toward
   Unattended token budgets: llama.cpp's counters, or for Ollama the usage Cline reports at the end
-  of each attempt. No cost is estimated (no pricing is configured;
-  subscriptions expose none). The current context occupancy is not reported by any runtime, so it is
-  not shown as a number.
+  of each attempt. **Spend** is the cost a CLI reports (Claude Code, OpenCode, Cline on a cloud
+  provider). Codex reports only tokens, so its cost is **estimated** from Settings › Execution & safety ›
+  **Price table** (per million input, cached input and output tokens) for the models listed there, and
+  not counted for any other model. Local model servers are never priced. On a subscription the
+  figure is an estimate at the prices entered, not your bill.
+  The current context occupancy is not reported by any runtime, so it is not shown as a number.
 - **Model limits**: llama.cpp `/props` and Ollama `/api/show` context sizes are **Reported**;
   otherwise **Not exposed**.
 - **Orchestrator models**: listed by the CLI itself, free, no prompt sent. Codex: app-server
@@ -154,7 +157,8 @@ instructions) under `%APPDATA%\Agent Dock\roles\<id>`; import a folder of them f
 tab. A role runs on the agent assigned to it: an agent with the role "Workflow role" on Codex CLI or
 Claude Code, with its own model, effort and speed. Roles go through the orchestrator lock, are
 checkpointed like other engine operations (a resumed run never repeats a finished role), wait on
-usage limits like QA, and never edit files, commit or change HEAD. A role without an enabled agent
+usage limits like QA, and never commit or change HEAD; only a fixer gate edits files, and only the
+task's approved ones. A role without an enabled agent
 is skipped, with a warning at start.
 
 ## Second-opinion QA
@@ -180,11 +184,21 @@ or submodule contents.
 All per project in Projects › Workflow, unless noted.
 
 - **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
-  open. A start missed by more than 30 minutes (the app was closed) is skipped. Pair with Unattended
+  open. A start missed by more than 30 minutes (the app was closed) is skipped; the 30 minutes run
+  past midnight (a 23:50 start checked at 00:05 is on time). Pair with Unattended
   mode for overnight runs. **Also when closed** (Windows) adds a per-user task in the "Agent Dock" folder of
   Task Scheduler that launches Agent Dock minimized at that time; the app then starts what is due, so
   a run never starts twice. No admin rights; it runs only while you are signed in. Turning the option
-  or the schedule off, or removing the project, removes the task.
+  or the schedule off, or removing the project, removes the task. The task is created from an XML
+  definition: it starts on battery and keeps going if the PC goes on battery, a start missed while the
+  PC was off or asleep runs as soon as it can (still subject to the 30 minutes), it has no time limit,
+  a second start while the app it launched is open is ignored (the open app handles it), and
+  **Wake to run** (off by default) lets it wake the PC from sleep. If Task Scheduler refuses the XML,
+  the task is created the old way with default settings and a warning says so. A scheduled start that
+  could not start, or (with Also when closed) was missed, goes to the saved notification channels,
+  email included, and a Windows notification (with Settings › General › Notifications › **Usage
+  limits and engine exits** on); a start that went ahead shows in the app and goes to the channels
+  except email.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
@@ -227,7 +241,12 @@ All per project in Projects › Workflow, unless noted.
 
 ## Known limitations
 
-- Workflow roles are read-only reviewers and planners; they cannot edit files.
+- Workflow roles review read-only, except a **fixer** gate (Before QA), which edits the task's
+  approved files under the tool guard, once per attempt, and never commits. Roles run only on Codex
+  CLI or Claude Code.
+- Parallel tasks are off in Unattended mode and need a cloud Implementation agent (a local model
+  server answers one request at a time). Each task's per-role usage reaches Overview and the run's
+  totals when that task's engine finishes, not while it is still working.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file lock,
   usually antivirus or indexing). The engine retries a blocked rename for about five seconds; if a
   lock lasts longer, excluding the engine state folders from real-time scanning is the usual fix.

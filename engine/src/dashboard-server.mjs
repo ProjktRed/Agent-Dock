@@ -17,7 +17,8 @@ function gitSnapshot(workspace) {
   return new Promise((resolve) => {
     execFile(
       "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      // Monitoring only: no fsmonitor program from the repository's config runs.
+      ["-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
       { cwd: workspace, windowsHide: true },
       (error, stdout) => {
         if (error) return resolve({ changedFiles: [], currentSha: null });

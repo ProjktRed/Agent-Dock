@@ -98,7 +98,7 @@ function readClaudeModelsOnce(claudePath: string, timeoutMs = 45_000): Promise<{
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
   const settings = winArg(JSON.stringify({ fastMode: true, disableAllHooks: true }));
-  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--settings", settings];
+  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--settings", settings];
   return new Promise((resolve) => {
     const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let stderr = "";

@@ -34,9 +34,10 @@ export function elevateAvailability({ live, fingerprint }) {
 async function readScopedCurrentDiff(workspace, task, fallback) {
   if (!workspace || !task?.allowedPaths?.length) return fallback;
   try {
-    const args = ["diff", "--no-ext-diff", "--binary", "HEAD", "--", ...task.allowedPaths];
+    // Read-only: no fsmonitor program from the repository's config runs.
+    const args = ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--binary", "HEAD", "--", ...task.allowedPaths];
     const patch = (await exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout;
-    const status = (await exec("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...task.allowedPaths], { cwd: workspace, windowsHide: true })).stdout;
+    const status = (await exec("git", ["-c", "core.fsmonitor=false", "status","--porcelain=v1", "-z", "--untracked-files=all", "--", ...task.allowedPaths], { cwd: workspace, windowsHide: true })).stdout;
     const untracked = [];
     for (const record of status.split("\0").filter(Boolean)) {
       if (!record.startsWith("?? ")) continue;

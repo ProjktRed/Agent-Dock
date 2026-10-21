@@ -1,3 +1,4 @@
+import "./lib/tool-lookup";
 import os from "node:os";
 import { runReportHtml, runReportMarkdown } from "./lib/run-export";
 import path from "node:path";
@@ -16,12 +17,12 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
-import { dueScheduledStart } from "@shared/schedule";
+import { dueScheduledStart, lastPassedSlot, missedScheduledStart, SCHEDULE_GRACE_MINUTES } from "@shared/schedule";
 import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
-import { addProject, canRerun, inspectDirectory, prepareRerun, savedTaskIds, taskHistory } from "./projects";
+import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
 import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
@@ -276,31 +277,71 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
   return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}) };
 }
 
-/** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
 /** Windows: keeps Task Scheduler in step with the schedules marked "also when closed" (packaged builds only). */
-async function syncWindowsSchedules() {
+async function syncWindowsSchedulesNow() {
   if (process.platform !== "win32" || !app.isPackaged) return;
-  const problems = await syncOsSchedules(store.data.projects, process.execPath);
+  // The projects as they are when this sync runs, not when it was asked for.
+  const problems = await syncOsSchedules(store.data.projects, process.execPath, undefined, undefined, undefined, (message) => console.warn(`[schedule] ${message}`));
   if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
+}
+// Syncs run one at a time, so an older one never undoes a newer one. A sync that is queued but not yet
+// running already reads the latest projects, so further requests join it instead of queueing more.
+let scheduleSyncChain: Promise<void> = Promise.resolve();
+let scheduleSyncQueued: Promise<void> | null = null;
+function syncWindowsSchedules(): Promise<void> {
+  if (scheduleSyncQueued) return scheduleSyncQueued;
+  const next = scheduleSyncChain.then(() => { scheduleSyncQueued = null; return syncWindowsSchedulesNow(); });
+  scheduleSyncQueued = next;
+  scheduleSyncChain = next.catch(() => {});
+  return next;
+}
+
+type ScheduleEvent = "started" | "failed" | "missed";
+/**
+ * Tells you about a scheduled start beyond the in-app notice: a Windows notification (per the
+ * notification settings) and the saved remote channels, which matter most when Task Scheduler launched
+ * the app minimized and nobody is watching. A start is informational and never emailed; a failed or
+ * missed one needs you and also goes to email. Send failures are logged, never thrown.
+ */
+async function reportScheduledRun(p: Project, event: ScheduleEvent, message: string) {
+  const title = { started: "Scheduled run started", failed: "Scheduled run could not start", missed: "Scheduled run missed" }[event];
+  const urgent = event !== "started";
+  notice({ kind: event === "started" ? "info" : event === "failed" ? "error" : "warning", message: `${title} on ${p.name}${message ? `: ${message}` : "."}` });
+  const general = store.data.settings.general;
+  if (urgent ? general.notifyErrors : general.notifyInfo) osNotify(`${title} · ${p.name}`, message.slice(0, 180) || title);
+  const channels = NOTIFY_CHANNELS.map((kind) => [kind, notifyChannel(kind)] as const).filter(([kind, value]) => value && (urgent || kind !== "email"));
+  if (!channels.length) return;
+  const notify = await engine.notifyModule();
+  const note = { project: p.name, type: `scheduled-run-${event}`, title, message: message.slice(0, 600) };
+  await Promise.all(channels.map(([kind, value]) => notify.sendChannel(kind, value, note, fetch).catch((error: Error) => console.warn(`[schedule] ${kind} notification failed: ${error.message}`))));
 }
 
 /** Scheduled runs: once a minute, start each project whose scheduled slot is due and that is not running. */
 async function runSchedules(now = new Date()) {
   for (const p of store.data.projects.filter((x) => !x.archived && x.schedule?.enabled)) {
     const slot = dueScheduledStart(p.schedule, now, p.lastScheduledStart);
-    if (!slot) continue;
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot } : x));
+    // A start missed beyond the grace period (the PC was off or asleep, or Task Scheduler launched the app
+    // too late) is skipped, and reported once. Only for "also when closed" schedules: with the app-only
+    // kind, a start skipped while the app was closed is the documented behaviour, not news.
+    const missed = !slot && p.schedule?.whenClosed ? missedScheduledStart(p.schedule, now, p.lastScheduledStart) : null;
+    if (!slot && !missed) continue;
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot ?? missed } : x));
     await store.saveProjects();
+    if (missed) {
+      void reportScheduledRun(p, "missed", `The ${new Date(missed).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} start was more than ${SCHEDULE_GRACE_MINUTES} minutes late (the PC was off or asleep, or Agent Dock could not start), so it was skipped.`).catch(() => {});
+      continue;
+    }
     if (engine.isAlive(p.id)) continue;
     try {
       await runControl(p.id, "start", "schedule");
-      notice({ kind: "info", message: `Scheduled run started on ${p.name}.` });
+      void reportScheduledRun(p, "started", "").catch(() => {});
     } catch (error) {
-      notice({ kind: "error", message: `Scheduled run on ${p.name} could not start: ${(error as Error).message}` });
+      void reportScheduledRun(p, "failed", (error as Error).message).catch(() => {});
     }
   }
 }
 
+/** A control request from the app's buttons or a remote approval (source names who asked, for the action log). */
 async function runControl(id: string, action: ControlAction, source = "app") {
   const p = project(id);
   const check = launchCheck(p);
@@ -318,7 +359,8 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   if (starting) {
     const owner = await sharedGitOwnerProblem(p.path).catch(() => null);
     if (owner) {
-      const message = `QA cannot commit in ${p.name}: ${owner.dir} belongs to ${owner.owner}, not ${owner.user}. In an Administrator PowerShell run: ${ownerFixCommand(owner)}`;
+      const fix = ownerFixCommand(owner);
+      const message = `QA cannot commit in ${p.name}: ${owner.dir} belongs to ${owner.owner}, not ${owner.user}. ${fix ? `In an Administrator PowerShell run: ${fix}` : "Make your account the owner of that folder (Properties › Security › Advanced), as an Administrator."}`;
       if (action === "retry-qa") throw new Error(message);
       notice({ kind: "warning", message });
     }
@@ -483,7 +525,7 @@ function createWindow() {
     show: false,
     icon: appIcon(256),
     title: "Agent Dock",
-    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
+    webPreferences: { preload: path.join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, devTools: !app.isPackaged },
   });
   win.on("focus", checkOnFocus);
   win.once("ready-to-show", () => {
@@ -571,10 +613,17 @@ async function writeStopLauncher() {
 }
 let stopAllPath = "";
 
+/** The user guide and How it works, bundled with the app (extraResources) so Settings › Help works offline. */
+const docsDir = app.isPackaged ? path.join(process.resourcesPath, "docs") : path.join(app.getAppPath(), "docs");
+const BUNDLED_DOCS = ["user-guide.md", "how-it-works.md"] as const;
+let bundledDocs: Partial<Record<(typeof BUNDLED_DOCS)[number], string>> | null = null;
+/** Only the guides found on disk; Settings falls back to GitHub for a missing one. */
+const localDocs = () => (bundledDocs ??= Object.fromEntries(BUNDLED_DOCS.map((f) => [f, path.join(docsDir, f)] as const).filter(([, file]) => existsSync(file))));
+
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath }, notifyChannels: Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, store.hasSecret(`notify:${k}`)])) as Record<NotifyChannel, boolean>, notifyDetails: notifyDetails(), version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath, docs: localDocs() }, notifyChannels: Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, store.hasSecret(`notify:${k}`)])) as Record<NotifyChannel, boolean>, notifyDetails: notifyDetails(), version: app.getVersion() };
 }
 
 /** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
@@ -629,7 +678,7 @@ async function exportSettingsFile(): Promise<string | null> {
 }
 
 /** Settings › Advanced › Import settings: replaces settings, adds or replaces agents, roles and connections by id. */
-async function importSettingsFile(): Promise<{ agents: number; clis: number; roles: number } | null> {
+async function importSettingsFile(): Promise<{ agents: number; clis: number; roles: number; skipped: string[] } | null> {
   const picked = await dialog.showOpenDialog(win!, { title: "Import settings", properties: ["openFile"], filters: [{ name: "Agent Dock settings", extensions: ["json"] }] });
   if (picked.canceled || !picked.filePaths[0]) return null;
   const file = parseSettingsFile(await readFile(picked.filePaths[0], "utf8"));
@@ -638,7 +687,7 @@ async function importSettingsFile(): Promise<{ agents: number; clis: number; rol
   const { response } = await dialog.showMessageBox(win!, {
     type: "question", buttons: ["Import", "Cancel"], defaultId: 0, cancelId: 1, title: "Import settings",
     message: `Import settings from ${path.basename(picked.filePaths[0])}?`,
-    detail: `Exported from Agent Dock ${file.appVersion} on ${file.exportedAt.slice(0, 10)}. Your settings are replaced; ${merged.summary.agents} agent${merged.summary.agents === 1 ? "" : "s"}, ${merged.summary.roles} workflow role${merged.summary.roles === 1 ? "" : "s"} and ${merged.summary.clis} connection${merged.summary.clis === 1 ? "" : "s"} are added or replace the ones with the same id. Projects, API keys and secret values stay as they are on this computer; enter any missing keys in CLIs.`,
+    detail: `Exported from Agent Dock ${file.appVersion} on ${file.exportedAt.slice(0, 10)}. Your settings are replaced; ${merged.summary.agents} agent${merged.summary.agents === 1 ? "" : "s"}, ${merged.summary.roles} workflow role${merged.summary.roles === 1 ? "" : "s"} and ${merged.summary.clis} connection${merged.summary.clis === 1 ? "" : "s"} are added or replace the ones with the same id. Projects, API keys and secret values stay as they are on this computer; enter any missing keys in CLIs. Program locations (CLI paths, llama.cpp launcher, Node runtime) are not imported, the tool guard stays on if it is on here, and protected paths are added to yours.${merged.summary.skipped.length ? `\n\nNot imported: ${merged.summary.skipped.join(", ")}.` : ""}`,
   });
   if (response !== 0) return null;
   store.data.settings = merged.settings;
@@ -783,8 +832,12 @@ function registerIpc() {
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
     const before = store.data.projects.find((x) => x.id === p.id);
-    // The scheduler owns lastScheduledStart; a window's older copy never resets it.
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, lastScheduledStart: x.lastScheduledStart ?? null } : x));
+    // The scheduler owns lastScheduledStart; a window's older copy never resets it. A changed schedule
+    // counts its slots already past as handled, so they are never reported as missed starts.
+    const passed = JSON.stringify(before?.schedule) !== JSON.stringify(p.schedule) ? lastPassedSlot(p.schedule, new Date()) : null;
+    const handled = (last?: string | null) => (passed && (!last || Date.parse(passed) > Date.parse(last)) ? passed : last ?? null);
+    // The project folder and its state folder are set when the project is added, never by a window.
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart) } : x));
     await store.saveProjects();
     if (JSON.stringify([before?.schedule, before?.archived]) !== JSON.stringify([p.schedule, p.archived])) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
@@ -796,7 +849,8 @@ function registerIpc() {
     if (store.data.settings.activeProjectId === id) store.data.settings.activeProjectId = store.data.projects.find((x) => !x.archived)?.id ?? null;
     await Promise.all([store.saveProjects(), store.saveSettings()]);
     // Only ever delete app-managed engine state, never the workspace or a user-chosen state folder.
-    if (deleteHistory && path.resolve(p.stateDir).startsWith(path.resolve(stateRoot))) await rm(path.dirname(p.stateDir), { recursive: true, force: true });
+    const managed = managedProjectFolder(stateRoot, p.stateDir);
+    if (deleteHistory && managed) await rm(managed, { recursive: true, force: true });
     lastStatus.delete(id);
     if (p.schedule?.whenClosed) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
@@ -878,7 +932,8 @@ function registerIpc() {
   });
   handle("project:gitOwner", async (id: string) => {
     const problem = await sharedGitOwnerProblem(project(id).path);
-    return problem ? { ...problem, command: ownerFixCommand(problem) } : null;
+    // No command for a folder name a command cannot carry safely: a PowerShell comment with the manual steps instead.
+    return problem ? { ...problem, command: ownerFixCommand(problem) ?? "# No command for this folder name. In Explorer: the folder's Properties › Security › Advanced › Owner: Change" } : null;
   });
   handle("engine:status", (id: string) => engine.status(project(id)));
   handle("engine:check", (id: string) => launchCheck(project(id)));
@@ -951,6 +1006,8 @@ function registerIpc() {
       engineDir,
       store.dir,
       stateRoot,
+      // Settings › Help: the bundled guides themselves (not the folder around them).
+      ...Object.values(localDocs()),
       ...store.data.settings.skills.importedDirs,
       rolesDir,
     ];
@@ -1025,6 +1082,9 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   hardenSession(session.defaultSession);
+  // Packaged builds have no application menu (and so no reload or developer-tools shortcuts); text
+  // fields keep their own copy, paste and undo keys without it.
+  if (app.isPackaged) Menu.setApplicationMenu(null);
   await store.load();
   await roles.load();
   engineInfo = await engine.info();

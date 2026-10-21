@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export async function readJson<T>(file: string, fallback: T): Promise<T> {
@@ -17,15 +17,28 @@ async function replace(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
-  // Windows can briefly lock the target (indexers, antivirus); retry like the engine does.
+  await renameWithRetry(temporary, file);
+}
+
+/**
+ * Windows can briefly lock the target (indexers, antivirus): retry for up to about five seconds, as the
+ * engine does (engine/src/fs-retry.mjs). The temporary file is removed when the rename finally fails.
+ */
+export async function renameWithRetry(from: string, to: string, { budgetMs = 5_000, renameImpl = rename } = {}): Promise<void> {
+  let waited = 0;
   for (let attempt = 0; ; attempt++) {
     try {
-      await rename(temporary, file);
+      await renameImpl(from, to);
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (!code || !["EPERM", "EACCES", "EBUSY"].includes(code) || attempt === 49) throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(25, 5 * (attempt + 1))));
+      if (!code || !["EPERM", "EACCES", "EBUSY"].includes(code) || waited >= budgetMs) {
+        await rm(from, { force: true }).catch(() => undefined);
+        throw error;
+      }
+      const delay = Math.min(250, 10 * 2 ** Math.min(attempt, 5));
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      waited += delay;
     }
   }
 }

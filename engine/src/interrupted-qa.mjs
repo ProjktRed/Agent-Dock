@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { runCheckCommand } from "./qa-runner.mjs";
 
-const git = (cwd, ...args) => new Promise((resolve) => execFile("git", args, { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout).trim())));
+// Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
+const git = (cwd, ...args) => new Promise((resolve) => execFile("git", ["-c", "core.fsmonitor=false", ...args], { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout).trim())));
 
 /**
  * QA commits as its last step and then reports. If the engine was killed in between (Stop now, a
@@ -10,7 +11,7 @@ const git = (cwd, ...args) => new Promise((resolve) => execFile("git", args, { c
  * working tree, and the task's check command passing on it. Anything else returns null (the old,
  * safe behaviour: blocked for you).
  */
-export async function interruptedQaCommit({ workspace, task, baselineSha }) {
+export async function interruptedQaCommit({ workspace, task, baselineSha, stateDir }) {
   const head = await git(workspace, "rev-parse", "HEAD");
   if (!head || head === baselineSha) return null;
   if ((await git(workspace, "rev-list", "--parents", "-n", "1", "HEAD")) !== `${head} ${baselineSha}`) return null;
@@ -19,7 +20,7 @@ export async function interruptedQaCommit({ workspace, task, baselineSha }) {
   const allowed = (task.allowedPaths ?? []).map((p) => p.replaceAll("\\", "/"));
   if (!files.length || files.some((file) => !allowed.includes(file))) return null;
   if (!task.qaCommand) return null;
-  const check = await runCheckCommand(task.qaCommand, workspace).catch(() => null);
+  const check = await runCheckCommand(task.qaCommand, workspace, { stateDir }).catch(() => null);
   if (!check || check.exitCode !== 0) return null;
   return {
     status: "pass", commit: head, correction: "", manualReviewCause: null, task,

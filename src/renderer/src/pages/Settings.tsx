@@ -80,6 +80,15 @@ function StylePreview({ style, accent }: { style: UiStyle; accent: string }) {
 /** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
 const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
 
+/** Opens a guide bundled with the app in the default Markdown viewer (works offline); GitHub when it is missing. */
+function DocLink({ file }: { file: "user-guide.md" | "how-it-works.md" }) {
+  const { snap } = useApp();
+  const local = snap.paths.docs?.[file];
+  const online = docUrl(snap.version, file);
+  if (!local) return <a className="btn sm" href={online} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>;
+  return <button className="btn sm" title={local} onClick={() => void window.api.openPath(local).catch(() => window.open(online, "_blank", "noreferrer"))}>Open<Icon name="external" size="sm" /></button>;
+}
+
 function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
   return <K extends keyof Settings>(key: K, patch: Partial<Settings[K]>) =>
@@ -194,10 +203,10 @@ function General() {
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Help</h2>
         <SetRow title="User guide" desc="Getting started, task sizes, unattended runs, spend, pull requests, lanes and troubleshooting">
-          <a className="btn sm" href={docUrl(snap.version, "user-guide.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+          <DocLink file="user-guide.md" />
         </SetRow>
         <SetRow title="How it works" desc="Where each number comes from, the loop's roles, limits and safeguards, and known limitations">
-          <a className="btn sm" href={docUrl(snap.version, "how-it-works.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+          <DocLink file="how-it-works.md" />
         </SetRow>
       </section>
     </div>
@@ -895,7 +904,7 @@ function Advanced() {
         <SetRow title="Export and import settings" desc="A file with your agents, workflow roles, connections and settings, to move to another computer or share a setup. API keys, secret values and projects are not included. To back up everything, copy the configuration folder (credentials only open on this Windows account)." support="app">
           <div className="row" style={{ gap: 8 }}>
             <button className="btn sm" onClick={async () => { try { if (await window.api.exportSettings()) toast("success", "Settings exported"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Export…</button>
-            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${plural(r.agents, "agent")}, ${plural(r.roles, "role")} and ${plural(r.clis, "connection")}`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
+            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${plural(r.agents, "agent")}, ${plural(r.roles, "role")} and ${plural(r.clis, "connection")}${r.skipped.length ? `. Not imported: ${r.skipped.join(", ")}` : ""}`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
           </div>
         </SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>

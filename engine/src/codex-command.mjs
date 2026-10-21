@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
+import { launchSpec } from "./cmd-line.mjs";
 
 const WINDOWS_BUNDLED_RELATIVE = path.join(
   "node_modules",
@@ -45,6 +46,7 @@ function directLauncher(command, source) {
   return { command, prefixArgs: [], displayCommand: command, source };
 }
 
+// The spawn sites pass command and arguments through launchSpec (cmd-line.mjs), which escapes them for cmd.exe.
 function cmdLauncher(commandFile, env, source) {
   return {
     command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
@@ -126,7 +128,9 @@ export async function resolveCodexCommand({
 
 export function preflightCodex(launcher) {
   return new Promise((resolve, reject) => {
-    const child = spawn(launcher.command, [...launcher.prefixArgs, "--version"], {
+    const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "--version"]);
+    const child = spawn(launch.command, launch.args, {
+      ...launch.options,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -94,9 +94,10 @@ function runShellCommand(command, cwd) {
   });
 }
 
+// Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
 async function git(workspace, args) {
   try {
-    const result = await exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
+    const result = await exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     return { exitCode: Number.isInteger(error.code) ? error.code : 1, stdout: error.stdout ?? "", stderr: error.stderr ?? error.message };

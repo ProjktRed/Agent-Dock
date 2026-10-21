@@ -12,7 +12,8 @@ import { diagnostic } from "./diagnostics.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const git = async (workspace, ...args) => (await exec("git", args, { cwd: workspace, windowsHide: true })).stdout.trim();
+// Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
+const git = async (workspace, ...args) => (await exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd: workspace, windowsHide: true })).stdout.trim();
 const pendingPath = (stateDir) => path.join(stateDir, "pending-codex.json");
 
 export async function readPendingCodex(stateDir) {

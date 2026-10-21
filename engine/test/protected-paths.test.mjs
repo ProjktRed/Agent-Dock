@@ -124,6 +124,7 @@ test('shell reads cannot bypass protected paths with quoting, a cwd change, expa
 test('Claude implementation includes the trusted security hook settings in its launch arguments',()=>{
   const args=buildImplementationArgs({cli:'claude',task:{allowedPaths:['src/ok.txt']},toolGuard:false,hookArgs:['--settings','{"hooks":{"PreToolUse":[]}}']});
   assert.ok(args.includes('{"hooks":{"PreToolUse":[]}}'));
+  assert.deepEqual(args.slice(args.indexOf('--setting-sources'),args.indexOf('--setting-sources')+2),['--setting-sources','user']);
 });
 
 test('a fake patch inside a shell command cannot change its security classification',async t=>{
@@ -156,4 +157,15 @@ test('unrecognized native code tools cannot bypass the command guard',async t=>{
   for(const tool_name of ['node_repl','functions.exec','spawn_agent']) {
     assert.equal((await decide(policy,codex.toAction({tool_name,tool_input:{code:'read protected file'}}),{adapter:codex})).effect,'stop',tool_name);
   }
+});
+
+test('tool configuration folders are protected by default, even when a task lists them',async t=>{
+  const workspace=await mkdtemp(path.join(os.tmpdir(),'dock-tool-config-'));
+  t.after(()=>rm(workspace,{recursive:true,force:true}));
+  const saved=process.env.AGENT_DOCK_PROTECTED_PATHS;delete process.env.AGENT_DOCK_PROTECTED_PATHS;
+  t.after(()=>{if(saved!==undefined)process.env.AGENT_DOCK_PROTECTED_PATHS=saved;});
+  const files=['.claude/settings.json','.codex/config.toml','.opencode/opencode.json','.clinerules','.husky/pre-commit','.github/workflows/ci.yml','.vscode/tasks.json'];
+  const policy=await createPolicy({id:'T',allowedPaths:[...files,'src/a.js'],qaCommand:'npm test'},workspace);
+  for(const file of files)assert.equal(await approvedPath(policy,file),false,file);
+  assert.equal(await approvedPath(policy,'src/a.js'),true);
 });

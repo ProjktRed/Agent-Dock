@@ -117,7 +117,7 @@ export interface DesktopApi {
   /** Saves agents, roles, connections and settings (no secrets, no projects) where the user picks; null when cancelled. */
   exportSettings(): Promise<string | null>;
   /** Imports a settings export after a confirmation; null when cancelled. */
-  importSettings(): Promise<{ agents: number; clis: number; roles: number } | null>;
+  importSettings(): Promise<{ agents: number; clis: number; roles: number; skipped: string[] } | null>;
   /** Saves a diagnostics zip (secrets removed) where the user picks; null when cancelled. */
   exportDiagnostics(): Promise<string | null>;
   /** Finished runs of a project, newest first. */

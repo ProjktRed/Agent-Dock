@@ -119,6 +119,12 @@ export function failureSignature(text) {
 
 const REFUSAL = /refus|denied|not allowed|protected path|outside (the )?allowed|blocked/i;
 
+/** Work this run's own events do not show (a parallel round's task engines recording theirs): not a stall. */
+export function noteActivity() {
+  if (!S || SUPERVISOR.mode === "off") return;
+  S.lastEventAt = S.now(); S.stallAlerted = 0;
+}
+
 /** Called with every loop event after it is recorded. */
 export async function superviseEvent(event) {
   if (!S || SUPERVISOR.mode === "off") return;

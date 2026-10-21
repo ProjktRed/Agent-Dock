@@ -164,7 +164,7 @@ function ScheduleRow({ project }: { project: Project }) {
   const save = (next: Partial<ProjectSchedule>) => void saveProject({ ...project, schedule: { ...schedule, ...next } });
   return (
     <div className="setrow" style={{ flexWrap: "wrap" }}>
-      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Scheduled runs<Support kind="app" /></div><div className="ld">{describeSchedule(project.schedule)}. Starts the automation at this local time while Agent Dock is open{schedule.whenClosed ? ", or launches it when it is closed (Windows Task Scheduler)" : ""}; a start missed by more than {SCHEDULE_GRACE_MINUTES} minutes is skipped. Combine with Unattended mode for overnight runs.</div></div>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Scheduled runs<Support kind="app" /></div><div className="ld">{describeSchedule(project.schedule)}. Starts the automation at this local time while Agent Dock is open{schedule.whenClosed ? ", or launches it when it is closed (Windows Task Scheduler, also on battery)" : ""}; a start missed by more than {SCHEDULE_GRACE_MINUTES} minutes is skipped{schedule.whenClosed ? " and reported" : ""}. Combine with Unattended mode for overnight runs.</div></div>
       {schedule.enabled && (
         <div className="row wrap" style={{ gap: 6 }}>
           <input className="input tnum" type="time" style={{ width: 110 }} value={schedule.time} aria-label="Scheduled start time" onChange={(e) => scheduleMinutes(e.target.value) !== null && save({ time: e.target.value })} />
@@ -174,6 +174,11 @@ function ScheduleRow({ project }: { project: Project }) {
           {/Windows/.test(navigator.userAgent) && (
             <label className="row sub" style={{ gap: 6 }} title="Adds a task for you in Windows Task Scheduler that launches Agent Dock (minimized) at this time. No admin rights; it runs only while you are signed in.">
               <Toggle on={schedule.whenClosed === true} onChange={(v) => save({ whenClosed: v })} label="Also when Agent Dock is closed" />Also when closed
+            </label>
+          )}
+          {/Windows/.test(navigator.userAgent) && schedule.whenClosed && (
+            <label className="row sub" style={{ gap: 6 }} title="Lets Task Scheduler wake the PC from sleep for this start. It cannot start a PC that is shut down or hibernating, and Windows may block it on battery or when wake timers are off in the power plan.">
+              <Toggle on={schedule.wakeToRun === true} onChange={(v) => save({ wakeToRun: v })} label="Wake the PC to run" />Wake to run
             </label>
           )}
         </div>

@@ -20,7 +20,7 @@ function fakeSpawn(envelope, calls) {
     child.stdin.on("data", (c) => (prompt += c));
     child.stdin.on("finish", () => {
       calls.push({ command, args, options, prompt });
-      child.stdout.end(JSON.stringify(envelope));
+      child.stdout.end(JSON.stringify(typeof envelope === "function" ? envelope(calls.length) : envelope));
       child.stderr.end();
       setImmediate(() => child.emit("close", 0));
     });
@@ -49,6 +49,7 @@ test("assessment runs Sonnet read-only with structured output and a clean env", 
   const { args, options, prompt } = calls[0];
   assert.deepEqual(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2), ["--model", "sonnet"]);
   assert.ok(args.includes("--json-schema") && args.includes("dontAsk"));
+  assert.deepEqual(args.slice(args.indexOf("--setting-sources"), args.indexOf("--setting-sources") + 2), ["--setting-sources", "user"], "only the user's own Claude settings");
   assert.ok(args.includes('--settings'), 'orchestrators must load the protected-path hook');
   assert.ok(JSON.parse(args[args.indexOf('--settings')+1]).hooks.PreToolUse.length);
   assert.ok(!args.includes("Bash") && !args.includes("PowerShell"), "no unrestricted shell");
@@ -89,4 +90,21 @@ test("usage limits become the loop's resumable usage-limit error", () => {
 
 test("helpers strip only Claude session variables", () => {
   assert.deepEqual(claudeChildEnv({ CLAUDECODE: "1", CLAUDE_PID: "2", CLAUDEX: "keep", PATH: "p" }), { CLAUDEX: "keep", PATH: "p" });
+});
+
+test("a task without its Task skill line goes back to Assessment once with the reason", async () => {
+  const calls = [];
+  const w = await worker((n) => n === 1 ? ({ is_error: false, result: "", structured_output: { status: "task", task: { id: "t1", name: "n", prompt: "Goal: x", qaCommand: "npm test", allowedPaths: ["a.ts"] }, output: "", correction: "", commit: "", manualReviewCause: null } }) : ({ is_error: false, result: "", structured_output: { status: "task", task: { id: "t1", name: "n", prompt: "Task skill: implement\nGoal: x", qaCommand: "npm test", allowedPaths: ["a.ts"] }, output: "", correction: "", commit: "", manualReviewCause: null } }), calls);
+  const result = await w.assess({ objective: "obj", previous: null });
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /must contain a line "Task skill: diagnose"/);
+  assert.doesNotMatch(calls[0].prompt, /previous answer was rejected/);
+  assert.match(result.task.prompt, /^Task skill: implement/);
+});
+
+test("a second answer without the Task skill line still blocks", async () => {
+  const calls = [];
+  const w = await worker(({ is_error: false, result: "", structured_output: { status: "task", task: { id: "t1", name: "n", prompt: "Goal: x", qaCommand: "npm test", allowedPaths: ["a.ts"] }, output: "", correction: "", commit: "", manualReviewCause: null } }), calls);
+  await assert.rejects(w.assess({ objective: "obj", previous: null }), /Task skill selection is required/);
+  assert.equal(calls.length, 2);
 });

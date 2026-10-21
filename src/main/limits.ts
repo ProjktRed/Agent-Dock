@@ -82,7 +82,7 @@ export function readClaudeUsage(claudePath: string, timeoutMs = 45_000): Promise
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
   const settings = `"${JSON.stringify({ disableAllHooks: true }).replace(/"/g, '\\"')}"`;
-  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--settings", settings];
+  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--settings", settings];
   return new Promise((resolve) => {
     const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let buffer = "";
@@ -138,7 +138,7 @@ export function probeClaudeLimits(claudePath: string, timeoutMs = 90_000): Promi
   const source = "Claude Code · rate_limit_event (stream-json)";
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
-  const args = ["-p", '"Reply with the single word ok."', "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", '""', "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
+  const args = ["-p", '"Reply with the single word ok."', "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", '""', "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands"];
   return new Promise((resolve) => {
     const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
     let out = "";

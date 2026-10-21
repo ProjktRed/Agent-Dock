@@ -2,12 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
+import { CLAUDE_SETTING_SOURCES, claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
 import { detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
 import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
@@ -57,7 +58,7 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
-  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, ...hookArgs, ...launchArgs];
+  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...hookArgs, ...launchArgs];
 }
 
 function killTree(child) {
@@ -131,7 +132,8 @@ export class CloudImplementationWorker {
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {
-      const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const launch = launchSpec(this.command, args);
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
       const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += chunk; });
       child.stderr.on("data", (chunk) => { stderr += chunk; });

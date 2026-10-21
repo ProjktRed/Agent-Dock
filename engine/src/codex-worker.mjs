@@ -7,6 +7,7 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, readFilesText, taskScopeText, workerSizingText } from "./engine-tuning.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { launchSpec } from "./cmd-line.mjs";
 import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
@@ -268,7 +269,8 @@ export class CodexWorker {
     let output = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const launch = launchSpec(this.command, args);
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false;
         let closed = false;
         let closeCode = 1;
@@ -334,7 +336,19 @@ export class CodexWorker {
     return { model: override.model, reasoningEffort: override.effort ?? "medium", ...(override.fast ? { fast: true } : {}) };
   }
 
-  async assess({ objective, previous }) {
+  // A task prompt missing its "Task skill:" line is sent back to Assessment once with the reason; a second miss still blocks.
+  async assess(input) {
+    const first = await this.assessOnce(input);
+    if (first.status !== "task" || /^Task skill:/im.test(String(first.task?.prompt ?? ""))) return this.withTaskSkill(first);
+    return this.withTaskSkill(await this.assessOnce(input, 'Your previous answer was rejected: the task prompt must contain a line "Task skill: diagnose", "Task skill: implement" or "Task skill: verify" as the bounded-task-handoff skill requires. Return the task again with that line.'));
+  }
+
+  withTaskSkill(result) {
+    if (result.status === "task") taskSkillMode(result.task, "", { required: true });
+    return result;
+  }
+
+  async assessOnce({ objective, previous }, retryNote = "") {
     const result = await this.invoke([
       "You are Assessment, performing one assessment operation. Inspect this repository and its instructions.",
       managerHandoffSkill("assessment") + autoSkillCatalogText(),
@@ -352,8 +366,8 @@ export class CodexWorker {
       "Do not launch Cline, another Codex, background processes, or wait for development. Return JSON and exit.",
       "User objective: " + objective,
       "Previous completed task: " + JSON.stringify(previous ?? null),
+      ...(retryNote ? [retryNote] : []),
     ].join("\n"), "read-only", this.optionsForRole("assessment"));
-    if (result.status === "task") taskSkillMode(result.task, "", { required: true });
     return result;
   }
 

@@ -1,3 +1,4 @@
+import { engineOnlyEnv } from "./startup-env.mjs";
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
@@ -13,11 +14,11 @@ import { parseLoopOptions } from "./loop-options.mjs";
 import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
-import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
+import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
 import { applyRetention } from "./retention.mjs";
-import { awaitSupervisorReview, digest, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
+import { awaitSupervisorReview, digest, noteActivity, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { createReviewer } from "./supervisor-review.mjs";
 import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./parallel-run.mjs";
 import { fileURLToPath } from "node:url";
@@ -128,7 +129,7 @@ if (!(await state.readLive())) {
 }
 await state.configureRuntime({ contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider });
 useRunLimits(parseRunLimits(options));
-notifyFromEnv();
+notifyFromEnv(engineOnlyEnv());
 const supervisorConfig = parseSupervisorOptions(options);
 await watchUsage(state, stateDir);
 const deadline = startDeadline(state);
@@ -163,6 +164,8 @@ try {
     runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null }), stateDir: childState }),
     onEvent: loopEvent, readControl: () => state.readControl(), betweenTasks,
     onMerged: endStepDown(loopEvent),
+    // The task engines' own activity keeps the run's Supervisor from taking a long round for a stall.
+    onChildActivity: async () => noteActivity(),
   }) : await runNodeLoop({
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
     solReassessmentEnabled: options.solReassessment,

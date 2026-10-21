@@ -47,6 +47,24 @@ Runs, exportable as Markdown or HTML).
 **Also when closed** lets Task Scheduler launch Agent Dock for it. Pair a schedule with Unattended
 mode for overnight work, and check the run report in the morning.
 
+- **Late starts**: a start up to 30 minutes late still runs, also past midnight (a 23:50 start
+  checked at 00:05 counts). Later than that it is skipped, never run hours late.
+- **On a laptop** (Also when closed): the task starts on battery too, and the run is not stopped
+  when you unplug.
+- **Catch-up**: if the PC was asleep or off at the start time, Task Scheduler launches Agent Dock as
+  soon as it can. Within 30 minutes the run starts as usual; later, the start is skipped and
+  reported as **missed**.
+- **Wake to run** (with Also when closed, off by default): lets Task Scheduler wake the PC from
+  sleep for the start. It cannot start a PC that is shut down or hibernating, and Windows does not
+  wake it if wake timers are off in the power plan (Control Panel › Power Options › Change advanced
+  power settings › Sleep › Allow wake timers).
+- **Notifications**: a scheduled start that could not start, or was missed, goes to your saved
+  notification channels (webhook, Discord, Slack, Telegram and email) and to a Windows notification
+  when **Usage limits and engine exits** is on. A start that went ahead goes to the same channels
+  except email. Each missed start is reported once, and only for Also when closed schedules.
+- If Task Scheduler refuses the task's settings, Agent Dock creates it with Windows' default
+  settings instead and warns you; those may skip starts on battery and never catch up.
+
 ## Spend and usage
 
 - Overview › Usage shows your Codex and Claude plan windows as reported by the CLIs themselves.

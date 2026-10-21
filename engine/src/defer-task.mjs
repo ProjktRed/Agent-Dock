@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -8,7 +10,52 @@ import { readDeferred } from "./supervisor-review.mjs";
 import { STEP_DOWN } from "./engine-tuning.mjs";
 
 const exec = promisify(execFile);
-const git = (workspace, args) => exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const git = (workspace, args, { env, input } = {}) => {
+  const run = exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) });
+  if (input !== undefined) run.child.stdin.end(input);
+  return run.then((r) => r.stdout.trim());
+};
+
+/**
+ * Stashes the work under pathspec as `git stash push --include-untracked` does, and returns the stash commit.
+ * Parallel task engines share one repository's stash: push and then reading stash@{0} could name another
+ * engine's entry. So the stash commit is built here (index, worktree and untracked files, in temporary index
+ * files), stored under its own sha (retried while another engine holds the stash ref), and only then is the
+ * work removed from the worktree, as push removes it.
+ */
+async function stashWork(workspace, message, pathspec) {
+  const head = await git(workspace, ["rev-parse", "HEAD"]);
+  const commitTree = (tree, parents, text) => git(workspace, ["commit-tree", tree, ...parents.flatMap((p) => ["-p", p]), "-m", text]);
+  const temp = path.join(os.tmpdir(), `agent-dock-stash-${process.pid}-${randomUUID()}`);
+  const withIndex = (name) => ({ env: { ...process.env, GIT_INDEX_FILE: `${temp}-${name}` } });
+  try {
+    const indexTree = await git(workspace, ["write-tree"]);
+    const index = await commitTree(indexTree, [head], `index on ${message}`);
+    // The worktree's tracked files: the index, with every tracked change under pathspec (deletions too).
+    await git(workspace, ["read-tree", indexTree], withIndex("work"));
+    await git(workspace, ["add", "-u", "--", ...pathspec], withIndex("work"));
+    const workTree = await git(workspace, ["write-tree"], withIndex("work"));
+    // Untracked files that are not ignored, in a tree of their own (the stash's third parent).
+    const untracked = (await exec("git", ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspec], { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
+    const parents = [head, index];
+    if (untracked) {
+      await git(workspace, ["read-tree", "--empty"], withIndex("untracked"));
+      await git(workspace, ["update-index", "--add", "-z", "--stdin"], { ...withIndex("untracked"), input: untracked });
+      parents.push(await commitTree(await git(workspace, ["write-tree"], withIndex("untracked")), [], `untracked files on ${message}`));
+    }
+    const commit = await commitTree(workTree, parents, message);
+    for (let tries = 1; ; tries++) {
+      try { await git(workspace, ["stash", "store", "-m", message, commit]); break; }
+      catch (error) { if (tries >= 20) throw error; await new Promise((r) => setTimeout(r, 50 * tries)); }
+    }
+    // Stored: now the worktree goes back to HEAD under pathspec, untracked files included.
+    await git(workspace, ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...pathspec]);
+    await git(workspace, ["clean", "-fdq", "--", ...pathspec]);
+    return commit;
+  } finally {
+    for (const name of ["work", "untracked"]) await rm(`${temp}-${name}`, { force: true }).catch(() => {});
+  }
+}
 
 /**
  * Sets the current task aside at a loop boundary. Its uncommitted work (tracked and untracked, not
@@ -25,8 +72,7 @@ export async function deferTask({ workspace, stateDir, task, baselineSha, reason
   let stash = null;
   if (dirty) {
     const message = `Agent Dock: deferred ${task.id} - ${String(reason ?? "").replace(/\s+/g, " ").slice(0, 80)}`;
-    await git(workspace, ["stash", "push", "--include-untracked", "-m", message, "--", ".", ...exclude]);
-    stash = { ref: await git(workspace, ["rev-parse", "stash@{0}"]), message };
+    stash = { ref: await stashWork(workspace, message, [".", ...exclude]), message };
   }
   const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, at: new Date().toISOString(), ...(stepDown ? { stepDown } : {}) };
   const list = await readDeferred(stateDir);

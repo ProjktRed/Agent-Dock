@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process";
 import { withoutSecrets } from "./secret-env.mjs";
+import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
 
-/** Runs the task's (already validated) check command, without secrets in the environment. */
-export const runCheckCommand = (command, cwd) => runCommand(command, cwd);
+/** Runs the task's check command, without secrets in the environment. Every caller gets the same command check. */
+export async function runCheckCommand(command, cwd, { stateDir } = {}) {
+  assertSafeQaCommand({ workspace: cwd, stateDir, command });
+  return runCommand(command, cwd);
+}
 
 function runCommand(command, cwd) {
   return new Promise((resolve, reject) => {
@@ -29,7 +33,7 @@ function runCommand(command, cwd) {
 export async function captureGitBaseline(workspace) {
   const head = await runCommand("git rev-parse HEAD", workspace);
   if (head.exitCode !== 0) throw new Error(`QA requires a git repository.\n${head.output}`);
-  const status = await runCommand("git status --porcelain=v1 --untracked-files=all", workspace);
+  const status = await runCommand("git -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all", workspace);
   if (status.exitCode !== 0 || status.output.trim()) {
     throw new Error(`QA requires a clean git workspace before Cline starts.\n${status.output}`);
   }
@@ -45,7 +49,7 @@ async function inspectGitBoundary({ task, workspace, baselineHead }) {
     }
   }
 
-  const status = await runCommand("git status --porcelain=v1 -z --untracked-files=all", workspace);
+  const status = await runCommand("git -c core.fsmonitor=false status --porcelain=v1 -z --untracked-files=all", workspace);
   if (status.exitCode !== 0) return `QA could not inspect the git diff.\n${status.output}`;
   const records = status.output.split("\0").filter(Boolean);
   const changed = [];

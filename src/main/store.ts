@@ -2,7 +2,7 @@ import path from "node:path";
 import { safeStorage } from "electron";
 import type { Agent, CliConnection, Project, Settings } from "@shared/types";
 import { normalizeAppearance } from "@shared/appearance";
-import { DEFAULT_CLIS, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL } from "./defaults";
+import { DEFAULT_CLIS, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL, upgradeSafety } from "./defaults";
 import { readJson, writeJson } from "./lib/json-file";
 
 interface Persisted {
@@ -21,7 +21,7 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     workflow: { ...DEFAULT_SETTINGS.workflow, ...(s.workflow ?? {}) },
     attention: { ...DEFAULT_SETTINGS.attention, ...(s.attention ?? {}) },
     context: { ...DEFAULT_SETTINGS.context, ...(s.context ?? {}) },
-    safety: { ...DEFAULT_SETTINGS.safety, ...(s.safety ?? {}) },
+    safety: upgradeSafety(s.safety),
     usage: { ...DEFAULT_SETTINGS.usage, ...(s.usage ?? {}) },
     advanced: { ...DEFAULT_SETTINGS.advanced, ...(s.advanced ?? {}) },
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },

@@ -94,6 +94,16 @@ export interface TaskHistoryEntry {
   summary: string;
 }
 
+/**
+ * The project folder under stateRoot that holds an app-managed project's state (<stateRoot>/<id>/state),
+ * or null when the state folder is anywhere else: only that folder may be deleted with the project.
+ */
+export function managedProjectFolder(stateRoot: string, stateDir: string): string | null {
+  const folder = path.dirname(path.resolve(stateDir));
+  const relative = path.relative(path.resolve(stateRoot), folder);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !relative.split(/[\\/]/).includes("..") ? folder : null;
+}
+
 /** Task outcomes from the engine's append-only activity log, newest first. */
 /** Same rule as engine/src/task-archive.mjs. */
 const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;

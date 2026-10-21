@@ -70,6 +70,13 @@ export function defaultAgents(models: { qa: string; assessment: string; elevate:
   ];
 }
 
+/**
+ * Folders and files that configure tools which run code (agent CLI settings and hooks, git hooks, CI
+ * workflows, editor tasks): protected by default, and added to existing settings once (store.ts).
+ * Same list as engine/src/guard/protected-paths.mjs.
+ */
+export const TOOL_CONFIG_PATHS = [".claude/", ".codex/", ".opencode/", ".clinerules", ".husky/", ".github/workflows/", ".vscode/"];
+
 export const DEFAULT_SETTINGS: Settings = {
   general: {
     launchAtStartup: false,
@@ -103,7 +110,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },
-  safety: { protectedPaths: [".git/", ".env*", "secrets/"] },
+  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true },
   usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
@@ -112,3 +119,10 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingComplete: false,
   activeProjectId: null,
 };
+
+/** Saved safety settings, with TOOL_CONFIG_PATHS added once to settings from before they were defaults. Nothing is removed. */
+export function upgradeSafety(saved: Partial<Settings["safety"]> | undefined): Settings["safety"] {
+  if (!saved) return structuredClone(DEFAULT_SETTINGS.safety);
+  const paths = Array.isArray(saved.protectedPaths) ? saved.protectedPaths : DEFAULT_SETTINGS.safety.protectedPaths;
+  return { ...saved, protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true };
+}

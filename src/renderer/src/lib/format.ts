@@ -1,4 +1,4 @@
-import type { ConnectionState, RunState } from "@shared/types";
+import type { ConnectionState, ProjectStatus, RunState } from "@shared/types";
 
 /** The UI is in English, so dates and numbers are too, whatever the Windows region. */
 const LOCALE = "en-US";
@@ -83,6 +83,17 @@ export const runTone: Record<RunState, { dot: string; text: string; live?: boole
   blocked: { dot: "err", text: "err" },
   "waiting-limit": { dot: "warn", text: "warn" },
 };
+
+/**
+ * A finished run (Overview's header and Progress): the engine is not running, nothing was interrupted
+ * mid-step, and it either reported "Objective complete" or stopped/idled with every plan item checked.
+ * Attention, blocked, paused and waiting states never count.
+ */
+export function runFinished(s: Pick<ProjectStatus, "processAlive" | "runState" | "plan" | "interrupted">): boolean {
+  if (s.processAlive || s.interrupted) return false;
+  const planDone = s.plan.total > 0 && s.plan.completed >= s.plan.total;
+  return s.runState === "complete" || (planDone && (s.runState === "idle" || s.runState === "stopped"));
+}
 
 export const connectionMeta: Record<ConnectionState, { label: string; tone: string }> = {
   connected: { label: "Connected", tone: "ok" },
