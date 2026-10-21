@@ -17,6 +17,7 @@ import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
 import { dueScheduledStart } from "@shared/schedule";
+import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
@@ -464,14 +465,21 @@ async function checkAllClis() {
 
 // ---------- window and tray ----------
 
+/** The page's own background for the saved style and shade, so the window opens without a flash of another color. */
+function windowBackground(settings: Settings) {
+  const { style, theme } = normalizeAppearance(settings.general);
+  return STYLE_BACKGROUNDS[style][theme];
+}
+
 function createWindow() {
+  const { style, theme, accent, styleAccents } = normalizeAppearance(store.data.settings.general);
   win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 620,
     frame: false,
-    backgroundColor: "#152131",
+    backgroundColor: STYLE_BACKGROUNDS[style][theme],
     show: false,
     icon: appIcon(256),
     title: "Agent Dock",
@@ -496,8 +504,10 @@ function createWindow() {
     event.preventDefault();
     if (isExternalWebUrl(url)) void shell.openExternal(url);
   });
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void win.loadFile(path.join(__dirname, "../renderer/index.html"));
+  // The style rides on the query string so the renderer applies it before the settings snapshot arrives.
+  const look = { ui: style, theme, accent: styleAccent({ accent, styleAccents }, style) };
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${new URLSearchParams(look)}`);
+  else void win.loadFile(path.join(__dirname, "../renderer/index.html"), { query: look });
 }
 
 function showWindow() {
@@ -638,6 +648,7 @@ async function importSettingsFile(): Promise<{ agents: number; clis: number; rol
   for (const role of merged.roles) await roles.save(role);
   limits.schedule(store.data.settings);
   scheduleUpdateChecks();
+  win?.setBackgroundColor(windowBackground(store.data.settings));
   return merged.summary;
 }
 
@@ -669,11 +680,13 @@ function registerIpc() {
     });
 
   handle("snapshot", snapshot);
-  handle("settings:save", async (settings: Settings) => {
+  handle("settings:save", async (incoming: Settings) => {
     const previous = store.data.settings.usage;
     const previousUpdates = store.data.settings.updates;
+    const settings: Settings = { ...incoming, general: { ...incoming.general, ...normalizeAppearance(incoming.general ?? {}) } };
     store.data.settings = settings;
     await store.saveSettings();
+    win?.setBackgroundColor(windowBackground(settings));
     if (previous.codexPollMinutes !== settings.usage.codexPollMinutes || previous.claudePollMinutes !== settings.usage.claudePollMinutes) limits.schedule(settings);
     if (previousUpdates.autoCheck !== settings.updates.autoCheck || previousUpdates.checkMinutes !== settings.updates.checkMinutes) scheduleUpdateChecks();
     app.setLoginItemSettings({ openAtLogin: settings.general.launchAtStartup, args: settings.general.startMinimized ? ["--minimized"] : [] });

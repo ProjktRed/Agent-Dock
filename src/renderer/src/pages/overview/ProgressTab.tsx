@@ -298,7 +298,7 @@ export function ProgressTab() {
         <div className="sub" style={{ textAlign: "right" }}>
           Plan source
           <br />
-          <span className="mono" style={{ color: "#b9c7d8" }}>{plan.error ? "not found" : plan.source}</span>
+          <span className="mono" style={{ color: "var(--t-soft, #b9c7d8)" }}>{plan.error ? "not found" : plan.source}</span>
         </div>
       </section>
 
@@ -324,7 +324,7 @@ export function ProgressTab() {
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
                   </div>
                   <div className="sub">{c.key === "implementation" ? implLabel : c.agent}</div>
-                  {active && <div style={{ fontSize: 12, color: "#b9c7d8" }}>{s.activeModel ?? s.label}</div>}
+                  {active && <div style={{ fontSize: 12, color: "var(--t-soft, #b9c7d8)" }}>{s.activeModel ?? s.label}</div>}
                 </div>
                 {i < CYCLE.length - 1 && <span className="arrow" aria-hidden="true"><Icon name="chevronRight" /></span>}
               </Fragment>
@@ -335,7 +335,7 @@ export function ProgressTab() {
           <div className="loop" aria-hidden="true" />
           <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
         </div>
-        <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: 12 }}>
+        <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: "var(--radius-well-sm, 12px)" }}>
           <span><span className="sub">Stage</span> {engineStageLabel(s.stage)}</span>
           <span><span className="sub">Agent</span> {s.activeRole ?? "—"}</span>
           <span><span className="sub">Status</span> <span className={s.processAlive ? "ok" : "mut"}>{s.label}</span></span>
@@ -386,7 +386,7 @@ export function ProgressTab() {
                   <div><dt>QA command</dt><dd className={s.task.qaCommand ? "mono" : undefined} title={s.task.qaCommand}>{s.task.qaCommand || "—"}</dd></div>
                   <div><dt>Context</dt><dd>{s.contextTokens ? `${num(s.contextTokens)} tokens` : "—"}</dd></div>
                 </dl>
-                <div className="well" style={{ padding: "12px 14px", borderRadius: 12 }}>
+                <div className="well" style={{ padding: "12px 14px", borderRadius: "var(--radius-well-sm, 12px)" }}>
                   <div className="eyebrow" style={{ marginBottom: 6 }}>QA checks</div>
                   <ul className="list">
                     {Object.entries(s.qaChecks).map(([k, v]) => (

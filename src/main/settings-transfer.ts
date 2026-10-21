@@ -1,4 +1,5 @@
 import type { Agent, CliConnection, Settings, WorkflowRole } from "@shared/types";
+import { normalizeAppearance } from "@shared/appearance";
 
 // Settings export and import (Settings › Advanced): carry agents, workflow roles, connections and
 // settings to another machine or share a setup. Never included: stored secrets (API keys, notification
@@ -72,10 +73,11 @@ export interface ImportResult {
 export function mergeImport(current: { settings: Settings; agents: Agent[]; clis: CliConnection[] }, file: SettingsFile): ImportResult {
   const incoming = file.settings;
   const local = current.settings;
+  const general = { ...local.general, ...(incoming.general ?? {}), defaultProject: local.general.defaultProject };
   const settings: Settings = {
     ...local,
     ...incoming,
-    general: { ...local.general, ...(incoming.general ?? {}), defaultProject: local.general.defaultProject },
+    general: { ...general, ...normalizeAppearance(general) },
     updates: { ...local.updates, ...(incoming.updates ?? {}), source: local.updates.source, branch: local.updates.branch },
     skills: local.skills,
     activeProjectId: local.activeProjectId,

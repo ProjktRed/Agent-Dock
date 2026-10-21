@@ -207,13 +207,20 @@ export interface AttentionPolicy {
   blocker: "windows";
 }
 
+export type UiStyle = "neumorphic" | "standard" | "cyberpunk";
+
 export interface Settings {
   general: {
     launchAtStartup: boolean;
     startMinimized: boolean;
     keepInTray: boolean;
+    /** Interface style; theme (Dark/Darker) applies to every style. */
+    style: UiStyle;
     theme: "dark" | "darker";
+    /** The Neumorphic accent (the original look, so older settings keep theirs). */
     accent: string;
+    /** The accent remembered for each of the other styles. */
+    styleAccents: { standard: string; cyberpunk: string };
     notifyCompleted: boolean;
     notifyErrors: boolean;
     notifyInfo: boolean;

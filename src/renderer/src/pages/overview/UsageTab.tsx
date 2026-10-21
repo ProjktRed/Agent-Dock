@@ -88,7 +88,7 @@ export function UsageTab() {
       <div className="row wrap" style={{ gap: 16 }}>
         <span className="row sub" style={{ gap: 6 }}><span className="sw c1" />Reported by provider</span>
         <span className="row sub" style={{ gap: 6 }}><span className="sw c4" />Manual tracking</span>
-        <span className="row sub" style={{ gap: 6 }}><span className="sw" style={{ border: "1px dashed #94A8BF" }} />Not exposed / not applicable</span>
+        <span className="row sub" style={{ gap: 6 }}><span className="sw" style={{ border: "1px dashed var(--t2)" }} />Not exposed / not applicable</span>
         <span className="grow" />
         <button className="btn sm" onClick={() => setNotes(!notes)}>{notes ? "Hide notes" : "Show notes"}</button>
         <button className="btn sm" onClick={() => setChecksOpen(true)}>Limit checks…</button>

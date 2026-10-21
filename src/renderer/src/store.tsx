@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ControlAction, Notice } from "@shared/api";
 import type { Agent, AppSnapshot, CliConnection, CliHealth, Project, ProjectStatus, Settings, WorkflowRole } from "@shared/types";
+import { styleAccent } from "@shared/appearance";
 
 export type Route = "overview" | "projects" | "workflow" | "agents" | "clis" | "settings";
 interface Toast extends Notice {
@@ -68,10 +69,14 @@ export function AppProvider({ initial, children }: { initial: AppSnapshot; child
     };
   }, [toast]);
 
+  // Style (data-ui), shade (data-theme, every style) and --a, always the accent in effect for the style.
+  const { style, theme } = snap.settings.general;
+  const accent = styleAccent(snap.settings.general, style);
   useEffect(() => {
-    document.documentElement.dataset.theme = snap.settings.general.theme;
-    document.documentElement.style.setProperty("--a", snap.settings.general.accent);
-  }, [snap.settings.general.theme, snap.settings.general.accent]);
+    document.documentElement.dataset.ui = style;
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.setProperty("--a", accent);
+  }, [style, theme, accent]);
 
   const refresh = useCallback(async () => setSnap(await window.api.snapshot()), []);
   const saveSettings = useCallback(async (next: Settings) => {

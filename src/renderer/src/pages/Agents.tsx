@@ -217,7 +217,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
           <span className="row" style={{ gap: 8 }}>{local ? "Thinking" : "Reasoning effort"}<Support kind="engine" /></span>
           {cloud ? (
             current && current.efforts.length === 0 ? (
-              <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>{current.displayName} has no effort setting</div>
+              <div className="chip dash mut" style={{ height: 36, borderRadius: "var(--radius-ctl, 11px)", padding: "0 12px" }}>{current.displayName} has no effort setting</div>
             ) : (
               <>
                 <select className="sel" value={draft.reasoning ?? "medium"} onChange={(e) => set("reasoning", e.target.value)}>
@@ -245,13 +245,13 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
               </span>
             </>
           ) : (
-            <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }}>Not used by this role</div>
+            <div className="chip dash mut" style={{ height: 36, borderRadius: "var(--radius-ctl, 11px)", padding: "0 12px" }}>Not used by this role</div>
           )}
         </div>
         {local && (
           <div className="field">
             <span>Speed</span>
-            <div className="chip dash mut" style={{ height: 36, borderRadius: 11, padding: "0 12px" }} title="Local speed comes from your hardware and llama.cpp / Ollama server settings">Not applicable for local models</div>
+            <div className="chip dash mut" style={{ height: 36, borderRadius: "var(--radius-ctl, 11px)", padding: "0 12px" }} title="Local speed comes from your hardware and llama.cpp / Ollama server settings">Not applicable for local models</div>
           </div>
         )}
         {cloud && (
@@ -469,7 +469,7 @@ export function AgentsPage() {
               </button>
             );
           })}
-          <button className="opt" style={{ flex: 1, minWidth: 160, justifyContent: "center", alignItems: "center", boxShadow: "none", border: "1.5px dashed rgba(148,168,191,.35)", background: "transparent", color: "var(--t2)" }} onClick={() => addAgent("custom")}>
+          <button className="opt" style={{ flex: 1, minWidth: 160, justifyContent: "center", alignItems: "center", boxShadow: "none", border: "1.5px dashed var(--add-edge, rgba(148,168,191,.35))", background: "transparent", color: "var(--t2)" }} onClick={() => addAgent("custom")}>
             <Icon name="plus" />Workflow role agent
           </button>
         </div>

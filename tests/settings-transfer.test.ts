@@ -66,4 +66,15 @@ describe("settings export and import", () => {
     expect(r.roles.map((x) => x.id)).toEqual(["security-review"]);
     expect(r.summary).toEqual({ agents: theirAgents.length, clis: theirClis.length, roles: 1 });
   });
+
+  it("imports the interface style and its accents; an invalid style or accent falls back to the default", () => {
+    const other = settings();
+    other.general.style = "cyberpunk"; other.general.styleAccents = { standard: "#A78BFA", cyberpunk: "#FF3864" };
+    const file = parseSettingsFile(JSON.stringify(exportSettings({ settings: other, agents: [], clis: [], roles: [], appVersion: "0.36.0" })));
+    const r = mergeImport({ settings: settings(), agents: [], clis: [] }, file);
+    expect([r.settings.general.style, r.settings.general.styleAccents]).toEqual(["cyberpunk", { standard: "#A78BFA", cyberpunk: "#FF3864" }]);
+    const bad = { ...file, settings: { general: { style: "glass", accent: "blue" } as unknown as Settings["general"] } };
+    const b = mergeImport({ settings: settings(), agents: [], clis: [] }, bad);
+    expect([b.settings.general.style, b.settings.general.accent, b.settings.general.styleAccents]).toEqual(["neumorphic", "#82A9E8", DEFAULT_SETTINGS.general.styleAccents]);
+  });
 });

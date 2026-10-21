@@ -1,6 +1,7 @@
 import path from "node:path";
 import { safeStorage } from "electron";
 import type { Agent, CliConnection, Project, Settings } from "@shared/types";
+import { normalizeAppearance } from "@shared/appearance";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, FORMER_SOURCE, SOURCE_URL } from "./defaults";
 import { readJson, writeJson } from "./lib/json-file";
 
@@ -16,7 +17,7 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
   return {
     ...DEFAULT_SETTINGS,
     ...s,
-    general: { ...DEFAULT_SETTINGS.general, ...(s.general ?? {}) },
+    general: { ...DEFAULT_SETTINGS.general, ...(s.general ?? {}), ...normalizeAppearance(s.general ?? {}) },
     workflow: { ...DEFAULT_SETTINGS.workflow, ...(s.workflow ?? {}) },
     attention: { ...DEFAULT_SETTINGS.attention, ...(s.attention ?? {}) },
     context: { ...DEFAULT_SETTINGS.context, ...(s.context ?? {}) },

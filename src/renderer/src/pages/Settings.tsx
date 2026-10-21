@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { takeSettingsSection, type SettingsSection } from "../lib/nav";
-import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo } from "@shared/types";
+import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo, UiStyle } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
+import { STYLE_ACCENTS, styleAccent, withStyleAccent } from "@shared/appearance";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
 import { connectionMeta, dateTime, num, plural, roleLabel, tokens } from "../lib/format";
@@ -21,13 +22,60 @@ const SECTIONS: { value: Section; label: string }[] = [
 ];
 /** Unattended limits that keep their decimals; the others are whole counts. */
 const DECIMAL_LIMITS = new Set<string>(["maxHours", "maxMillionTokens", "maxCostUsd", "maxMillionTokensDay", "maxCostUsdDay"]);
-const ACCENTS = [
-  ["Pastel blue", "#82A9E8"],
-  ["Lavender", "#AD9ADA"],
-  ["Mint", "#70C7A5"],
-  ["Amber", "#DAB777"],
-  ["Rose", "#D98291"],
+const STYLES: { value: UiStyle; label: string; note: string }[] = [
+  { value: "neumorphic", label: "Neumorphic", note: "Today's look: soft raised and sunken surfaces." },
+  { value: "standard", label: "Standard", note: "Flat dark panels, thin borders, crisp type." },
+  { value: "cyberpunk", label: "Cyberpunk", note: "Neon on black, angled edges, terminal type." },
 ];
+
+/** A tiny window drawn in the style's own colors (not the current one's): titlebar, sidebar with the active nav item, one card. */
+function StylePreview({ style, accent }: { style: UiStyle; accent: string }) {
+  const cut = (n: number) => `polygon(${n}px 0, 100% 0, 100% calc(100% - ${n}px), calc(100% - ${n}px) 100%, 0 100%, 0 ${n}px)`;
+  const line = `1px solid color-mix(in srgb, ${accent} 40%, transparent)`;
+  const look = {
+    neumorphic: {
+      frame: { background: "#152131", borderRadius: 8 },
+      bar: { background: "#152131", boxShadow: "0 2px 4px #0a111a" },
+      side: { background: "#152131", borderRadius: 5, boxShadow: "2px 2px 4px #0a111a, -2px -2px 4px #21324a" },
+      card: { background: "#152131", borderRadius: 6, boxShadow: "2px 2px 5px #0a111a, -2px -2px 5px #21324a" },
+      nav: { background: accent, borderRadius: 3 },
+      fill: { background: accent, borderRadius: 3 },
+      btn: { background: accent, borderRadius: 5, boxShadow: "2px 2px 4px #0a111a, -1px -1px 3px #21324a" },
+    },
+    standard: {
+      frame: { background: "#17191e", borderRadius: 6, border: "1px solid #2f343d" },
+      bar: { background: "#1f2228", borderBottom: "1px solid #2f343d" },
+      side: { background: "#1f2228", borderRadius: 4, border: "1px solid #2f343d" },
+      card: { background: "#1f2228", borderRadius: 5, border: "1px solid #2f343d" },
+      nav: { background: accent, borderRadius: 2 },
+      fill: { background: accent, borderRadius: 2 },
+      btn: { background: accent, borderRadius: 4 },
+    },
+    cyberpunk: {
+      frame: { background: "#0a0614", border: line, clipPath: cut(8) },
+      bar: { background: "#120b26", borderBottom: line },
+      side: { background: "#120b26", border: line, clipPath: cut(5) },
+      card: { background: "#120b26", border: line, clipPath: cut(6) },
+      nav: { background: accent, boxShadow: `0 0 6px ${accent}` },
+      fill: { background: accent, boxShadow: `0 0 6px ${accent}` },
+      btn: { background: accent, clipPath: cut(3) },
+    },
+  }[style];
+  return (
+    <div aria-hidden="true" style={{ ...look.frame, height: 78, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ ...look.bar, height: 10, flex: "none" }} />
+      <div style={{ flex: 1, display: "flex", gap: 6, padding: 6 }}>
+        <div style={{ ...look.side, width: 28, padding: 4 }}>
+          <div style={{ ...look.nav, height: 4 }} />
+        </div>
+        <div style={{ ...look.card, flex: 1, padding: 7, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div style={{ ...look.fill, height: 5, width: "70%" }} />
+          <div style={{ ...look.btn, height: 10, width: 30, alignSelf: "flex-end" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
 const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
@@ -85,8 +133,9 @@ function GuardrailsNote() {
 }
 
 function General() {
-  const { snap } = useApp();
+  const { snap, saveSettings } = useApp();
   const g = snap.settings.general;
+  const accent = styleAccent(g, g.style).toUpperCase();
   const patch = useSettingsPatch();
   return (
     <div className="stack" style={{ gap: 20 }}>
@@ -98,12 +147,31 @@ function General() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Appearance</h2>
-        <SetRow title="Theme" support="app">
+        <div className="setrow" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <div className="lt row" style={{ gap: 8 }}>Style<Support kind="app" /></div>
+          <div className="row" role="radiogroup" aria-label="Style" style={{ gap: 14, alignItems: "stretch" }}>
+            {STYLES.map((s) => {
+              const on = g.style === s.value;
+              return (
+                <button key={s.value} className={`opt ${on ? "on" : ""}`} role="radio" aria-checked={on} style={{ flex: 1, minWidth: 0, flexDirection: "column", alignItems: "stretch", gap: 8 }} onClick={() => patch("general", { style: s.value })}>
+                  <StylePreview style={s.value} accent={styleAccent(g, s.value)} />
+                  <span className="row" style={{ gap: 8, justifyContent: "space-between" }}>
+                    <b>{s.label}</b>
+                    {on && <span className="chip">Active</span>}
+                  </span>
+                  <span className="ld">{s.note}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <SetRow title="Theme" desc="Applies to every style" support="app">
           <Tabs label="Theme" radio small value={g.theme} onChange={(v) => patch("general", { theme: v })} options={[{ value: "dark", label: "Dark" }, { value: "darker", label: "Darker" }]} />
         </SetRow>
-        <SetRow title="Accent color" desc="Focus, selection and primary actions" support="app">
+        <SetRow title="Accent color" desc="Focus, selection and primary actions. Remembered per style." support="app">
           <div className="row" style={{ gap: 14 }}>
-            {ACCENTS.map(([name, hex]) => <button key={hex} className={`swatch ${g.accent.toUpperCase() === hex ? "on" : ""}`} style={{ background: hex }} aria-label={name} aria-pressed={g.accent.toUpperCase() === hex} onClick={() => patch("general", { accent: hex })} />)}
+            {STYLE_ACCENTS[g.style].map(([name, hex]) => <button key={hex} className={`swatch ${accent === hex ? "on" : ""}`} style={{ background: hex, color: hex }} aria-label={name} aria-pressed={accent === hex} onClick={() => saveSettings({ ...snap.settings, general: withStyleAccent(g, g.style, hex) })} />)}
+            <span className="sub" style={{ minWidth: 72 }}>{STYLE_ACCENTS[g.style].find(([, hex]) => hex === accent)?.[0] ?? "Custom"}</span>
           </div>
         </SetRow>
       </section>
