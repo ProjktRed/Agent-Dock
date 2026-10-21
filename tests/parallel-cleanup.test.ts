@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { cleanParallelWorktrees, isInside, listParallelLeftovers, parallelRoot, parseWorktreeList, planParallelCleanup } from "../src/main/lib/worktree";
+import { canonicalPath, cleanParallelWorktrees, isInside, listParallelLeftovers, parallelRoot, parseWorktreeList, planParallelCleanup } from "../src/main/lib/worktree";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
@@ -47,6 +47,22 @@ describe("parallel worktree cleanup helpers", () => {
 });
 
 describe("cleanParallelWorktrees", () => {
+  it("finds the worktrees when the project path uses an 8.3 short name", async () => {
+    // Windows CI temp folders are short names (C:UsersRUNNER~1); git lists the long ones.
+    if (process.platform !== "win32") return;
+    const dir = mkdtempSync(path.join(os.tmpdir(), "parallel-clean-long-folder-name-"));
+    const project = path.join(dir, "application-with-a-long-name");
+    execFileSync("git", ["init", "-q", "-b", "main", project]);
+    git(project, "config", "user.email", "t@t.invalid"); git(project, "config", "user.name", "t");
+    writeFileSync(path.join(project, "a.txt"), "a"); git(project, "add", "."); git(project, "commit", "-qm", "init");
+    git(project, "worktree", "add", "-q", "-b", "agent-dock/parallel-t1-abc", path.join(`${project}-parallel`, "t1-abc"), "HEAD");
+    const short = execFileSync("powershell.exe", ["-NoProfile", "-Command", "(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:P).ShortPath"], { encoding: "utf8", env: { ...process.env, P: project } }).trim();
+    for (const form of new Set([project, short])) {
+      expect((await listParallelLeftovers(form)).worktrees.map((w) => path.basename(w.path))).toEqual(["t1-abc"]);
+    }
+    expect(await cleanParallelWorktrees(short)).toEqual({ worktrees: 1, branches: 1, problems: [] });
+    expect(canonicalPath(short)).toBe(canonicalPath(project));
+  });
   it("removes kept parallel worktrees and branches without touching the project's node_modules", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "parallel-clean-"));
     const project = path.join(dir, "app");
@@ -100,7 +116,7 @@ describe("cleanParallelWorktrees", () => {
     const branches = git(project, "branch", "--format=%(refname:short)").split(/\r?\n/).sort();
     expect(branches).toEqual(["agent-dock/lane-docs", "agent-dock/parallel-lane1-abc", "agent-dock/parallel-mine", "agent-dock/parallel-other-xyz", "feature", "main"]);
     const worktrees = parseWorktreeList(git(project, "worktree", "list", "--porcelain")).map((w) => w.path);
-    expect(worktrees).toEqual([project, lane, outside].map((p) => path.resolve(p)));
+    expect(worktrees.map(canonicalPath)).toEqual([project, lane, outside].map(canonicalPath));
     expect(existsSync(lane) && existsSync(outside)).toBe(true);
     expect(await listParallelLeftovers(project, stateDir)).toEqual({ worktrees: [], branches: [] });
   });

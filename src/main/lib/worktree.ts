@@ -44,6 +44,15 @@ export const PARALLEL_BRANCH = "agent-dock/parallel-";
 /** The folder parallel tasks keep their worktrees in: next to the project, like lanes. */
 export const parallelRoot = (projectPath: string) => `${path.resolve(projectPath)}-parallel`;
 
+/** A path as git writes it: long names, not 8.3 short ones (C:UsersRUNNER~1), which Node keeps as given.
+ *  A part that does not exist (a prunable worktree) keeps its name under its real parent. */
+export function canonicalPath(target: string): string {
+  const resolved = path.resolve(target);
+  try { return realpathSync.native(resolved); } catch { /* missing */ }
+  const parent = path.dirname(resolved);
+  return parent === resolved ? resolved : path.join(canonicalPath(parent), path.basename(resolved));
+}
+
 /** True when `target` is strictly inside `root` (never the root itself, never a sibling like "<root>2"). */
 export function isInside(root: string, target: string): boolean {
   const rel = path.relative(path.resolve(root), path.resolve(target));
@@ -93,8 +102,10 @@ export async function listParallelLeftovers(projectPath: string, stateDir?: stri
     git(projectPath, "worktree", "list", "--porcelain"),
     git(projectPath, "for-each-ref", "--format=%(refname:short)", `refs/heads/${PARALLEL_BRANCH}*`),
   ]);
-  const ownNames = [...folderNames(parallelRoot(projectPath)), ...(stateDir ? folderNames(path.join(stateDir, "parallel")) : [])];
-  return planParallelCleanup(projectPath, parseWorktreeList(list), refs.split(/\r?\n/).map((b) => b.trim()).filter(Boolean), ownNames);
+  const project = canonicalPath(projectPath);
+  const ownNames = [...folderNames(parallelRoot(project)), ...(stateDir ? folderNames(path.join(stateDir, "parallel")) : [])];
+  const worktrees = parseWorktreeList(list).map((w) => ({ ...w, path: canonicalPath(w.path) }));
+  return planParallelCleanup(project, worktrees, refs.split(/\r?\n/).map((b) => b.trim()).filter(Boolean), ownNames);
 }
 
 /** Removes a worktree's node_modules link, never what it points to (mirrors the engine's unlinkModules):
@@ -113,15 +124,15 @@ export function unlinkModules(worktree: string): boolean {
  *  branches (see planParallelCleanup), then prunes and removes the "-parallel" folder when it is empty.
  *  Unmerged work on them is lost. */
 export async function cleanParallelWorktrees(projectPath: string, stateDir?: string): Promise<{ worktrees: number; branches: number; problems: string[] }> {
-  const root = parallelRoot(projectPath), plan = await listParallelLeftovers(projectPath, stateDir), problems: string[] = [];
+  const root = parallelRoot(canonicalPath(projectPath)), plan = await listParallelLeftovers(projectPath, stateDir), problems: string[] = [];
   let worktrees = 0, branches = 0;
-  const realRoot = existsSync(root) ? realpathSync(root) : root;
+  const realRoot = existsSync(root) ? realpathSync.native(root) : root;
   const skipped = new Set<string>();
   for (const w of plan.worktrees) {
     if (!isInside(root, w.path)) { problems.push(`${w.path} is outside ${root}; left alone.`); continue; }
     if (existsSync(w.path)) {
       // The folder itself must resolve inside the "-parallel" folder too (not be a link to somewhere else).
-      if (!isInside(realRoot, realpathSync(w.path))) { problems.push(`${w.path} points outside ${root}; left alone.`); if (w.branch) skipped.add(w.branch); continue; }
+      if (!isInside(realRoot, realpathSync.native(w.path))) { problems.push(`${w.path} points outside ${root}; left alone.`); if (w.branch) skipped.add(w.branch); continue; }
       if (!unlinkModules(w.path)) { problems.push(`Could not remove the node_modules link in ${w.path}; left alone.`); if (w.branch) skipped.add(w.branch); continue; }
     }
     try { await git(projectPath, "worktree", "remove", "--force", w.path); worktrees++; }
