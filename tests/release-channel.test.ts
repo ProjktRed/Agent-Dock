@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -250,5 +251,38 @@ describe("smaller (delta) updates", () => {
     // A different installed exe cannot be patched: the update falls back to the full download.
     writeFileSync(path.join(installed, "AgentDock.exe"), random(100));
     await expect(assembleFromDelta(await buildIndex(target), delta, installed, out)).rejects.toThrow(/not the one this patch was made from/);
+  });
+  it("Linux: the AppImage ships as a signed binary patch of the previous one, checked against the signed SHA-256", async () => {
+    const { appImagePatch } = await import("../scripts/release-delta.mjs");
+    const { applyAppImageDelta, deltaUsable } = await import("../src/main/release-channel");
+    let seed = 11;
+    const random = (n: number) => Buffer.from(Array.from({ length: n }, () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255));
+    const dir = await tmp();
+    const oldImage = random(2 * 1024 * 1024);
+    const newImage = Buffer.concat([oldImage.subarray(0, 700_000), Buffer.from("new renderer bundle"), oldImage.subarray(700_000)]);
+    const [oldFile, newFile] = [path.join(dir, "AgentDock-0.37.1-linux-x86_64.AppImage"), path.join(dir, "AgentDock-0.38.0-linux-x86_64.AppImage")];
+    writeFileSync(oldFile, oldImage); writeFileSync(newFile, newImage);
+    const patchFile = path.join(dir, "AgentDock-0.38.0-from-0.37.1-linux-x86_64.adpatch");
+    expect(appImagePatch(oldFile, newFile, patchFile).written).toBe(true);
+    // A rebuilt-from-scratch AppImage gives no useful patch, so none is written.
+    const unrelated = path.join(dir, "Unrelated.AppImage");
+    writeFileSync(unrelated, randomBytes(oldImage.length));
+    expect(appImagePatch(oldFile, unrelated, path.join(dir, "none.adpatch")).written).toBe(false);
+    expect(existsSync(path.join(dir, "none.adpatch"))).toBe(false);
+    // Signed into the Linux manifest without a file index; Windows still needs one, and a .zip is no Linux delta.
+    const text = await buildManifest({ zip: newFile, version: "0.38.0", commit: COMMIT, platform: "linux-x64", delta: patchFile, deltaFrom: "0.37.1" });
+    const m = verifyManifest(text, signManifest(text, keys.privateKeyPem), keys.publicKeyPem, "linux-x64");
+    expect([m.delta?.file, m.delta?.from, m.index]).toEqual([path.basename(patchFile), "0.37.1", undefined]);
+    await expect(buildManifest({ zip: newFile, version: "0.38.0", commit: COMMIT, platform: "linux-x64", delta: newFile, deltaFrom: "0.37.1" })).rejects.toThrow(/\.adpatch/);
+    const info = { manifest: m, zipUrl: "z", notes: "", tag: "v0.38.0", deltaUrl: "https://example.invalid/patch" };
+    expect([deltaUsable(info, "0.37.1"), deltaUsable(info, "0.37.0")]).toEqual([true, false]);
+    const serve = (async () => new Response(readFileSync(patchFile))) as unknown as typeof fetch;
+    const out = await applyAppImageDelta(info, path.join(dir, "staging"), oldFile, serve);
+    expect(readFileSync(out).equals(newImage)).toBe(true);
+    // Another AppImage than the patch's base: refused, and the updater downloads the whole AppImage.
+    const other = path.join(dir, "Other.AppImage");
+    writeFileSync(other, randomBytes(oldImage.length));
+    await expect(applyAppImageDelta(info, path.join(dir, "staging2"), other, serve)).rejects.toThrow(/not the one this patch was made from/);
+    await expect(applyAppImageDelta(info, path.join(dir, "staging3"), "", serve)).rejects.toThrow(/not running from an AppImage/);
   });
 });

@@ -6,7 +6,7 @@ import { DEFAULT_RELEASE_REPO, FORMER_SOURCE, SOURCE_URL, updateChannel } from "
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
-import { applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
+import { applyAppImageDelta, applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
@@ -207,9 +207,22 @@ export class Updater {
         onReadyToQuit();
         return;
       }
-      this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
-      const zip = await downloadRelease(info, dir);
-      this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      let zip: string | null = null;
+      // Linux: a binary patch of the running AppImage first, checked against the signed manifest.
+      if (info.manifest.platform === "linux-x64" && deltaUsable(info, this.appVersion)) {
+        this.append(`Downloading the AppImage patch (${Math.max(1, Math.round(info.manifest.delta!.size / 1048576))} MB instead of ${Math.round(info.manifest.size / 1048576)} MB)…`);
+        try {
+          zip = await applyAppImageDelta(info, dir, process.env.APPIMAGE ?? "");
+          this.append(`Patched to ${info.manifest.version}; the AppImage matches the signed SHA-256.`);
+        } catch (error) {
+          this.append(`The smaller update could not be used (${(error as Error).message}); downloading the full release.`);
+        }
+      }
+      if (!zip) {
+        this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
+        zip = await downloadRelease(info, dir);
+        this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      }
       if (info.manifest.platform === "linux-x64") {
         const target = process.env.APPIMAGE ?? "";
         installAppImage(zip, target);

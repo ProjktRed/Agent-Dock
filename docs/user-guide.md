@@ -8,7 +8,8 @@ works](how-it-works.md) has the details behind each number and setting.
 ## Getting started
 
 1. **Install** Agent Dock from the latest release (Windows installer or Linux AppImage). It updates
-   itself from signed releases.
+   itself from signed releases, downloading only what changed when it can (on Linux, a binary patch of
+   the AppImage).
 2. **CLIs**: on first launch Agent Dock finds the agent CLIs on your PATH (Codex, Claude Code, Cline,
    OpenCode) and local model servers (llama.cpp, Ollama). Sign in to each CLI in its own terminal
    first; Agent Dock never handles those logins.

@@ -8,6 +8,7 @@
 //     --platform linux-x64 (0.33) signs the AppImage instead and writes manifest-linux-x64.json/.sig.
 //     --index <files.json> [--delta <zip> --delta-from <x.y.z>] (0.33) add the file index and the
 //     changed-files zip (scripts/release-delta.mjs) to the manifest, each with its SHA-256 and size.
+//     --platform linux-x64 --delta <x-from-y.adpatch> --delta-from <y> (0.38) adds the AppImage patch.
 //
 //   sign-release.mjs --generate-key <private-key.pem>
 //     creates a new key pair once: the private key goes to the given file (store it as the GitHub
@@ -38,7 +39,9 @@ export async function buildManifest({ zip, version, commit, platform = PLATFORM,
   const describe = async (file) => ({ file: path.basename(file), sha256: await sha256File(file), size: statSync(file).size });
   if (index) manifest.index = await describe(index);
   if (delta) {
-    if (!index) throw new Error("a delta needs the file index");
+    // Windows: a changed-files zip checked against the file index. Linux: one binary patch of the AppImage,
+    // whose result is checked against the AppImage's own SHA-256 above.
+    if (platform === "linux-x64" ? !delta.endsWith(".adpatch") : !index) throw new Error(platform === "linux-x64" ? "a Linux delta is an .adpatch file" : "a delta needs the file index");
     if (!/^\d+\.\d+\.\d+$/.test(deltaFrom ?? "")) throw new Error("--delta-from must be the x.y.z version the delta starts from");
     manifest.delta = { from: deltaFrom, ...(await describe(delta)) };
   }

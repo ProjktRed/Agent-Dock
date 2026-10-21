@@ -49,7 +49,9 @@ export function verifyManifest(manifestText: string, signatureB64: string, publi
   if (m.name !== PRODUCT || m.platform !== platform) throw new Error(`The release is for ${m.name}/${m.platform}, not ${PRODUCT}/${platform}.`);
   if (!/^\d+\.\d+\.\d+$/.test(m.version) || !/^[0-9a-f]{40}$/.test(m.commit) || !/^[0-9a-f]{64}$/.test(m.sha256) || !(m.size > 0 && m.size < MAX_ZIP) || !FILE_PATTERN[platform].test(m.file)) throw new Error("The release manifest is malformed.");
   const asset = (a: ReleaseAsset | undefined, pattern: RegExp) => !a || (pattern.test(a.file) && /^[0-9a-f]{64}$/.test(a.sha256) && a.size > 0 && a.size < MAX_ZIP);
-  if (!asset(m.index, /^[\w.-]+\.json$/) || !asset(m.delta, /^[\w.-]+\.zip$/) || (m.delta && (!m.index || !/^\d+\.\d+\.\d+$/.test(m.delta.from)))) throw new Error("The release manifest is malformed.");
+  // Windows: a changed-files zip with its file index. Linux (0.38): one binary patch of the AppImage.
+  const linux = platform === "linux-x64";
+  if (!asset(m.index, /^[\w.-]+\.json$/) || !asset(m.delta, linux ? /^[\w.-]+\.adpatch$/ : /^[\w.-]+\.zip$/) || (m.delta && ((!linux && !m.index) || !/^\d+\.\d+\.\d+$/.test(m.delta.from)))) throw new Error("The release manifest is malformed.");
   return m;
 }
 
@@ -105,8 +107,25 @@ export function downloadRelease(info: ReleaseInfo, dir: string, fetchImpl: Fetch
   return downloadVerified(info.zipUrl, info.manifest, dir, fetchImpl, onProgress);
 }
 
-/** The delta applies only to the exact version it was made from, and only with its index. */
-export const deltaUsable = (info: ReleaseInfo, installed: string): boolean => Boolean(info.manifest.delta && info.manifest.index && info.deltaUrl && info.indexUrl && info.manifest.delta.from === installed);
+/** The delta applies only to the exact version it was made from (on Windows, only with its index). */
+export const deltaUsable = (info: ReleaseInfo, installed: string): boolean =>
+  Boolean(info.manifest.delta && info.deltaUrl && info.manifest.delta.from === installed && (info.manifest.platform === "linux-x64" || (info.manifest.index && info.indexUrl)));
+
+/**
+ * Linux smaller update: the signed patch applied to the running AppImage. The patch checks its source and
+ * result, and the result must also match the AppImage's SHA-256 and size in the signed manifest.
+ */
+export async function applyAppImageDelta(info: ReleaseInfo, dir: string, current: string, fetchImpl: Fetch = fetch): Promise<string> {
+  if (!current || !existsSync(current)) throw new Error("Agent Dock is not running from an AppImage.");
+  const patchFile = await downloadVerified(info.deltaUrl!, info.manifest.delta!, dir, fetchImpl, () => {});
+  try {
+    const out = applyPatch(readFileSync(current), readFileSync(patchFile));
+    if (out.length !== info.manifest.size || createHash("sha256").update(out).digest("hex") !== info.manifest.sha256) throw new Error("The patched AppImage does not match the signed manifest.");
+    const file = path.join(dir, info.manifest.file);
+    nodeFs.writeFileSync(file, out);
+    return file;
+  } finally { rmSync(patchFile, { force: true }); }
+}
 
 /**
  * File access for the installed app and the rebuilt update. In Electron's main process the patched fs
