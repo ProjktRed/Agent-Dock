@@ -1,5 +1,45 @@
 import type { ConnectionState, RunState } from "@shared/types";
 
+/** The UI is in English, so dates and numbers are too, whatever the Windows region. */
+const LOCALE = "en-US";
+
+/** A whole count with thousands separators: 98,304. */
+export function num(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString(LOCALE);
+}
+
+/** "1 skill", "2 skills"; `many` for irregular plurals ("branch" → "branches"). */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** An engine status word in sentence case: "NOT RUN" → "Not run", "not_run" → "Not run". Mixed-case text stays as it is. */
+export function sentenceCase(value: string): string {
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) return value;
+  return value.replace(/[_]+/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
+/** Oct 20 */
+export function shortDate(when: string | number | Date): string {
+  return new Date(when).toLocaleDateString(LOCALE, { month: "short", day: "numeric" });
+}
+
+/** Oct 20, 2026 */
+export function longDate(when: string | number | Date): string {
+  return new Date(when).toLocaleDateString(LOCALE, { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** Oct 20, 2026, 14:05 */
+export function dateTime(when: string | number | Date): string {
+  return new Date(when).toLocaleString(LOCALE, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+/** 14:05 */
+export function hourMinute(when: string | number | Date): string {
+  return new Date(when).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
 export function tokens(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -23,12 +63,12 @@ export function ago(iso: string | null | undefined): string {
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return shortDate(iso);
 }
 
 export function clock(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(iso).toLocaleTimeString(LOCALE, { hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export const runTone: Record<RunState, { dot: string; text: string; live?: boolean }> = {

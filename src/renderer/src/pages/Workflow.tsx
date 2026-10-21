@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { STAGES, stageLabel } from "../lib/stages";
 import type { RoleDraft } from "@shared/api";
 import type { Agent, RoleStage, WorkflowRole } from "@shared/types";
@@ -43,33 +43,36 @@ function Pipeline({ onPick, selected }: { onPick: (id: string) => void; selected
   const { snap, activeProject } = useApp();
   const builtIn = (role: "assessment" | "implementation" | "qa") => agentForRoleClient(role, activeProject, snap.agents);
   const at = (stage: RoleStage) => snap.roles.filter((r) => r.stage === stage);
+  // Same stage boxes and chevrons as Overview › Progress "Automation cycle".
+  const Arrow = () => <span className="arrow" aria-hidden="true"><Icon name="chevronRight" /></span>;
   const Step = ({ role, note }: { role: "assessment" | "implementation" | "qa"; note: string }) => {
     const agent = builtIn(role);
     return (
-      <div className="flow-step">
-        <span className="eyebrow">{roleLabel[role]}</span>
-        <b>{agent?.name ?? "Not assigned"}</b>
-        <span className="hint">{note}</span>
+      <div className="stage">
+        <span style={{ fontWeight: 600 }}>{roleLabel[role]}</span>
+        <div className="sub ellipsis">{agent?.name ?? "Not assigned"}</div>
+        <div className="hint">{note}</div>
       </div>
     );
   };
   const Custom = ({ stage }: { stage: RoleStage }) => {
     const roles = at(stage);
-    if (!roles.length) return <span className="flow-arrow" aria-hidden>→</span>;
+    if (!roles.length) return <Arrow />;
     return (
       <>
-        <span className="flow-arrow" aria-hidden>→</span>
+        <Arrow />
         {roles.map((r) => {
           const runner = agentsForRole(r, snap.agents).find((a) => a.enabled);
           return (
-            <button key={r.id} className={`flow-step custom ${selected === r.id ? "on" : ""} ${r.enabled && runner ? "" : "off"}`} onClick={() => onPick(r.id)} title={stageLabel(r.stage)}>
-              <span className="eyebrow">{r.fix ? "Fixer" : r.gate ? "Gate" : "Role"}</span>
-              <b>{r.name}</b>
-              <span className="hint">{!r.enabled ? "Disabled" : runner ? runner.name : r.id === SECOND_OPINION_ROLE_ID ? "Assign an agent to start" : "No agent: skipped"}</span>
-            </button>
+            <Fragment key={r.id}>
+              <button className={`stage pick ${selected === r.id ? "on" : ""} ${r.enabled && runner ? "" : "off"}`} aria-pressed={selected === r.id} onClick={() => onPick(r.id)} title={stageLabel(r.stage)}>
+                <span className="row" style={{ gap: 8 }}><span className="name ellipsis" style={{ fontWeight: 600 }}>{r.name}</span><span className="chip info" style={{ height: 18, fontSize: 10.5 }}>{r.fix ? "Fixer" : r.gate ? "Gate" : "Your role"}</span></span>
+                <div className="sub ellipsis">{!r.enabled ? "Disabled" : runner ? runner.name : r.id === SECOND_OPINION_ROLE_ID ? "Assign an agent to start" : "No agent: skipped"}</div>
+              </button>
+              <Arrow />
+            </Fragment>
           );
         })}
-        <span className="flow-arrow" aria-hidden>→</span>
       </>
     );
   };
@@ -79,14 +82,14 @@ function Pipeline({ onPick, selected }: { onPick: (id: string) => void; selected
         <h2 className="h2">One task through the loop</h2>
         <span className="sub">{activeProject ? `agents as resolved for ${activeProject.name}` : "default agents"}</span>
       </div>
-      <div className="flow">
+      <div className="stages">
         <Step role="assessment" note="Picks one bounded task" />
         <Custom stage="before-implementation" />
         <Step role="implementation" note="Changes only the task's paths" />
         <Custom stage="before-qa" />
         <Step role="qa" note="Verifies and makes the commit" />
         <Custom stage="after-pass" />
-        <div className="flow-step end"><span className="eyebrow">Next</span><b>Next task</b><span className="hint">Back to Assessment</span></div>
+        <div className="stage"><span style={{ fontWeight: 600 }}>Next task</span><div className="sub">Back to Assessment</div></div>
       </div>
       <span className="hint">On a failed check, Assessment writes a correction and the task goes back to Implementation. Elevation and the Resolver step in when corrections stall or a task is blocked. Your roles are read-only: they never edit files or commit.</span>
     </section>
@@ -208,9 +211,9 @@ function RoleEditor({ role, draft, setDraft, onSaved, onDelete }: { role: Workfl
       </label>
       <div className="row wrap" style={{ gap: 10 }}>
         {role && <button className="btn ghost" onClick={() => window.api.openPath(role.dir)}><Icon name="external" size="sm" />Open folder</button>}
-        {role && <button className="btn ghost danger" onClick={onDelete}>Delete</button>}
+        {role && <button className="btn danger" onClick={onDelete}>Delete</button>}
         <span className="grow" />
-        {role && dirty && <button className="btn ghost" onClick={() => setDraft(toDraft(role))}>Revert</button>}
+        {role && dirty && <button className="btn" onClick={() => setDraft(toDraft(role))}>Revert</button>}
         <button className="btn primary" disabled={!dirty || saving || !draft.name.trim()} onClick={save}>{role ? "Save" : "Create role"}</button>
       </div>
     </section>

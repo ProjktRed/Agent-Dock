@@ -6,16 +6,28 @@ export function Toggle({ on, onChange, label, disabled, danger }: { on: boolean;
   return <button className={`tg ${on ? "on" : ""} ${danger ? "danger" : ""}`} role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => onChange?.(!on)} />;
 }
 
-export function Tabs<T extends string>({ value, options, onChange, small, label }: { value: T; options: { value: T; label: ReactNode; disabled?: boolean }[]; onChange: (v: T) => void; small?: boolean; label: string }) {
+type SegOption<T extends string> = { value: T; label: ReactNode; disabled?: boolean; title?: string };
+
+/**
+ * The one joined segmented control: a sunken group whose chosen segment gets the accent fill.
+ * `radio` gives it radio-group semantics (a setting such as Theme or Task size) instead of tabs (switching views).
+ * Each label sits on a hidden bold copy so segments keep their width when they turn bold.
+ */
+export function Tabs<T extends string>({ value, options, onChange, small, label, radio }: { value: T; options: SegOption<T>[]; onChange: (v: T) => void; small?: boolean; label: string; radio?: boolean }) {
   return (
-    <div className="tabs" role="tablist" aria-label={label}>
+    <div className="tabs" role={radio ? "radiogroup" : "tablist"} aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} className={`tab ${small ? "sm" : ""} ${value === o.value ? "on" : ""}`} role="tab" aria-selected={value === o.value} disabled={o.disabled} onClick={() => onChange(o.value)}>
-          {o.label}
+        <button key={o.value} className={`tab ${small ? "sm" : ""} ${value === o.value ? "on" : ""}`} role={radio ? "radio" : "tab"} aria-selected={radio ? undefined : value === o.value} aria-checked={radio ? value === o.value : undefined} disabled={o.disabled} title={o.title} onClick={() => onChange(o.value)}>
+          <span className="tl"><span>{o.label}</span><span className="tl-w" aria-hidden="true">{o.label}</span></span>
         </button>
       ))}
     </div>
   );
+}
+
+/** A segmented setting: Tabs with radio semantics, same look. */
+export function Segmented<T extends string>(props: { value: T; options: SegOption<T>[]; onChange: (v: T) => void; small?: boolean; label: string }) {
+  return <Tabs {...props} radio />;
 }
 
 export type StatusKind = "done" | "active" | "paused" | "pending" | "blocked" | "part" | "attn";
@@ -27,7 +39,8 @@ export function Dot({ tone, live }: { tone: string; live?: boolean }) {
   return <span className={`dot ${tone} ${live ? "live" : ""}`} />;
 }
 
-export function Bar({ pct, variant = "", large }: { pct: number; variant?: "" | "est" | "man" | "mint"; large?: boolean }) {
+/** Progress bar. Plan and phase progress always use the default (accent) fill; est and man mark estimated and manual usage. */
+export function Bar({ pct, variant = "", large }: { pct: number; variant?: "" | "est" | "man"; large?: boolean }) {
   return (
     <div className={`bar ${variant} ${large ? "lg" : ""}`} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
       <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />

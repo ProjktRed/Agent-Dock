@@ -4,7 +4,7 @@ import { TASK_MODES, maxLimitsOf, suggestTaskMode, taskModeOf } from "@shared/ta
 import { useApp } from "../store";
 import { useLimits } from "../pages/overview/UsageTab";
 import { Icon } from "./Icon";
-import { Modal, SetRow, Support, Toggle } from "./ui";
+import { Modal, Segmented, SetRow, Support, Toggle } from "./ui";
 
 /** Asks before Max mode is turned on. */
 export function MaxModeConfirm({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) {
@@ -29,12 +29,10 @@ export function TaskModePicker({ value, onChange, label = "Task size" }: { value
   const [confirm, setConfirm] = useState(false);
   const pick = (mode: TaskMode) => (mode === value ? undefined : mode === "max" ? setConfirm(true) : onChange(mode));
   return (
-    <div className="row wrap" role="radiogroup" aria-label={label} style={{ gap: 6 }}>
-      {TASK_MODES.map((m) => (
-        <button key={m.mode} role="radio" aria-checked={value === m.mode} className={`btn sm${value === m.mode ? " primary" : ""}`} title={m.desc} onClick={() => pick(m.mode)}>{m.label}</button>
-      ))}
+    <>
+      <Segmented label={label} small value={value} onChange={pick} options={TASK_MODES.map((m) => ({ value: m.mode, label: m.label, title: m.desc }))} />
       {confirm && <MaxModeConfirm onConfirm={() => onChange("max")} onClose={() => setConfirm(false)} />}
-    </div>
+    </>
   );
 }
 
@@ -107,7 +105,7 @@ export function MaxLimitsDialog({ onClose }: { onClose: () => void }) {
         <label className="field" key={f.key}>
           <span>{f.label} <span className="hint">{f.desc}</span></span>
           <span className="row" style={{ gap: 8 }}>
-            <input className="input mono" style={{ width: 120 }} inputMode="numeric" placeholder="No limit" value={draft[f.key]} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} aria-label={f.label} />
+            <input className="input tnum" style={{ width: 120 }} inputMode="numeric" placeholder="No limit" value={draft[f.key]} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} aria-label={f.label} />
             <span className="sub">{f.unit}</span>
           </span>
         </label>

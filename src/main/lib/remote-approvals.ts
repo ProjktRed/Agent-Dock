@@ -111,7 +111,7 @@ export class RemoteApprovals {
     const r: ApprovalRequest = { ...input, id: randomBytes(4).toString("hex"), createdAt: this.now(), expiresAt: this.now() + TTL_MS };
     this.data.requests.push(r);
     await this.save();
-    const expires = new Date(r.expiresAt).toLocaleString();
+    const expires = new Date(r.expiresAt).toLocaleString("en-US");
     if (telegram && privateChat(telegram)) {
       try {
         const body = await this.telegram(telegram, "sendMessage", {

@@ -227,11 +227,11 @@ async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames:
     for (const name of names) {
       const skill = available.find((s) => s.name === name);
       if (!skill || !skill.instructions.trim()) continue;
-      if (skill.instructions.length > SKILL_MAX_CHARS) throw new Error(`Skill “${name}” is longer than ${SKILL_MAX_CHARS.toLocaleString()} characters; shorten its SKILL.md or unassign it.`);
+      if (skill.instructions.length > SKILL_MAX_CHARS) throw new Error(`Skill “${name}” is longer than ${SKILL_MAX_CHARS.toLocaleString("en-US")} characters; shorten its SKILL.md or unassign it.`);
       roles[role].push({ name, instructions: (await skillDeliveryText(skill)).text });
     }
     const total = roles[role].reduce((sum, s) => sum + s.instructions.length, 0);
-    if (total > ROLE_SKILLS_MAX_CHARS) throw new Error(`Skills assigned to ${role} are longer than ${ROLE_SKILLS_MAX_CHARS.toLocaleString()} characters in total; unassign some.`);
+    if (total > ROLE_SKILLS_MAX_CHARS) throw new Error(`Skills assigned to ${role} are longer than ${ROLE_SKILLS_MAX_CHARS.toLocaleString("en-US")} characters in total; unassign some.`);
   }
   const always = new Set(assigned.implementation ?? []);
   const pool = autoAll ? available : autoNames.map((name) => available.find((s) => s.name === name)).filter((s): s is SkillInfo => Boolean(s));
@@ -393,7 +393,7 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
     if (event.type === "supervisor-alert" && settings.general.notifyErrors) osNotify(`Supervisor: ${event.monitor ?? "alert"} · ${p.name}`, String(event.message ?? ""));
     if (event.type === "supervisor-digest" && settings.general.notifyInfo && settings.general.notifyDigests !== false) osNotify(`Supervisor digest · ${p.name}`, String(event.message ?? ""));
     if (event.type === "qa-pass") {
-      if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA after ${event.attempt ?? "?"} attempt(s).`);
+      if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA${typeof event.attempt === "number" ? ` after ${event.attempt} attempt${event.attempt === 1 ? "" : "s"}` : ""}.`);
       // The engine records automatic Pause before QA PASS; polling must not race
       // the next Assessment or re-pause after the user's Resume.
     }
@@ -628,7 +628,7 @@ async function importSettingsFile(): Promise<{ agents: number; clis: number; rol
   const { response } = await dialog.showMessageBox(win!, {
     type: "question", buttons: ["Import", "Cancel"], defaultId: 0, cancelId: 1, title: "Import settings",
     message: `Import settings from ${path.basename(picked.filePaths[0])}?`,
-    detail: `Exported from Agent Dock ${file.appVersion} on ${file.exportedAt.slice(0, 10)}. Your settings are replaced; ${merged.summary.agents} agent(s), ${merged.summary.roles} workflow role(s) and ${merged.summary.clis} connection(s) are added or replace the ones with the same id. Projects, API keys and secret values stay as they are on this computer; enter any missing keys in CLIs.`,
+    detail: `Exported from Agent Dock ${file.appVersion} on ${file.exportedAt.slice(0, 10)}. Your settings are replaced; ${merged.summary.agents} agent${merged.summary.agents === 1 ? "" : "s"}, ${merged.summary.roles} workflow role${merged.summary.roles === 1 ? "" : "s"} and ${merged.summary.clis} connection${merged.summary.clis === 1 ? "" : "s"} are added or replace the ones with the same id. Projects, API keys and secret values stay as they are on this computer; enter any missing keys in CLIs.`,
   });
   if (response !== 0) return null;
   store.data.settings = merged.settings;

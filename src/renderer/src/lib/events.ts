@@ -1,4 +1,5 @@
 import type { EngineEvent } from "@shared/types";
+import { plural } from "./format";
 
 const first = (value: unknown, max = 160) => String(value ?? "").split(/\r?\n/).find((l) => l.trim())?.trim().slice(0, max) ?? "";
 const attemptOf = (e: EngineEvent) => (e.attempt != null && e.attempt > 1 ? ` (attempt ${e.attempt})` : "");
@@ -74,7 +75,7 @@ export function describeEvent(e: EngineEvent): string {
     case "assessment-rejected": return `Assessment chose again: ${first(e.qa)}`;
     case "qa-commit-recovered": return `QA commit recovered: ${first(e.qa)}`;
     case "task-set-aside": return `Task ${e.taskId ?? ""} set aside by you: ${e.stash ? `its work is in git stash "${e.stash}"` : "it had no uncommitted work"}. The next Run starts a fresh Assessment.`;
-    case "retention": return `History older than ${e.days ?? "?"} days removed: ${[e.calls ? `${e.calls} call folder(s)` : "", e.sessions ? `${e.sessions} Cline session(s)` : "", e.actionLogPruned ? `${e.actionLogPruned} action-log archive(s)` : "", e.activityTrimmed ? "older Activity" : "", e.actionLogRotated ? "action log archived" : ""].filter(Boolean).join(", ") || "nothing"}`;
+    case "retention": return `History older than ${e.days ?? "?"} days removed: ${[e.calls ? plural(Number(e.calls), "call folder") : "", e.sessions ? plural(Number(e.sessions), "Cline session") : "", e.actionLogPruned ? plural(Number(e.actionLogPruned), "action-log archive") : "", e.activityTrimmed ? "older Activity" : "", e.actionLogRotated ? "action log archived" : ""].filter(Boolean).join(", ") || "nothing"}`;
     case "plan-item-done": return `Plan item checked off${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;

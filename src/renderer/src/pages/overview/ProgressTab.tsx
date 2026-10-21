@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
 import { useApp } from "../../store";
-import { clock, duration, engineStageLabel, tokens } from "../../lib/format";
+import { clock, duration, engineStageLabel, num, plural, sentenceCase, tokens } from "../../lib/format";
 import { modeEstimates, planEstimate } from "../../lib/estimate";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
@@ -222,6 +222,10 @@ export function ProgressTab() {
   const activeIndex = CYCLE.findIndex((c) => c.key === s.cycle);
   const paused = ["paused", "pausing"].includes(s.runState);
   const noRuns = !s.task && s.events.length === 0;
+  // Finished: the engine is not running and either reported "Objective complete" or stopped/idled with every plan item checked.
+  // Attention, blocked, paused and waiting states never count, and nothing below changes while a run is active.
+  const planDone = plan.total > 0 && plan.completed >= plan.total;
+  const finished = !s.processAlive && (s.runState === "complete" || (planDone && (s.runState === "idle" || s.runState === "stopped")));
 
   return (
     <div className="stack" style={{ gap: 20 }}>
@@ -233,7 +237,7 @@ export function ProgressTab() {
           <span className="st done" />
           <div className="grow">
             <div style={{ fontWeight: 600 }}>Last approved: {approval.taskId}</div>
-            <div className="sub">QA passed after {approval.attempt ?? "?"} attempt(s) at {clock(approval.timestamp)}{s.git.head ? ` · HEAD ${s.git.head.slice(0, 7)}` : ""}</div>
+            <div className="sub">QA passed{typeof approval.attempt === "number" ? ` after ${plural(approval.attempt, "attempt")}` : ""} at {clock(approval.timestamp)}{s.git.head ? ` · HEAD ${s.git.head.slice(0, 7)}` : ""}</div>
           </div>
           {s.processAlive && !s.control.pauseAfterCurrent && <span className="sub">Automatic continuation: next task follows</span>}
         </section>
@@ -269,17 +273,28 @@ export function ProgressTab() {
             }
             const est = planEstimate(remaining, runs);
             if (!est) return null;
-            return <div className="sub" title={`At this project's pace over its last ${est.basisTasks} approved task(s); each plan item counted as one task.`}>Estimate for the rest: {text(est)}</div>;
+            return <div className="sub" title={`At this project's pace over its last ${plural(est.basisTasks, "approved task")}; each plan item counted as one task.`}>Estimate for the rest: {text(est)}</div>;
           })()}
         </div>
+        {!curPhase && planDone && finished ? (
+          <div className="stack">
+            <div className="row sub">
+              <span className="ellipsis">All phases complete</span>
+              <span className="grow" />
+              <span>{plan.phases.length} / {plan.phases.length}</span>
+            </div>
+            <Bar pct={100} large />
+          </div>
+        ) : (
         <div className="stack">
           <div className="row sub">
             <span className="ellipsis">{curPhase ? <>Phase {curPhase.number} of {plan.phases.length} · <span style={{ color: "var(--t)" }}>{curPhase.title}</span></> : "No current phase"}</span>
             <span className="grow" />
             {curPhase && <span>{curPhase.completed} / {curPhase.total}</span>}
           </div>
-          <Bar pct={curPhase?.percent ?? 0} variant="mint" large />
+          <Bar pct={curPhase?.percent ?? 0} large />
         </div>
+        )}
         <div className="sub" style={{ textAlign: "right" }}>
           Plan source
           <br />
@@ -296,9 +311,11 @@ export function ProgressTab() {
         </div>
         <div className="row" style={{ gap: 8, alignItems: "stretch", overflowX: "auto", padding: "6px 6px 8px" }}>
           {CYCLE.map((c, i) => {
-            const active = i === activeIndex;
-            const cls = active ? (paused ? "paused" : "active") : activeIndex >= 0 && i > activeIndex ? "next" : activeIndex < 0 ? "next" : "";
-            const kind: StatusKind = active ? (paused ? "paused" : s.processAlive ? "active" : "pending") : activeIndex >= 0 && i < activeIndex ? "done" : "pending";
+            // After a finished run every stage of the loop has run except Correction, which only follows a failed QA.
+            const doneAfterRun = finished && c.key !== "correction";
+            const active = !finished && i === activeIndex;
+            const cls = finished ? (doneAfterRun ? "done" : "") : active ? (paused ? "paused" : "active") : activeIndex >= 0 && i > activeIndex ? "next" : activeIndex < 0 ? "next" : "";
+            const kind: StatusKind = finished ? (doneAfterRun ? "done" : "pending") : active ? (paused ? "paused" : s.processAlive ? "active" : "pending") : activeIndex >= 0 && i < activeIndex ? "done" : "pending";
             return (
               <Fragment key={c.key}>
                 <div className={`stage ${cls}`}>
@@ -322,7 +339,7 @@ export function ProgressTab() {
           <span><span className="sub">Stage</span> {engineStageLabel(s.stage)}</span>
           <span><span className="sub">Agent</span> {s.activeRole ?? "—"}</span>
           <span><span className="sub">Status</span> <span className={s.processAlive ? "ok" : "mut"}>{s.label}</span></span>
-          <span><span className="sub">Implementation elapsed</span> <span className="mono">{duration(elapsedMs)}</span></span>
+          <span><span className="sub">Implementation elapsed</span> <span className={elapsedMs != null && Number.isFinite(elapsedMs) ? "mono" : undefined}>{duration(elapsedMs)}</span></span>
           <span className="grow ellipsis" style={{ minWidth: 240 }}><span className="sub">Latest outcome</span> {s.latestQa ? s.latestQa.split(/\r?\n/)[0] : "—"}</span>
         </div>
       </section>
@@ -339,7 +356,19 @@ export function ProgressTab() {
           )}
 
           <section className="card pad stack" aria-label="Current task" style={{ gap: 16 }}>
-            {s.task ? (
+            {finished ? (
+              <div className="stack" style={{ gap: 8, alignItems: "flex-start" }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <St kind="done" title="Finished" />
+                  <h2 className="h2">{s.runState === "complete" ? "Objective complete" : "Plan complete"}</h2>
+                </div>
+                <span className="sub">
+                  No current task. {planDone ? (plan.total === 1 ? "The plan item is checked off." : `All ${plan.total} plan items are checked off.`) : "The engine reported the objective as done."}
+                  {approval ? ` Last approved: ${approval.taskId} at ${clock(approval.timestamp)}.` : ""}
+                  {" "}Press Run to let Assessment look for more work.
+                </span>
+              </div>
+            ) : s.task ? (
               <>
                 <div>
                   <div className="row">
@@ -353,19 +382,20 @@ export function ProgressTab() {
                 </Disclosure>
                 <dl className="kv two">
                   <div><dt>Implementation</dt><dd>{implLabel}</dd></div>
-                  <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "None")}</dd></div>
-                  <div><dt>QA command</dt><dd className="mono" title={s.task.qaCommand}>{s.task.qaCommand ?? "—"}</dd></div>
-                  <div><dt>Context</dt><dd>{s.contextTokens ? `${s.contextTokens.toLocaleString()} tokens` : "—"}</dd></div>
+                  <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "—")}</dd></div>
+                  <div><dt>QA command</dt><dd className={s.task.qaCommand ? "mono" : undefined} title={s.task.qaCommand}>{s.task.qaCommand || "—"}</dd></div>
+                  <div><dt>Context</dt><dd>{s.contextTokens ? `${num(s.contextTokens)} tokens` : "—"}</dd></div>
                 </dl>
                 <div className="well" style={{ padding: "12px 14px", borderRadius: 12 }}>
                   <div className="eyebrow" style={{ marginBottom: 6 }}>QA checks</div>
                   <ul className="list">
                     {Object.entries(s.qaChecks).map(([k, v]) => (
-                      <li key={k}><St kind={checkKind(String(v))} title={String(v)} /><span className="grow">{k === "scopeCheck" ? "Scope check" : k[0].toUpperCase() + k.slice(1)}</span><span className="sub">{String(v)}</span></li>
+                      <li key={k}><St kind={checkKind(String(v))} title={sentenceCase(String(v))} /><span className="grow">{k === "scopeCheck" ? "Scope check" : k[0].toUpperCase() + k.slice(1)}</span><span className="sub">{sentenceCase(String(v))}</span></li>
                     ))}
                   </ul>
                   <div className="eyebrow" style={{ margin: "12px 0 6px" }}>Approved paths</div>
                   <ul className="list">
+                    {!(s.task.allowedPaths ?? []).length && <li className="sub">No approved paths</li>}
                     {(s.task.allowedPaths ?? []).map((p) => {
                       const change = s.git.changedFiles.find((f) => f.path === p.replaceAll("\\", "/"));
                       return <li key={p}><span className="mono grow">{p}</span><span className={`chip ${change ? "warn" : "mut"}`}>{change ? change.status.trim() || "changed" : "unchanged"}</span></li>;

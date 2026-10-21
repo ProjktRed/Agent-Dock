@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import type { RunReport } from "@shared/types";
 import { useApp } from "../../store";
-import { ago, tokens } from "../../lib/format";
+import { ago, dateTime, plural, tokens } from "../../lib/format";
 import { Empty, St, type StatusKind } from "../../components/ui";
 
 const tone = (r: RunReport): StatusKind => (r.status === "done" ? "done" : r.status === "blocked" ? "blocked" : r.needsAttention ? "attn" : "paused");
@@ -30,7 +30,7 @@ export function RunsTab() {
     <section className="card" aria-label="Runs">
       <div className="row wrap" style={{ gap: 18, padding: "16px 18px 6px" }}>
         <h2 className="h2 grow" style={{ margin: 0 }}>Runs</h2>
-        <span className="sub">{runs.length} run(s) · {total.tasks} task(s) approved · {tokens(total.tokens)} tokens · ${total.cost.toFixed(2)} reported spend</span>
+        <span className="sub">{plural(runs.length, "run")} · {plural(total.tasks, "task")} approved · {tokens(total.tokens)} tokens · ${total.cost.toFixed(2)} reported spend</span>
       </div>
       <div className="scroll-x" style={{ padding: "0 6px 8px" }}>
         <table className="tbl" style={{ minWidth: 820 }}>
@@ -39,7 +39,7 @@ export function RunsTab() {
             {runs.map((r) => (
               <Fragment key={r.startedAt}>
                 <tr className={`click${open === r.startedAt ? " sel" : ""}`} onClick={() => setOpen(open === r.startedAt ? null : r.startedAt)}>
-                  <td title={new Date(r.startedAt).toLocaleString()}>{ago(r.startedAt)}{r.unattended ? <span className="sub"> · unattended</span> : null}</td>
+                  <td title={dateTime(r.startedAt)}>{ago(r.startedAt)}{r.unattended ? <span className="sub"> · unattended</span> : null}</td>
                   <td>{hours(r.hours)}</td>
                   <td><span className="row" style={{ gap: 6 }}><St kind={tone(r)} />{r.status}</span></td>
                   <td className="ellipsis" style={{ maxWidth: 280 }} title={r.reason ?? ""}>{(r.reason ?? "").split(/\r?\n/)[0] || "finished"}</td>
@@ -53,7 +53,7 @@ export function RunsTab() {
                   <tr>
                     <td colSpan={9}>
                       <div className="stack" style={{ gap: 6 }}>
-                        <span className="sub">{new Date(r.startedAt).toLocaleString()} → {new Date(r.endedAt).toLocaleString()} · corrections {r.corrections} · Elevations {r.elevations} · stops for attention {r.needsAttention} · Supervisor alerts {r.supervisorAlerts} · {r.usage?.calls ?? 0} model call(s), {tokens(r.usage?.cached ?? 0)} more tokens read from prompt caches</span>
+                        <span className="sub">{dateTime(r.startedAt)} → {dateTime(r.endedAt)} · corrections {r.corrections} · Elevations {r.elevations} · stops for attention {r.needsAttention} · Supervisor alerts {r.supervisorAlerts} · {plural(r.usage?.calls ?? 0, "model call")}, {tokens(r.usage?.cached ?? 0)} more tokens read from prompt caches</span>
                         {r.approved?.length ? <span className="sub">Approved: {r.approved.map((a) => a.taskId ?? "task").join(", ")}</span> : null}
                         {r.reason && r.reason.includes("\n") ? <div className="mono log" style={{ maxHeight: 120 }}>{r.reason}</div> : null}
                         <div className="row" style={{ gap: 8 }}><button className="btn sm" onClick={() => void exportRun(r.startedAt, "md")}>Export Markdown</button><button className="btn sm" onClick={() => void exportRun(r.startedAt, "html")}>Export HTML</button></div>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CliConnection } from "@shared/types";
 import { cleanError, useApp } from "../../store";
-import { clock, connectionMeta } from "../../lib/format";
+import { clock, connectionMeta, num } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../components/ui";
 import { AddCliDialog } from "./AddCliDialog";
@@ -49,7 +49,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
       <div className="well pad stack" style={{ gap: 10 }}>
         <h3 className="h3">Context limits</h3>
         <div className="row wrap" style={{ gap: 24 }}>
-          <div><div className="sub">Provider-defined</div><div className="row">{h?.contextMax.value ? h.contextMax.value.toLocaleString() : "Unknown"}{h && <ProvenanceChip value={h.contextMax.provenance} />}</div><div className="hint">{h?.contextMax.source}</div></div>
+          <div><div className="sub">Provider-defined</div><div className="row">{h?.contextMax.value ? num(h.contextMax.value) : "Unknown"}{h && <ProvenanceChip value={h.contextMax.provenance} />}</div><div className="hint">{h?.contextMax.source}</div></div>
           <div className="sub" style={{ maxWidth: 280 }}>Your limit is set per agent (Agents › Maximum context), because the engine applies it per worker.</div>
         </div>
       </div>

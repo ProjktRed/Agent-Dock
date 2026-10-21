@@ -290,7 +290,7 @@ export function buildEngineArgs(input: {
     if (names.length) skills[key] = [...new Set(names)];
     const text = agent?.instructions?.trim();
     if (text) {
-      if (text.length > AGENT_NOTES_MAX_CHARS) problems.push(`Custom instructions for ${agent!.name} are longer than ${AGENT_NOTES_MAX_CHARS.toLocaleString()} characters; shorten them.`);
+      if (text.length > AGENT_NOTES_MAX_CHARS) problems.push(`Custom instructions for ${agent!.name} are longer than ${AGENT_NOTES_MAX_CHARS.toLocaleString("en-US")} characters; shorten them.`);
       else notes[key] = text;
     }
   };

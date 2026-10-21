@@ -12,6 +12,14 @@
   --attn: #e8a87c;
   --err: #e3949f;
   --lav: #ad9ada;
+  --danger: #d98291;
+  /* Chart series colors (role colors in Tokens, Usage legends). */
+  --c1: #82a9e8; --c2: #ad9ada; --c3: #70c7a5; --c4: #dab777; --c5: #e8a87c; --c6: #d98291;
+  /* Selected item in a list (cards and table rows). Navigation (sidebar, section nav, tabs) uses the filled accent instead. */
+  --sel-bg: color-mix(in srgb, var(--a) 10%, var(--b));
+  --sel-edge: inset 3px 0 0 var(--a);
+  /* Hairline outline for shapes that must stay visible without depth (disabled buttons, toggle tracks). */
+  --edge: rgba(148, 168, 191, 0.24);
   --out: 6px 6px 14px var(--d), -6px -6px 14px var(--l);
   --out-s: 3px 3px 7px var(--d), -3px -3px 7px var(--l);
   --in: inset 5px 5px 11px var(--d), inset -5px -5px 11px var(--l);
@@ -119,7 +127,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .eyebrow { font-size: 11px; color: var(--t2); text-transform: uppercase; letter-spacing: 0.07em; }
 .sub { font-size: 12px; color: var(--t2); }
 .hint { font-size: 11.5px; color: var(--t2); }
-.mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+/* Monospace only for paths, commands, branches, model IDs, hashes and logs; UI text and numbers stay proportional (.tnum lines digits up). */
+.mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace; font-size: 12px; font-weight: 400; }
+.tnum { font-variant-numeric: tabular-nums; }
+.titlerow { min-height: 24px; }
 .row { display: flex; align-items: center; gap: 8px; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
 .wrap { flex-wrap: wrap; }
@@ -142,8 +153,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.ghost { background: transparent; box-shadow: none; color: var(--t2); }
 .btn.ghost:hover { color: var(--t); }
 .btn.danger { color: #eba3ae; }
-.btn.danger-fill { background: #d98291; color: #1a0e12; font-weight: 600; }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.btn.danger-fill { background: var(--danger); color: #1a0e12; font-weight: 600; }
+/* Variants: .btn (secondary), .primary, .danger (secondary with danger text), .danger-fill, .ghost (no shape, for low-priority links).
+   Disabled keeps the button's shape as a flat outline so it still reads as a button. */
+.btn:disabled { cursor: not-allowed; color: var(--t2); box-shadow: inset 0 0 0 1px var(--edge); opacity: 0.75; filter: none; }
+.btn:disabled:hover { color: var(--t2); }
+.btn.primary:disabled, .btn.danger-fill:disabled { color: rgba(11, 21, 32, 0.72); box-shadow: none; opacity: 1; }
+.btn.primary:disabled { background: color-mix(in srgb, var(--a) 45%, var(--b)); }
+.btn.danger-fill:disabled { background: color-mix(in srgb, var(--danger) 45%, var(--b)); }
+.btn.danger:disabled { color: color-mix(in srgb, #eba3ae 55%, var(--b)); }
+.btn.ghost:disabled { box-shadow: none; opacity: 0.55; }
+.btn.primary:disabled:hover, .btn.danger-fill:disabled:hover { filter: none; color: rgba(11, 21, 32, 0.72); }
 .btn.sm { height: 30px; padding: 0 11px; font-size: 12px; }
 .btn.icon { width: 34px; padding: 0; }
 .btn.sm.icon { width: 30px; }
@@ -162,6 +182,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tab.on { background: var(--a); color: #0b1520; font-weight: 600; box-shadow: var(--out-s); }
 .tab.on:hover { color: #0b1520; }
 .tab.sm { height: 26px; padding: 0 12px; font-size: 12px; }
+/* The label is stacked on a hidden bold copy, so a tab keeps its width when it turns bold. */
+.tab .tl { display: inline-grid; }
+.tab .tl > span { grid-area: 1 / 1; }
+.tab .tl > .tl-w { font-weight: 600; visibility: hidden; }
 .tab:disabled { opacity: 0.45; cursor: not-allowed; }
 .chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 8px; font-size: 11.5px; background: var(--b); box-shadow: var(--in-s); white-space: nowrap; }
 .chip.dash { box-shadow: none; border: 1px dashed currentColor; }
@@ -173,13 +197,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .bar > i { display: block; height: 100%; border-radius: 5px; background: var(--a); transition: width 0.4s ease; }
 .bar.est > i { background: repeating-linear-gradient(135deg, var(--lav) 0 4px, rgba(173, 154, 218, 0.35) 4px 8px); }
 .bar.man > i { background: var(--warn); }
-.bar.mint > i { background: var(--ok); }
 .bar.lg { height: 10px; }
-.tg { width: 42px; height: 24px; border-radius: 12px; border: 0; background: var(--b); box-shadow: var(--in-s); position: relative; cursor: pointer; padding: 0; flex: none; }
-.tg::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #2a3c53; box-shadow: 2px 2px 4px var(--d), -1px -1px 3px var(--l); transition: left 0.18s, background 0.18s; }
-.tg.on::after { left: 21px; background: var(--a); }
-.tg.danger.on::after { background: #d98291; }
-.tg:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Toggle: off = sunken outlined track with a grey knob on the left; on = accent track with a light knob on the right;
+   disabled = faded and desaturated with a not-allowed cursor, whichever side it is on. */
+.tg { width: 42px; height: 24px; border-radius: 12px; border: 0; background: var(--b); box-shadow: var(--in-s), inset 0 0 0 1px var(--edge); position: relative; cursor: pointer; padding: 0; flex: none; transition: background 0.18s; }
+.tg::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--t2); box-shadow: 1px 1px 3px var(--d); transition: left 0.18s, background 0.18s; }
+.tg.on { background: var(--a); box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.35); }
+.tg.on::after { left: 21px; background: #f2f6fb; box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.45); }
+.tg.danger.on { background: var(--danger); }
+.tg:disabled { opacity: 0.4; cursor: not-allowed; filter: saturate(0.35); }
+.tg:disabled::after { box-shadow: none; }
 .radio { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 11px; background: transparent; cursor: pointer; text-align: left; color: var(--t); }
 .radio:hover { color: var(--a); }
 .radio .rd { width: 16px; height: 16px; border-radius: 50%; box-shadow: var(--in-s); position: relative; flex: none; }
@@ -225,16 +252,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chev.open { transform: rotate(90deg); }
 .item { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 14px 16px; border: 0; border-radius: 14px; background: var(--b); box-shadow: var(--out-s); cursor: pointer; text-align: left; color: var(--t); transition: box-shadow 0.15s; }
 .item:hover .name { color: var(--a); }
-.item.on { box-shadow: var(--in-s), var(--ring); }
+/* Selected list item: one treatment for cards (.item, .opt, .stage.pick) and table rows (tr.sel): accent tint plus a left accent edge. */
+.item.on, .opt.on, .stage.pick.on { background: var(--sel-bg); box-shadow: var(--in-s), var(--sel-edge); }
 .item.off { opacity: 0.6; }
 .opt { display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 14px; border: 0; border-radius: 14px; background: var(--b); box-shadow: var(--out-s); cursor: pointer; text-align: left; color: var(--t); transition: box-shadow 0.15s, color 0.15s; }
 .opt:hover { color: var(--a); }
-.opt.on { box-shadow: var(--in-s), var(--ring); }
 .opt:disabled { opacity: 0.5; cursor: not-allowed; }
 .setrow { display: flex; align-items: center; gap: 16px; padding: 13px 2px; border-bottom: 1px solid rgba(10, 17, 26, 0.6); box-shadow: 0 1px 0 rgba(33, 50, 74, 0.35); }
 .setrow:last-child { border-bottom: 0; box-shadow: none; }
 .setrow .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
 .lt { font-size: 13px; } .ld { font-size: 12px; color: var(--t2); }
+/* A crowded row moves the support chip under the title instead of breaking the title onto two lines. */
+.setrow .lt.row { flex-wrap: wrap; row-gap: 3px; }
 .lock { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--warn); }
 .banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 13px; box-shadow: var(--in-s); font-size: 12.5px; }
 .banner.warnb { box-shadow: var(--in-s), 0 0 0 1.5px rgba(218, 183, 119, 0.45); }
@@ -249,9 +278,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tbl td { padding: 11px 14px; border-bottom: 1px solid rgba(10, 17, 26, 0.55); vertical-align: middle; }
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .tbl tbody tr:hover td { background: rgba(33, 50, 74, 0.22); }
-.tbl tr.sel td { background: rgba(130, 169, 232, 0.08); }
-.tbl tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--a); }
+.tbl tbody tr.sel td { background: var(--sel-bg); }
+.tbl tbody tr.sel td:first-child { box-shadow: var(--sel-edge); }
 .tbl tr.click { cursor: pointer; }
+/* Overview › Tokens › Per-agent usage: fixed columns that fit the card. */
+.tbl.usage-tbl { table-layout: fixed; }
+.tbl.usage-tbl th, .tbl.usage-tbl td { padding-left: 8px; padding-right: 8px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .nowrap { white-space: nowrap; }
 .scroll-x { overflow-x: auto; }
@@ -268,6 +300,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .stage.active { box-shadow: var(--in-s), 0 0 0 1.5px rgba(130, 169, 232, 0.5); }
 .stage.paused { box-shadow: var(--in-s), 0 0 0 1.5px rgba(218, 183, 119, 0.5); }
 .stage.next { opacity: 0.6; }
+/* Stage diagram (Overview › Progress cycle and the Workflow loop): .stage boxes joined by .arrow chevrons inside .stages. */
+.stages { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; padding: 6px 6px 8px; }
+.stage.pick { border: 0; cursor: pointer; text-align: left; color: var(--t); font: inherit; transition: box-shadow 0.15s; }
+.stage.pick:hover .name { color: var(--a); }
+.stage.off { opacity: 0.55; }
 .arrow { color: #5a6e87; flex: none; display: flex; align-items: center; }
 .loop { margin-left: 9%; height: 16px; border: 1.5px dashed rgba(173, 154, 218, 0.5); border-top: 0; border-radius: 0 0 12px 12px; width: 62%; }
 .loop-l { font-size: 11px; color: var(--lav); margin-left: 9%; margin-top: 4px; }
@@ -281,7 +318,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .colb { flex: 1; display: flex; flex-direction: column-reverse; gap: 2px; min-width: 6px; height: 100%; justify-content: flex-start; }
 .colb i { display: block; border-radius: 3px; }
 .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
-.c1 { background: #82a9e8; } .c2 { background: #ad9ada; } .c3 { background: #70c7a5; } .c4 { background: #dab777; } .c5 { background: #e8a87c; } .c6 { background: #d98291; }
+.c1 { background: var(--c1); } .c2 { background: var(--c2); } .c3 { background: var(--c3); } .c4 { background: var(--c4); } .c5 { background: var(--c5); } .c6 { background: var(--c6); }
 .ctx { position: relative; height: 10px; border-radius: 5px; background: var(--b); box-shadow: var(--in-s); }
 .ctx .cfg { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: rgba(130, 169, 232, 0.25); }
 .ctx .cap { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--t); border-radius: 1px; }
@@ -339,17 +376,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .grid-f { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Workflow pipeline */
-.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
-.flow-step { display: flex; flex-direction: column; gap: 3px; min-width: 132px; max-width: 200px; padding: 10px 14px; border: 0; border-radius: 12px; background: var(--b); box-shadow: var(--out-s); color: var(--t); text-align: left; }
-.flow-step b { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-step.custom { cursor: pointer; box-shadow: var(--out-s), inset 0 0 0 1.5px color-mix(in srgb, var(--a) 55%, transparent); }
-.flow-step.custom:hover b { color: var(--a); }
-.flow-step.custom.on { box-shadow: var(--in-s), var(--ring); }
-.flow-step.custom.off { opacity: 0.55; }
-.flow-step.end { box-shadow: none; border: 1.5px dashed rgba(148, 168, 191, 0.35); background: transparent; }
-.flow-arrow { align-self: center; color: var(--t2); font-size: 15px; }
 #attention-panel.flash { animation: attention-flash 1.2s ease-out; }
 @keyframes attention-flash { 0% { box-shadow: 0 0 0 3px var(--a); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .ctx .used { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--a); }
-.ctx .used.hot { background: #dab777; }
+.ctx .used.hot { background: var(--warn); }
+
+/* ---------- Overview › Progress: finished-run states and cycle loop palette ---------- */
+.stage.done { box-shadow: var(--out-s), inset 0 0 0 1.5px rgba(112, 199, 165, 0.45); }
+.loop { border-color: rgba(130, 169, 232, 0.4); }
+.loop-l { font-size: 11.5px; color: var(--t2); }

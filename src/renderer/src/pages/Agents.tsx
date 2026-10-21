@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Agent, EngineEvent, Role, SkillInfo, TokenRecord } from "@shared/types";
 import { cleanError, useApp } from "../store";
-import { ago, clock, connectionMeta, roleLabel, tokens, uid } from "../lib/format";
+import { ago, clock, connectionMeta, num, roleLabel, tokens, uid } from "../lib/format";
 import { agentForRoleClient } from "../lib/agents";
 import { defaultModelId, effortLabel, useModelCatalog, withModel } from "../lib/models";
 import { Icon } from "../components/Icon";
@@ -284,7 +284,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             {local && <label className="field">
               <span className="row" style={{ gap: 8 }}>Maximum context (tokens)<Support kind="engine" /></span>
               <input className="input" inputMode="numeric" value={draft.contextTokens} onChange={(e) => set("contextTokens", Number(e.target.value.replace(/\D/g, "")) || 0)} />
-              <span className="hint">{modelMax?.value ? `${modelMax.source}: ${modelMax.value.toLocaleString()}` : "Model maximum not reported"}{modelMax?.value && draft.contextTokens > modelMax.value ? " · exceeds the model maximum" : ""}</span>
+              <span className="hint">{modelMax?.value ? `${modelMax.source}: ${num(modelMax.value)}` : "Model maximum not reported"}{modelMax?.value && draft.contextTokens > modelMax.value ? " · exceeds the model maximum" : ""}</span>
             </label>}
             {local && <label className="field"><span className="row" style={{ gap: 8 }}>Maximum output tokens<Support kind="engine" /></span><input className="input" inputMode="numeric" value={draft.maxOutputTokens} onChange={(e) => set("maxOutputTokens", Number(e.target.value.replace(/\D/g, "")) || 0)} /></label>}
             <label className="field"><span className="row" style={{ gap: 8 }}>Execution timeout (minutes)<Support kind="engine" /></span><input className="input" inputMode="numeric" value={Math.round(draft.timeoutSeconds / 60)} onChange={(e) => set("timeoutSeconds", (Number(e.target.value.replace(/\D/g, "")) || 1) * 60)} /></label>
@@ -292,7 +292,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
         )}
       </div>
       <label className="field">
-        <span className="row" style={{ gap: 8 }}>Custom instructions<Support kind="engine" /><span className={`sub${draft.instructions.length > 4000 ? " err" : ""}`}>{draft.instructions.length.toLocaleString()} / 4,000</span></span>
+        <span className="row" style={{ gap: 8 }}>Custom instructions<Support kind="engine" /><span className={`sub${draft.instructions.length > 4000 ? " err" : ""}`}>{num(draft.instructions.length)} / {num(4000)}</span></span>
         <textarea className="ta" style={{ minHeight: 70 }} value={draft.instructions} onChange={(e) => set("instructions", e.target.value)} placeholder="Added to this agent’s role prompt, after its skills. The task scope, allowed paths, guard rules and output format still take precedence." />
       </label>
       <div className="field">
@@ -314,7 +314,7 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
             <span className="sub" style={{ marginTop: 6 }}>When relevant: Assessment reads each skill's name and description and adds up to 3 to a task that needs them. Only picked skills' text is sent to the worker.</span>
             <div className="row" style={{ gap: 10 }}>
               <Toggle on={draft.autoAllImported !== false} onChange={(v) => set("autoAllImported", v)} label="Let Assessment choose from all imported skills" />
-              <span>Choose from all imported skills{draft.autoAllImported !== false ? ` (${library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false).length} enabled; turn skills off in Settings › Skills to leave them out)` : ""}</span>
+              <span className="sub">Choose from all imported skills{draft.autoAllImported !== false ? ` (${library.filter((sk) => sk.source === "imported" && snap.settings.skills.enabled[sk.id] !== false).length} enabled; turn skills off in Settings › Skills to leave them out)` : ""}</span>
             </div>
             {draft.autoAllImported === false && <div className="row wrap" style={{ gap: 10 }}>
               {(draft.autoSkills ?? []).map((k) => (
@@ -338,16 +338,16 @@ function AgentForm({ agent, onSaved, onDelete }: { agent: Agent; onSaved: (a: Ag
               <span key={c!.id} className="row" style={{ gap: 6 }}>
                 <Dot tone={h ? connectionMeta[h.state].tone : "mut"} />
                 {c!.name}: {h ? connectionMeta[h.state].label : "Not checked"}
-                {h?.latencyMs != null && <span className="sub mono">{h.latencyMs} ms</span>}
+                {h?.latencyMs != null && <span className="sub tnum">{h.latencyMs} ms</span>}
               </span>
             );
           })}
         </div>
       </div>
       <div className="row">
-        <button className="btn ghost danger" onClick={onDelete}>Delete agent</button>
+        <button className="btn danger" onClick={onDelete}>Delete agent</button>
         <span className="sub grow">{dirty ? "Unsaved changes · they apply when the engine next starts" : "Changes apply when the engine next starts."}</span>
-        <button className="btn ghost" disabled={!dirty} onClick={() => setDraft(agent)}>Revert</button>
+        <button className="btn" disabled={!dirty} onClick={() => setDraft(agent)}>Revert</button>
         <button className="btn primary" disabled={!dirty || !draft.name.trim()} onClick={() => onSaved(draft)}>Save changes</button>
       </div>
     </div>
@@ -487,10 +487,10 @@ export function AgentsPage() {
                 <button key={a.id} className={`item ${sel.id === a.id ? "on" : ""} ${a.enabled ? "" : "off"}`} onClick={() => setSelId(a.id)} aria-pressed={sel.id === a.id}>
                   <div className="row"><span className="name" style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</span><span className="chip">{a.role === "custom" ? roleName(a) : roleLabel[a.role]}</span><span className="grow" /><span className={`sub ${a.enabled ? "" : "mut"}`}>{a.enabled ? "" : "Disabled"}</span></div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 6 }}><span>{cli?.name ?? "No CLI"}</span>{a.provider && <><span>·</span><span>{a.provider === "llamacpp" ? "llama.cpp" : a.provider === "ollama" ? "Ollama" : snap.clis.find((c) => c.id === a.providerCliId)?.name ?? "OpenAI-compatible"}</span></>}</div>
-                  <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.model || "—"}</span>{a.reasoning && a.role !== "implementation" && <span className="sub">{effortLabel(a.reasoning)}</span>}{a.fast && <span className="chip">Fast</span>}</div>
+                  <div className="row" style={{ gap: 8 }}><span className="mono ellipsis">{a.model || "—"}</span>{a.reasoning && a.reasoning !== "none" && <span className="sub">{effortLabel(a.reasoning)}</span>}{a.fast && <span className="chip">Fast</span>}</div>
                   <div className="row sub" style={{ fontSize: 11.5, gap: 12 }}>
                     <span className={`row ${h ? connectionMeta[h.state].tone : "mut"}`} style={{ gap: 5 }}><Dot tone="" />{h ? connectionMeta[h.state].label : "Not checked"}</span>
-                    {a.role === "implementation" && <span>ctx {tokens(a.contextTokens)}</span>}
+                    {a.role === "implementation" && a.contextTokens > 0 && <span>ctx {tokens(a.contextTokens)}</span>}
                   </div>
                 </button>
               );

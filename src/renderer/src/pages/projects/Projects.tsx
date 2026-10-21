@@ -3,7 +3,7 @@ import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shar
 import type { HistoryEntry } from "@shared/api";
 import type { Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
 import { cleanError, useApp } from "../../store";
-import { ago, runTone } from "../../lib/format";
+import { ago, longDate, plural, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle } from "../../components/ui";
@@ -34,15 +34,14 @@ function WorkflowTab({ project }: { project: Project }) {
     void saveProject({ ...project, workflowOverrides: next as Partial<WorkflowSettings> });
   };
   return (
-    <div className="fade-in well pad">
+    <div className="fade-in">
       {rows.map((r) => {
         const overridden = r.key in project.workflowOverrides;
         const value = (overridden ? project.workflowOverrides[r.key] : global[r.key]) as boolean;
         return (
           <div className="setrow" key={r.key}>
             <div className="grow"><div className="lt row" style={{ gap: 8 }}>{r.label}<Support kind={r.support} /></div><div className="ld">{r.desc}</div></div>
-            <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
-            {overridden && <button className="btn ghost sm" onClick={() => set(r.key, undefined)}>Reset</button>}
+            <ScopeChip overridden={overridden} onReset={() => set(r.key, undefined)} />
             <Toggle on={value} onChange={(v) => set(r.key, v)} label={r.label} />
           </div>
         );
@@ -62,6 +61,20 @@ function WorkflowTab({ project }: { project: Project }) {
   );
 }
 
+/**
+ * Where a Workflow row's value comes from, shown on every setting row: inherited from Settings › Workflow rules,
+ * a project override (with Reset), or a setting that exists only per project (no onReset).
+ */
+function ScopeChip({ overridden = false, onReset }: { overridden?: boolean; onReset?: () => void }) {
+  if (!onReset) return <span className="chip mut dash" title="Set per project; there is no global default in Settings">This project</span>;
+  return (
+    <>
+      <span className={`chip ${overridden ? "lav" : "mut"}`} title={overridden ? "Overrides Settings › Workflow rules for this project" : "Follows Settings › Workflow rules"}>{overridden ? "Project override" : "Inherited"}</span>
+      {overridden && <button className="btn ghost sm" onClick={onReset}>Reset</button>}
+    </>
+  );
+}
+
 /** This project's task size: inherited from Settings › Workflow rules, or its own. */
 function TaskModeRow({ project }: { project: Project }) {
   const { snap, saveProject } = useApp();
@@ -76,8 +89,7 @@ function TaskModeRow({ project }: { project: Project }) {
   return (
     <div className="setrow" style={{ flexWrap: "wrap" }}>
       <div className="grow"><div className="lt row" style={{ gap: 8 }}>Task size<Support kind="engine" /></div><div className="ld">{TASK_MODES.find((m) => m.mode === mode)!.desc}</div></div>
-      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
-      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <ScopeChip overridden={overridden} onReset={() => set(undefined)} />
       <TaskModePicker value={mode} onChange={set} label="Task size for this project" />
     </div>
   );
@@ -97,8 +109,7 @@ function ParallelRow({ project }: { project: Project }) {
   return (
     <div className="setrow">
       <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent; off in Unattended mode.</div></div>
-      <span className={`chip ${overridden ? "lav" : "mut"}`}>{overridden ? "Project override" : "Inherited"}</span>
-      {overridden && <button className="btn ghost sm" onClick={() => set(undefined)}>Reset</button>}
+      <ScopeChip overridden={overridden} onReset={() => set(undefined)} />
       <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
         <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
       </select>
@@ -122,19 +133,19 @@ function ParallelCleanupRow({ project }: { project: Project }) {
     try {
       const r = await window.api.cleanParallel(project.id);
       setConfirming(false);
-      if (r.problems.length) toast("error", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es); ${r.problems.join(" ")}`);
-      else toast("success", `Removed ${r.worktrees} worktree(s) and ${r.branches} branch(es)`);
+      if (r.problems.length) toast("error", `Removed ${plural(r.worktrees, "worktree")} and ${plural(r.branches, "branch", "branches")}; ${r.problems.join(" ")}`);
+      else toast("success", `Removed ${plural(r.worktrees, "worktree")} and ${plural(r.branches, "branch", "branches")}`);
     } catch (error) { toast("error", cleanError(error)); }
     finally { setBusy(false); void load(); }
   };
   return (
     <div className="setrow">
-      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Kept parallel worktrees<Support kind="app" /></div><div className="ld">{left.worktrees.length} worktree(s) and {left.branches.length} agent-dock/parallel-… branch(es) kept from tasks that did not finish or merge. The project's own node_modules is never touched.</div></div>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Kept parallel worktrees<Support kind="app" /></div><div className="ld">{plural(left.worktrees.length, "worktree")} and {plural(left.branches.length, "agent-dock/parallel-… branch", "agent-dock/parallel-… branches")} kept from tasks that did not finish or merge. The project's own node_modules is never touched.</div></div>
       <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => setConfirming(true)}>Clean up parallel worktrees</button>
       {confirming && (
         <Modal label="Clean up parallel worktrees" onClose={() => setConfirming(false)}>
           <h2 className="h2">Clean up parallel worktrees?</h2>
-          <p className="sub" style={{ margin: 0 }}>Removes {left.worktrees.length} worktree(s) in {project.path.split(/[\\/]/).filter(Boolean).pop()}-parallel and deletes these branches. Unmerged work on them will be lost.</p>
+          <p className="sub" style={{ margin: 0 }}>Removes {plural(left.worktrees.length, "worktree")} in {project.path.split(/[\\/]/).filter(Boolean).pop()}-parallel and deletes these branches. Unmerged work on them will be lost.</p>
           {shown.length > 0 && <div className="mono sub" style={{ whiteSpace: "pre-wrap" }}>{shown.join("\n")}{left.branches.length > shown.length ? `\nand ${left.branches.length - shown.length} more` : ""}</div>}
           <div className="row"><span className="grow" /><button className="btn ghost" onClick={() => setConfirming(false)}>Cancel</button>
             <button className="btn danger-fill" disabled={busy || running} onClick={() => void clean()}>{busy ? "Cleaning up…" : "Clean up"}</button></div>
@@ -156,7 +167,7 @@ function ScheduleRow({ project }: { project: Project }) {
       <div className="grow"><div className="lt row" style={{ gap: 8 }}>Scheduled runs<Support kind="app" /></div><div className="ld">{describeSchedule(project.schedule)}. Starts the automation at this local time while Agent Dock is open{schedule.whenClosed ? ", or launches it when it is closed (Windows Task Scheduler)" : ""}; a start missed by more than {SCHEDULE_GRACE_MINUTES} minutes is skipped. Combine with Unattended mode for overnight runs.</div></div>
       {schedule.enabled && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <input className="input mono" type="time" style={{ width: 110 }} value={schedule.time} aria-label="Scheduled start time" onChange={(e) => scheduleMinutes(e.target.value) !== null && save({ time: e.target.value })} />
+          <input className="input tnum" type="time" style={{ width: 110 }} value={schedule.time} aria-label="Scheduled start time" onChange={(e) => scheduleMinutes(e.target.value) !== null && save({ time: e.target.value })} />
           {DAY_NAMES.map((name, day) => (
             <button key={name} className={`btn sm${schedule.days.includes(day) ? " primary" : ""}`} aria-pressed={schedule.days.includes(day)} onClick={() => save({ days: schedule.days.includes(day) ? schedule.days.filter((d) => d !== day) : [...schedule.days, day].sort() })}>{name}</button>
           ))}
@@ -167,6 +178,7 @@ function ScheduleRow({ project }: { project: Project }) {
           )}
         </div>
       )}
+      <ScopeChip />
       <Toggle on={schedule.enabled} onChange={(v) => save({ enabled: v })} label="Scheduled runs" />
     </div>
   );
@@ -187,6 +199,7 @@ function PullRequestRow({ project }: { project: Project }) {
     <div className="setrow">
       <div className="grow"><div className="lt row" style={{ gap: 8 }}>Pull-request mode<Support kind="app" /></div><div className="ld">Each new run works on its own agent-dock/run-… branch instead of {project.prBase ?? "your current branch"}. Nothing is pushed until you press Open pull request, which pushes the branch and opens the pull request with GitHub CLI (or GitHub's compare page).</div></div>
       {project.prMode && <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => void open()}>{busy ? "Pushing…" : "Open pull request"}</button>}
+      <ScopeChip />
       <Toggle on={project.prMode === true} onChange={(v) => void saveProject({ ...project, prMode: v })} label="Pull-request mode" />
     </div>
   );
@@ -248,11 +261,12 @@ function WslRow({ project }: { project: Project }) {
         <div className="lt row" style={{ gap: 8 }}>WSL isolation (opt-in)<Support kind="engine" /></div>
         <div className="ld">Runs the engine, and every agent CLI and command it starts, inside a WSL distro instead of Windows. Node.js, git and your agent CLIs must be installed and signed in inside the distro. Windows drives stay reachable under /mnt unless automount is off in the distro's /etc/wsl.conf; for the strongest separation keep the project in the distro (\\wsl$\…). Takes effect at the next start.</div>
         <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-          <input className="input mono" style={{ width: 180 }} placeholder="Distro, e.g. Ubuntu" aria-label="WSL distro" value={distro} onChange={(e) => setDistro(e.target.value)} />
+          <input className="input" style={{ width: 180 }} placeholder="Distro, e.g. Ubuntu" aria-label="WSL distro" value={distro} onChange={(e) => setDistro(e.target.value)} />
           <button className="btn sm" disabled={!distro.trim()} onClick={() => void runCheck()}>Check distro</button>
         </div>
         {check && <div className={`mono sub ${check.ok ? "ok" : "err"}`} style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{check.lines.join("\n") || "No answer from WSL."}</div>}
       </div>
+      <ScopeChip />
       <Toggle on={wsl.enabled} onChange={(v) => { if (v && !(wsl.distro || distro.trim())) return toast("warning", "Enter and check a distro first."); save({ enabled: v, distro: wsl.distro || distro.trim() }); }} label="WSL isolation" danger={running} />
     </div>
   );
@@ -317,7 +331,7 @@ function HistoryTab({ project }: { project: Project }) {
             <tr key={h.taskId}>
               <td className="mono nowrap">{h.taskId}</td>
               <td><span className={`chip ${tone[h.outcome]}`}>{h.outcome}</span></td>
-              <td className="mono">{h.attempts || "—"}</td>
+              <td className="tnum">{h.attempts || "—"}</td>
               <td className="sub" style={{ maxWidth: 360 }}><span className="ellipsis" style={{ display: "block" }} title={h.summary}>{h.summary || "—"}</span></td>
               <td className="sub nowrap">{ago(h.finishedAt)}</td>
               <td>{h.canRerun && <button className="btn sm" disabled={running} title={running ? "Stop the automation first" : "Run this task again with the same prompt, files and check"} onClick={() => void rerun(h.taskId)}>Run again</button>}</td>
@@ -399,7 +413,7 @@ export function ProjectsPage() {
                   </div>
                   <div className="row" style={{ gap: 10 }}>
                     <div className="grow"><Bar pct={plan?.percent ?? 0} /></div>
-                    <span className="sub mono" style={{ fontSize: 11 }}>{plan?.total ? `${plan.percent}% · ${plan.completed}/${plan.total}` : "No plan"}</span>
+                    <span className="sub tnum" style={{ fontSize: 11 }}>{plan?.total ? `${plan.percent}% · ${plan.completed}/${plan.total}` : "No plan"}</span>
                   </div>
                   <div className="sub" style={{ fontSize: 11 }}>Last activity {ago(st?.updatedAt)}</div>
                 </button>
@@ -445,9 +459,9 @@ export function ProjectsPage() {
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
                     <div className="well pad stack" style={{ gap: 14 }}>
-                      <div className="row"><h3 className="h3">Repository</h3><span className="grow" /><span className={`chip ${s?.git.isRepo ? "ok" : "err"}`}>{s?.git.isRepo ? (s.git.remote ? "Linked" : "Local repository") : "Not a Git repository"}</span></div>
+                      <div className="row titlerow"><h3 className="h3">Repository</h3><span className="grow" /><span className={`chip ${s?.git.isRepo ? "ok" : "err"}`}>{s?.git.isRepo ? (s.git.remote ? "Linked" : "Local repository") : "Not a Git repository"}</span></div>
                       <dl className="kv two">
-                        <div style={{ gridColumn: "1 / -1" }}><dt>Remote</dt><dd className="mono">{s?.git.remote ?? "—"}</dd></div>
+                        <div style={{ gridColumn: "1 / -1" }}><dt>Remote</dt><dd className={s?.git.remote ? "mono" : undefined}>{s?.git.remote ?? "—"}</dd></div>
                         <div><dt>Active branch</dt><dd className="mono">{s?.git.branch ?? "—"}</dd></div>
                         <div><dt>HEAD</dt><dd className="mono">{s?.git.head?.slice(0, 10) ?? "—"}</dd></div>
                         <div><dt>Sync</dt><dd>{s?.git.ahead != null ? `${s.git.ahead} ahead · ${s.git.behind} behind` : "No upstream"}</dd></div>
@@ -455,11 +469,11 @@ export function ProjectsPage() {
                       </dl>
                     </div>
                     <div className="well pad stack" style={{ gap: 14 }}>
-                      <h3 className="h3">Workspace</h3>
+                      <div className="row titlerow"><h3 className="h3">Workspace</h3></div>
                       <dl className="kv two">
                         <div style={{ gridColumn: "1 / -1" }}><dt>Location</dt><dd className="mono wrapok">{sel.path}</dd></div>
                         <div><dt>Implementation plan</dt><dd className="mono">{s?.plan.error ? "not found" : s?.plan.source ?? "—"}</dd></div>
-                        <div><dt>Registered</dt><dd>{new Date(sel.createdAt).toLocaleDateString()}</dd></div>
+                        <div><dt>Registered</dt><dd>{longDate(sel.createdAt)}</dd></div>
                         <div><dt>Progress</dt><dd>{s?.plan.total ? `${s.plan.percent}% · ${s.plan.completed} of ${s.plan.total}` : "—"}</dd></div>
                         <div><dt>Last activity</dt><dd>{ago(s?.updatedAt)}</dd></div>
                       </dl>
@@ -476,7 +490,7 @@ export function ProjectsPage() {
                         <St kind={p.total && p.completed === p.total ? "done" : p.completed ? "part" : "pending"} />
                         <span style={{ width: 260 }} className="ellipsis">Phase {p.number} · {p.title}</span>
                         <div className="grow"><Bar pct={p.percent ?? 0} /></div>
-                        <span className="sub mono" style={{ width: 52, textAlign: "right" }}>{p.completed}/{p.total}</span>
+                        <span className="sub tnum" style={{ width: 52, textAlign: "right" }}>{p.completed}/{p.total}</span>
                       </div>
                     ))}
                     {!s?.plan.phases.length && <div className="empty">{s?.plan.error ?? "The plan has no phases."}</div>}

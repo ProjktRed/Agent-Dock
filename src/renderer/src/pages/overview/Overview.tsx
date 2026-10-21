@@ -34,6 +34,8 @@ export function OverviewPage() {
   }
 
   const s = activeStatus;
+  // A finished run keeps its last task in status; show it as done, like Progress does.
+  const finished = !!s && !s.processAlive && s.runState === "complete";
   const tone = s ? runTone[s.runState] : runTone.idle;
   const stageText = s?.cycle ? roleLabel[s.cycle === "next" ? "assessment" : s.cycle] ?? s.cycle : s?.stage && s.stage !== "waiting" ? engineStageLabel(s.stage) : "—";
 
@@ -47,7 +49,7 @@ export function OverviewPage() {
         <dl className="kv grow" style={{ minWidth: 420 }}>
           <div>
             <dt>Current task</dt>
-            <dd title={s?.task?.name}>{s?.task ? `${s.task.id} · ${s.task.name}` : "None"}</dd>
+            <dd title={s?.task?.name}>{s?.task && !finished ? `${s.task.id} · ${s.task.name}` : "—"}</dd>
           </div>
           <div>
             <dt>Automation</dt>

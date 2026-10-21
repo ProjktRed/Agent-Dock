@@ -209,13 +209,13 @@ export async function trackRunEvent(state, event) {
   else if (event.type === "retry") RUN.corrections++;
   else if (event.type === "sol-reassessment-started") RUN.elevations++;
   else if (event.type === "user-attention" || event.type === "blocked") RUN.attention++;
-  if (event.type === "qa-pass" && RUN.maxTasks && RUN.tasksPassed >= RUN.maxTasks) await reachLimit(state, "tasks", `Task limit reached: ${RUN.tasksPassed} approved task(s).`);
+  if (event.type === "qa-pass" && RUN.maxTasks && RUN.tasksPassed >= RUN.maxTasks) await reachLimit(state, "tasks", `Task limit reached: ${RUN.tasksPassed} approved task${RUN.tasksPassed === 1 ? "" : "s"}.`);
 }
 
 /** Asks for Stop when the run's time limit passes; the current task still finishes. */
 export function startDeadline(state) {
   if (!RUN.maxHours) return null;
-  const timer = setTimeout(() => void reachLimit(state, "hours", `Time limit reached: ${RUN.maxHours} hour(s).`), RUN.maxHours * 3_600_000);
+  const timer = setTimeout(() => void reachLimit(state, "hours", `Time limit reached: ${RUN.maxHours} hour${RUN.maxHours === 1 ? "" : "s"}.`), RUN.maxHours * 3_600_000);
   timer.unref();
   return timer;
 }

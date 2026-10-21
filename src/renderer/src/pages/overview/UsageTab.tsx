@@ -156,7 +156,7 @@ export function UsageTab() {
                   <td style={{ whiteSpace: "normal", maxWidth: 240 }}>
                     <span className="row" style={{ gap: 6 }}>
                       <Dot tone={statusTone} />
-                      {engineLimited ? "Usage limit reached" : reported?.ok ? reported.statusText : reported?.error ? "Unavailable" : local ? "n/a" : provider ? "Not checked yet" : "None reported"}
+                      {engineLimited ? "Usage limit reached" : reported?.ok ? reported.statusText : reported?.error ? "Unavailable" : local ? "—" : provider ? "Not checked yet" : "None reported"}
                     </span>
                     {reported?.ok && reported.extras.map((x) => <div key={x.label} className="sub">{x.label}: {x.value}</div>)}
                     {provider && (
@@ -180,8 +180,8 @@ export function UsageTab() {
             })}
           </tbody>
         </table>
+        <p className="hint" style={{ margin: 0, padding: "8px 14px 6px" }}>Percentages and reset times come from each provider's own CLI. Nothing is inferred from plan names.</p>
       </section>
-      <p className="sub" style={{ margin: 0 }}>Percentages and reset times come from each provider's own CLI. Nothing is inferred from plan names.</p>
 
       {checksOpen && (
         <Modal label="Limit checks" title="Limit checks" onClose={() => setChecksOpen(false)}>

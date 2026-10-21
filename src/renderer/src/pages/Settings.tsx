@@ -4,7 +4,7 @@ import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Se
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
-import { connectionMeta, roleLabel, tokens } from "../lib/format";
+import { connectionMeta, dateTime, num, plural, roleLabel, tokens } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { Empty, Modal, ProvenanceChip, SetRow, St, Support, Tabs, Toggle } from "../components/ui";
 import { TaskModeCard } from "../components/TaskMode";
@@ -52,11 +52,11 @@ function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof E
   const [text, setText] = useState(stored == null ? "" : String(stored));
   useEffect(() => setText(stored == null ? "" : String(stored)), [stored]);
   const unitFor = (v: number) => (unit && v === 1 && /s$/.test(unit) ? unit.slice(0, -1) : unit);
-  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${v.toLocaleString()}${unit ? ` ${unitFor(v)}` : ""}`);
+  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${num(v)}${unit ? ` ${unitFor(v)}` : ""}`);
   if (guarded) {
     return (
       <span className="row" style={{ gap: 10 }}>
-        <span className="mono">{show(value)}</span>
+        <span className="tnum">{show(value)}</span>
         <span className="lock" title="Turn off engine guardrails (Settings › Advanced) to change"><Icon name="lock" size="sm" />Fixed by engine</span>
       </span>
     );
@@ -71,7 +71,7 @@ function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof E
   };
   return (
     <span className="row" style={{ gap: 8 }}>
-      <input className="input mono" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? fallback.toLocaleString() : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
+      <input className="input tnum" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? num(fallback) : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
       {unit && <span className="sub">{unit}</span>}
       {zeroLabel && <span className="hint">0 = {zeroLabel.toLowerCase()}</span>}
     </span>
@@ -99,7 +99,7 @@ function General() {
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Appearance</h2>
         <SetRow title="Theme" support="app">
-          <Tabs label="Theme" small value={g.theme} onChange={(v) => patch("general", { theme: v })} options={[{ value: "dark", label: "Dark" }, { value: "darker", label: "Darker" }]} />
+          <Tabs label="Theme" radio small value={g.theme} onChange={(v) => patch("general", { theme: v })} options={[{ value: "dark", label: "Dark" }, { value: "darker", label: "Darker" }]} />
         </SetRow>
         <SetRow title="Accent color" desc="Focus, selection and primary actions" support="app">
           <div className="row" style={{ gap: 14 }}>
@@ -156,7 +156,7 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
   const install = async () => {
     if (!preview) return;
     setBusy(true);
-    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${chosen.length} skill(s)`); onClose(); }
+    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${plural(chosen.length, "skill")}`); onClose(); }
     catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   return (
@@ -188,7 +188,7 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
                       <input type="checkbox" disabled={blocked} checked={on} onChange={() => setChosen(on ? chosen.filter((n) => n !== key(sk)) : [...chosen, key(sk)])} />
                       <span style={{ fontWeight: 600 }}>{sk.name}</span>
                       <span className="sub ellipsis grow">{sk.description}</span>
-                      {!preview.browse && <span className="sub">{sk.files.length} file(s){sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
+                      {!preview.browse && <span className="sub">{plural(sk.files.length, "file")}{sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
                     </span>
                     {sk.findings.filter((x) => x.file || x.level === "block").map((x, i) => <span key={i} className={`row ${x.level === "block" ? "err" : "warn"}`} style={{ gap: 6, fontSize: 12, paddingLeft: 26 }}><Icon name="warn" size="sm" />{x.level === "block" ? "Blocked: " : ""}{x.message}{x.file ? <span className="mono sub"> {x.file}</span> : null}</span>)}
                   </label>
@@ -242,7 +242,7 @@ function Skills() {
     <div className="stack" style={{ gap: 20 }}>
       <div className="banner"><Icon name="warn" className="info" /><span>The engine always includes its bundled <span className="mono">bounded-task-handoff</span> skill. Skills you assign to an agent are added to that role's prompt (SKILL.md plus its other Markdown files when they fit 16,000 characters); task scope and guard rules still take precedence.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
-        <span className="sub grow">{skills.length} skills · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
+        <span className="sub grow">{plural(skills.length, "skill")} · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
         {groups.length > 1 && <>
           <button className="btn ghost sm" onClick={() => setAll(false)}><Icon name="chevronDown" size="sm" />Expand all</button>
           <button className="btn ghost sm" onClick={() => setAll(true)}><Icon name="chevronRight" size="sm" />Collapse all</button>
@@ -274,8 +274,8 @@ function Skills() {
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
                   <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
-                  <td className="sub">{assignedLabel(s) || "None"}</td>
-                  <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? `${s.warnings.length} warning(s)` : "Compatible"}</span></td>
+                  <td className="sub">{assignedLabel(s) || "—"}</td>
+                  <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? plural(s.warnings.length, "warning") : "Compatible"}</span></td>
                   <td onClick={(e) => e.stopPropagation()}>{s.source === "engine" ? <span className="lock"><Icon name="lock" size="sm" />Required</span> : <Toggle on={enabled(s)} onChange={(v) => saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, [s.id]: v } } })} label={`Enable ${s.name}`} />}</td>
                 </tr>
               ))}
@@ -389,10 +389,6 @@ function Context() {
   const impl = snap.agents.filter((x) => x.role === "implementation" && snap.clis.find((c) => c.id === x.cliId)?.kind === "cline");
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="row wrap sub" style={{ gap: 18 }}>
-        <span className="row" style={{ gap: 6 }}><ProvenanceChip value="reported" />Defined by the provider or hardware, read-only</span>
-        <span className="row" style={{ gap: 6 }}><span className="chip lav" style={{ height: 18, fontSize: 10.5 }}>Yours</span>Limit you configure; must not exceed the provider's</span>
-      </div>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Defaults</h2>
         <GuardrailsNote />
@@ -400,7 +396,7 @@ function Context() {
         <SetRow title="Default maximum output" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultMaxOutputTokens" min={256} max={1_000_000} fallback={snap.engine.defaults.maxOutputTokens} unit="tokens" label="Default maximum output" /></SetRow>
         <SetRow title="Context warning threshold" desc="Warn when a configured context reaches this share of the model's reported maximum" support="app">
           <input type="range" min={50} max={95} step={5} value={snap.settings.context.warnThresholdPercent} onChange={(e) => patch("context", { warnThresholdPercent: Number(e.target.value) })} aria-label="Warning threshold" style={{ accentColor: "var(--a)", width: 200 }} />
-          <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
+          <span className="tnum" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
         <SetRow title="Files per task" desc="Eco mode: Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
@@ -409,6 +405,12 @@ function Context() {
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>
+        {impl.length === 0 ? <Empty title="No Implementation agents on Cline" icon="agent"><span>Assign a Cline agent to Implementation in Agents to set its context limits here.</span></Empty> : (
+        <>
+        <div className="row wrap sub" style={{ gap: 18 }}>
+          <span className="row" style={{ gap: 6 }}><ProvenanceChip value="reported" />Defined by the provider or hardware, read-only</span>
+          <span className="row" style={{ gap: 6 }}><span className="chip lav" style={{ height: 18, fontSize: 10.5 }}>Yours</span>Limit you configure; must not exceed the provider's</span>
+        </div>
         <div className="well scroll-x" style={{ padding: 6 }}>
           <table className="tbl" style={{ minWidth: 640 }}>
             <thead><tr><th>Agent</th><th>Provider-defined max</th><th>Your context limit</th><th>Your max output</th></tr></thead>
@@ -429,6 +431,8 @@ function Context() {
             </tbody>
           </table>
         </div>
+        </>
+        )}
         <span className="hint">QA, Assessment, Elevation, workflow roles and Codex / Claude Code implementation agents manage their own context inside their CLI.</span>
       </section>
     </div>
@@ -472,7 +476,7 @@ function Safety() {
               const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...w.unattendedLimits };
               return (
                 <label className="field" key={key}><span>{label}</span>
-                  <input className="input mono" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
+                  <input className="input tnum" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
                     onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= (key === "maxCorrections" ? 1 : 0) && v !== limits[key]) patch("workflow", { unattendedLimits: { ...limits, [key]: DECIMAL_LIMITS.has(key) ? v : Math.floor(v) } }); else e.target.value = String(limits[key] ?? 0); }} />
                   <span className="hint">{hint}</span>
                 </label>
@@ -553,7 +557,7 @@ function PriceTableCard() {
                 <input className="input mono" value={r.model} aria-label="Model" placeholder="gpt-5*" onChange={(e) => edit(i, e.target.value)} onBlur={(e) => commit(i, "model", e.target.value)} /></label>
               {([["input", "Input"], ["cachedInput", "Cached input"], ["output", "Output"]] as const).map(([key, label]) => (
                 <label className="field" key={key}><span>{label}</span>
-                  <input className="input mono" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
+                  <input className="input tnum" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
               ))}
               <div><button className="btn sm" onClick={() => save(rows.filter((_, j) => j !== i))}>Remove</button></div>
             </div>
@@ -602,7 +606,7 @@ function SupervisorCard() {
             ["digestHours", "Digest every hours", "0 = only at the end of a run"],
           ] as const).map(([key, label, hint]) => (
             <label className="field" key={key}><span>{label}</span>
-              <input className="input mono" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
+              <input className="input tnum" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
                 onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== sv[key]) void patch("workflow", { supervisor: { ...sv, [key]: ["stallMinutes", "millionTokensPerTask", "digestHours"].includes(key) ? v : Math.floor(v) } }); else e.target.value = String(sv[key]); }} />
               <span className="hint">{hint}</span>
             </label>
@@ -642,7 +646,7 @@ function SupervisorCard() {
                 </label>
               )}
               <label className="field"><span>Reviews per run</span>
-                <input className="input mono" inputMode="numeric" defaultValue={sv.reviewMax ?? 6} aria-label="Reviews per run"
+                <input className="input tnum" inputMode="numeric" defaultValue={sv.reviewMax ?? 6} aria-label="Reviews per run"
                   onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== sv.reviewMax) void patch("workflow", { supervisor: { ...sv, reviewMax: v } }); else e.target.value = String(sv.reviewMax ?? 6); }} />
                 <span className="hint">caps the review cost</span>
               </label>
@@ -674,9 +678,9 @@ function SupervisorCard() {
               <button className="btn sm danger" onClick={() => void saveChannel(kind, null)}>Remove</button>
             </div>
           ) : (
-            <div className="row wrap" style={{ gap: 8 }}>
+            <div className="row wrap" style={{ gap: 8, width: 420, maxWidth: "100%" }}>
               {fields.map((f) => (
-                <input key={f.key} className="input mono" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
+                <input key={f.key} className="input" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
                   onChange={(e) => setDrafts((d) => ({ ...d, [`${kind}.${f.key}`]: e.target.value }))} style={{ minWidth: 0, flex: "1 1 140px" }} />
               ))}
               <button className="btn sm" disabled={fields.some((f) => !drafts[`${kind}.${f.key}`]?.trim())}
@@ -721,13 +725,13 @@ function StopAllCard() {
         <button className="btn sm" onClick={() => void window.api.verifyActionLogs().then(setLogs, (error) => toast("error", (error as Error).message))}>Verify logs</button>
       </SetRow>
       <SetRow title="Keep history" desc="Days to keep per-call folders (prompts and answers), Cline sessions and action-log archives. The newest 100 calls are always kept; the action log records what was removed, so the rest still verifies. Applied when a run starts; 0 keeps everything." support="engine">
-        <input className="input mono" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
+        <input className="input tnum" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
           onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== retention) void patch("general", { retentionDays: v }); else e.target.value = String(retention); }} />
       </SetRow>
       {logs && (
         <ul className="list">
           {logs.length ? logs.map((l) => (
-            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${l.entries} entries${l.lastAt ? `, last ${new Date(l.lastAt).toLocaleString()}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
+            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${plural(l.entries, "entry", "entries")}${l.lastAt ? `, last ${dateTime(l.lastAt)}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
           )) : <li><span>No projects.</span></li>}
         </ul>
       )}
@@ -823,7 +827,7 @@ function Advanced() {
         <SetRow title="Export and import settings" desc="A file with your agents, workflow roles, connections and settings, to move to another computer or share a setup. API keys, secret values and projects are not included. To back up everything, copy the configuration folder (credentials only open on this Windows account)." support="app">
           <div className="row" style={{ gap: 8 }}>
             <button className="btn sm" onClick={async () => { try { if (await window.api.exportSettings()) toast("success", "Settings exported"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Export…</button>
-            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${r.agents} agent(s), ${r.roles} role(s) and ${r.clis} connection(s)`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
+            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${plural(r.agents, "agent")}, ${plural(r.roles, "role")} and ${plural(r.clis, "connection")}`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
           </div>
         </SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>

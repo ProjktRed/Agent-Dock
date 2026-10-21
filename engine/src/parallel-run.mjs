@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson, DashboardState } from "./dashboard-state.mjs";
@@ -82,6 +83,39 @@ export function spawnChildEngine({ cliPath, args, stateDir, env = process.env })
       resolve({ ...result, commit: read("last-result.json")?.result?.qa?.commit ?? null, usage: read("run-report.json")?.usage ?? null });
     });
   });
+}
+
+/** Brings a task engine's per-role usage into the run's state folder, where Overview reads it: each model call's
+ *  usage lines and the head of its prompt (which names the role), dated as the call was, and the last metrics
+ *  sample of each Implementation attempt as an event of the run. Run totals come from addRunUsage instead. */
+export async function importChildUsage({ childState, stateDir, taskId, onEvent }) {
+  const from = path.join(childState, "codex");
+  for (const name of await readdir(from).catch(() => [])) {
+    const events = path.join(from, name, "events.ndjson");
+    const info = await stat(events).catch(() => null);
+    const target = path.join(stateDir, "codex", name);
+    if (!info || existsSync(target)) continue;
+    // Only the lines with usage: a copied call never looks like one of the run's own (a usage-limit wait).
+    const usage = (await readFile(events, "utf8")).split(/\r?\n/).filter((line) => line.includes('"usage"'));
+    if (!usage.length) continue;
+    const prompt = await readFile(path.join(from, name, "prompt.txt"), "utf8").catch(() => "");
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "prompt.txt"), prompt.slice(0, 2000));
+    await writeFile(path.join(target, "events.ndjson"), `${usage.join("\n")}\n`);
+    await utimes(path.join(target, "events.ndjson"), info.atime, info.mtime);
+    await utimes(target, info.atime, info.mtime);
+  }
+  // As Overview counts them: a newer sample of an attempt replaces a partial one, the final one stays.
+  const latest = new Map();
+  const lines = (await readFile(path.join(childState, "activity.ndjson"), "utf8").catch(() => "")).split(/\r?\n/);
+  lines.forEach((line, i) => {
+    let event;
+    try { event = JSON.parse(line); } catch { return; }
+    if (event?.type !== "cline-provider-metrics") return;
+    const key = typeof event.runStartedAt === "string" ? event.runStartedAt : `line-${i}`;
+    if (!latest.has(key) || latest.get(key).partial === true) latest.set(key, event);
+  });
+  for (const event of latest.values()) await onEvent({ ...event, taskId, parallel: true });
 }
 
 /** Default check runner: the task's approved check command in the project, as QA runs it. */
@@ -190,6 +224,8 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       const result = await runChild({ task, worktree, stateDir: childState, taskFile });
       // The task's tokens and spend count toward this run: its engine kept them in its own state folder.
       if (result.usage) await addUsage(result.usage);
+      // And each role's share, which Overview reads from the run's own state folder.
+      await importChildUsage({ childState, stateDir, taskId: task.id, onEvent }).catch(() => {});
       await onEvent({ type: "parallel-task-finished", taskId: task.id, status: result.status, commit: result.commit ?? null, branch });
       return { task, worktree, branch, childState, result };
     })).finally(() => clearInterval(watch));
@@ -223,12 +259,12 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       }
       const commit = await git(workspace, ["rev-parse", "HEAD"]);
       await onEvent({ type: "parallel-merged", taskId: task.id, commit, branch });
-      await onEvent({ type: "qa-pass", taskId: task.id, qa: `Merged from ${branch}`, parallel: true, ...(task.planItems?.length ? { planItems: task.planItems } : {}) });
+      await onEvent({ type: "qa-pass", taskId: task.id, qa: `Merged from ${branch}`, parallel: true, ...(Number.isInteger(result.attempts) ? { attempt: result.attempts } : {}), ...(task.planItems?.length ? { planItems: task.planItems } : {}) });
       await onMerged(task);
       await removeWorktree(workspace, worktree).catch(() => {});
       await git(workspace, ["branch", "-D", branch]).catch(() => {});
     }
-    previous = { task: batch.at(-1), result: notes.length ? `Parallel round ${round}: ${notes.join("; ")}` : `Parallel round ${round}: all ${batch.length} task(s) merged.` };
+    previous = { task: batch.at(-1), result: notes.length ? `Parallel round ${round}: ${notes.join("; ")}` : `Parallel round ${round}: ${batch.length === 1 ? "its task" : `all ${batch.length} tasks`} merged.` };
     if (runs.some((r) => r.startError)) return { status: "blocked", output: previous.result };
     if ((await readControl()).stopAfterSafePoint) { await onEvent({ type: "stopped" }); return { status: "stopped", output: previous.result }; }
     // Nothing merged and nothing left to try: stop for you instead of repeating the same round.

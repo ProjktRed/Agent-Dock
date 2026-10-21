@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LocalContext, TokenRecord, UsageSummary } from "@shared/types";
 import { useApp } from "../../store";
-import { duration, roleLabel, tokens } from "../../lib/format";
+import { duration, hourMinute, roleLabel, shortDate, tokens } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
-import { Bar, Empty, ProvenanceChip, Tabs, Toggle } from "../../components/ui";
+import { Empty, ProvenanceChip, Tabs, Toggle } from "../../components/ui";
 
 type Range = "task" | "session" | "day" | "week" | "month";
 type Scope = "cloud" | "local";
@@ -20,10 +20,7 @@ function bucketise(records: TokenRecord[], range: Range, since: number) {
     if (i < 0) continue;
     buckets[i].roles[r.role] = (buckets[i].roles[r.role] ?? 0) + r.input + r.output;
   }
-  const label = (t: number) => {
-    const d = new Date(t);
-    return range === "week" || range === "month" ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-  };
+  const label = (t: number) => (range === "week" || range === "month" ? shortDate(t) : hourMinute(t));
   return buckets.map((b) => ({ ...b, label: label(b.start) }));
 }
 
@@ -149,18 +146,20 @@ export function TokensTab() {
               {local ? "No local usage yet. llama.cpp usage is sampled every 30 s while the worker runs; Ollama's arrives when each attempt ends." : "No cloud usage yet. Each CLI reports usage when its call finishes."}
             </div>
           ) : (
-            <div className="scroll-x" style={{ padding: "0 6px 8px" }}>
-              <table className="tbl" style={{ minWidth: 640 }}>
+            <div style={{ padding: "0 6px 8px" }}>
+              {/* Fixed columns so the table fits its card; a long model name is cut with its full text on hover. */}
+              <table className="tbl usage-tbl">
+                <colgroup><col style={{ width: "24%" }} /><col /><col style={{ width: "12%" }} /><col style={{ width: "12%" }} /><col style={{ width: "13%" }} /><col style={{ width: "16%" }} /></colgroup>
                 <thead><tr><th>Agent role</th><th>Model · provider</th><th className="num">Input</th><th className="num">Output</th><th className="num">Total</th><th className="num">Cost</th></tr></thead>
                 <tbody>
                   {byRole.map((r) => (
                     <tr key={r.role}>
                       <td><span className="row" style={{ gap: 8 }}><span className={`sw ${SW[r.role]}`} />{roleLabel[r.role]}</span></td>
-                      <td><div className="mono">{modelFor(r)}</div><div className="sub">{r.rs[0].provider}</div></td>
+                      <td><div className="mono ellipsis" title={modelFor(r)}>{modelFor(r)}</div><div className="sub ellipsis" title={r.rs[0].provider}>{r.rs[0].provider}</div></td>
                       <td className="num">{tokens(r.input)}</td>
                       <td className="num">{tokens(r.output)}</td>
                       <td className="num" style={{ fontWeight: 600 }}>{tokens(r.input + r.output)}</td>
-                      <td className="num mut">{local ? "Local" : "Not priced"}</td>
+                      <td className="sub" style={{ textAlign: "right" }}>{local ? "Local" : "Not priced"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -252,7 +251,8 @@ export function TokensTab() {
               {compare.map((c) => (
                 <div key={c.role} className="stack" style={{ gap: 5 }}>
                   <div className="row" style={{ fontSize: 12.5 }}><span className={`sw ${SW[c.role]}`} /><span>{roleLabel[c.role]}</span><span className="grow" /><span className="mono">{tokens(c.total)}</span></div>
-                  <Bar pct={(c.total / maxCompare) * 100} />
+                  {/* The bar takes its role's chart color. */}
+                  <div className="bar" role="progressbar" aria-valuenow={Math.round((c.total / maxCompare) * 100)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${(c.total / maxCompare) * 100}%`, background: `var(--${SW[c.role]})` }} /></div>
                 </div>
               ))}
             </div>

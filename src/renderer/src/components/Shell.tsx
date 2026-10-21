@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ProjectStatus } from "@shared/types";
 import { cleanError, useApp, type Route } from "../store";
-import { runTone } from "../lib/format";
+import { plural, runTone } from "../lib/format";
 import { Icon, type IconName } from "./Icon";
 import { Dot, Modal } from "./ui";
 import { useUpdateStatus } from "../lib/updates";
@@ -57,7 +57,7 @@ export function Sidebar() {
       <div className="sidefoot lbl">
         <span className="row" style={{ gap: 6 }}>
           <Dot tone={Object.values(statuses).some((s) => s.processAlive) ? "ok" : "mut"} />
-          {Object.values(statuses).filter((s) => s.processAlive).length} engine(s) running
+          {plural(Object.values(statuses).filter((s) => s.processAlive).length, "engine")} running
         </span>
         <span>{healthList.length ? `${healthy} of ${healthList.length} CLIs healthy` : "Checking CLIs…"}</span>
       </div>

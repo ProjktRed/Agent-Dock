@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,mkdirSync} from 'node:fs';
-import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,stat,utimes,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -174,6 +174,33 @@ test('each task engine\'s tokens and spend count toward the run and the day, onc
  const day=await readJson(path.join(stateDir,'usage-day.json'));
  assert.equal(day.tokens,2200);
  assert.equal(day.costUsd,1);
+});
+
+test('a merged task carries its attempts, and its engine\'s usage reaches the run per role',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const when=new Date('2026-10-01T10:00:00Z');
+ let assessments=0;const events=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:{status:'done'}),
+  runChild:async run=>{
+   // The task engine's QA call and its Implementation metrics: a partial sample, then the final one.
+   const call=path.join(run.stateDir,'codex','qa-call');mkdirSync(call,{recursive:true});
+   await writeFile(path.join(call,'prompt.txt'),'You are QA for task A.\n'+'x'.repeat(5000));
+   await writeFile(path.join(call,'events.ndjson'),'{"type":"error","message":"usage limit reached"}\n{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":5}}\n');
+   await utimes(path.join(call,'events.ndjson'),when,when);
+   const metric=(extra)=>JSON.stringify({type:'cline-provider-metrics',timestamp:'2026-10-01T09:00:00.000Z',runStartedAt:'r1',promptTokens:10,generatedTokens:1,...extra});
+   await writeFile(path.join(run.stateDir,'activity.ndjson'),[metric({partial:true}),metric({promptTokens:90,generatedTokens:9}),'{"type":"qa-pass"}'].join('\n')+'\n');
+   return{...(await commitIn(git,run)),attempts:2};
+  },
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async e=>events.push(e),readControl:async()=>({})});
+ assert.equal(result.status,'done');
+ assert.equal(events.find(e=>e.type==='qa-pass').attempt,2);
+ const metrics=events.filter(e=>e.type==='cline-provider-metrics');
+ assert.deepEqual(metrics.map(e=>[e.taskId,e.promptTokens,e.timestamp]),[['A',90,'2026-10-01T09:00:00.000Z']],'the final sample of the attempt, once, at its own time');
+ const copy=path.join(stateDir,'codex','qa-call');
+ assert.equal(await readFile(path.join(copy,'events.ndjson'),'utf8'),'{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":5}}\n','only the usage lines');
+ assert.match(await readFile(path.join(copy,'prompt.txt'),'utf8'),/^You are QA for task A\./);
+ assert.equal((await stat(path.join(copy,'events.ndjson'))).mtimeMs,when.getTime(),'dated as the call was');
 });
 
 test('a task that fails to merge in two rounds stops for you',async t=>{
