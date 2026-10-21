@@ -165,7 +165,7 @@ try {
     workspace, stateDir, objective: options.objective, lanes, maxRounds,
     assess: (input) => codex.assess(input),
     // While stepped down, a task's engine works at the smaller size its task was planned for.
-    runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null }), stateDir: childState }),
+    runChild: ({ worktree, stateDir: childState, taskFile, elevations }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null, elevations }), stateDir: childState }),
     onEvent: loopEvent, readControl: () => state.readControl(), betweenTasks,
     onMerged: endStepDown(loopEvent),
     // The task engines' own activity keeps the run's Supervisor from taking a long round for a stall.

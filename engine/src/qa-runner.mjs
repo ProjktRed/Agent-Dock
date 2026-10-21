@@ -3,12 +3,19 @@ import { withoutSecrets } from "./secret-env.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
 
 /** Runs the task's check command, without secrets in the environment. Every caller gets the same command check. */
-export async function runCheckCommand(command, cwd, { stateDir } = {}) {
+export async function runCheckCommand(command, cwd, { stateDir, timeoutMs = 0 } = {}) {
   assertSafeQaCommand({ workspace: cwd, stateDir, command });
-  return runCommand(command, cwd);
+  return runCommand(command, cwd, { timeoutMs });
 }
 
-function runCommand(command, cwd) {
+/** Ends the command and everything it started (a test runner's workers too). */
+function killTree(child) {
+  if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
+  else { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } }
+}
+
+/** timeoutMs > 0: a command still running then is ended, and fails with timedOut set. */
+function runCommand(command, cwd, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";
     const args = process.platform === "win32"
@@ -18,15 +25,23 @@ function runCommand(command, cwd) {
       cwd,
       env: { ...withoutSecrets(), CODEX_QA: "1" },
       windowsHide: true,
+      // Its own process group, so a timeout can end the whole tree.
+      detached: process.platform !== "win32" && timeoutMs > 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let output = "";
+    let output = "", timedOut = false;
+    const timer = timeoutMs > 0 ? setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs) : null;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
-    child.on("error", reject);
-    child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? 1, output }));
+    child.on("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
+    child.on("close", (exitCode) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) resolve({ exitCode: 1, timedOut: true, output: `${output}
+The check was ended after ${Math.round(timeoutMs / 60_000) || "<1"} minutes without finishing.` });
+      else resolve({ exitCode: exitCode ?? 1, output });
+    });
   });
 }
 

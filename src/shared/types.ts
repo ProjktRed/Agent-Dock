@@ -38,11 +38,45 @@ export interface Project {
   prMode?: boolean;
   /** The branch the current run branch was made from (the pull request's base). */
   prBase?: string | null;
+  /** GitHub CI: the pushed run branch whose GitHub Actions runs the app watches, set when the app pushes it. */
+  ci?: CiWatch | null;
+  /** GitHub CI fix loop (off by default): a failed CI run starts a run that fixes it, then pushes the branch again. */
+  ciFixLoop?: boolean;
+  /** One-shot note added to the objective on the next start: the failed CI log to fix. Cleared once started. */
+  ciNote?: string | null;
   /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
   parentId?: string | null;
   laneBranch?: string | null;
   /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
   wsl?: { enabled: boolean; distro: string };
+}
+
+/** A pushed run branch and commit whose GitHub Actions runs the app reads with GitHub CLI. */
+export interface CiWatch {
+  repo: string;
+  branch: string;
+  sha: string;
+  pushedAt: string;
+  prUrl: string | null;
+  /** The last summary seen; a final one (pass, fail, cancelled) ends the polling for this commit. */
+  state: CiState;
+  /** Fix-loop runs started for this branch since the last push you made; at most CI_FIX_MAX. */
+  fixAttempts: number;
+  /** A fix-loop run is working; when it ends with new commits the branch is pushed again. */
+  fixing: boolean;
+}
+
+export type CiState = "pending" | "pass" | "fail" | "cancelled" | "none" | "unavailable";
+export type CiBucket = "pass" | "fail" | "pending" | "skipping" | "cancel";
+export interface CiCheck { id: number; name: string; workflow: string; bucket: CiBucket; url: string | null }
+export interface CiStatus {
+  projectId: string;
+  watch: CiWatch | null;
+  state: CiState;
+  checks: CiCheck[];
+  /** Why the state is unavailable or none, in words. */
+  message: string | null;
+  checkedAt: string | null;
 }
 
 export interface ProjectSchedule {

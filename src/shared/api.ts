@@ -2,6 +2,7 @@ import type {
   AddProjectRequest,
   Agent,
   AppSnapshot,
+  CiStatus,
   CliConnection,
   CliHealth,
   DirectoryInspection,
@@ -144,6 +145,12 @@ export interface DesktopApi {
   rerunTask(projectId: string, taskId: string): Promise<void>;
   /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
   openPullRequest(projectId: string): Promise<string>;
+  /** GitHub CI: the watched commit's GitHub Actions runs, as last read. */
+  ciStatus(projectId: string): Promise<CiStatus>;
+  /** Reads the runs again now, with GitHub CLI. */
+  refreshCi(projectId: string): Promise<CiStatus>;
+  /** Starts a run that fixes the failed CI run; the branch is pushed again when it completes. */
+  fixCi(projectId: string): Promise<CiStatus>;
   /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
   addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
   /** Removes a lane's worktree and its project entry; its branch and commits stay. */
@@ -180,6 +187,7 @@ export interface DesktopApi {
   onUpdate(callback: (status: UpdateStatus) => void): () => void;
   windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
   onStatus(callback: (status: ProjectStatus) => void): () => void;
+  onCi(callback: (status: CiStatus) => void): () => void;
   onHealth(callback: (health: CliHealth) => void): () => void;
   onNotice(callback: (notice: Notice) => void): () => void;
 }

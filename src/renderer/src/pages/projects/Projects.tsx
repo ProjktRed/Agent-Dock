@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shared/schedule";
 import type { HistoryEntry } from "@shared/api";
-import type { Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
+import type { CiCheck, CiState, CiStatus, Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
+import { CI_FIX_MAX } from "@shared/ci";
 import { cleanError, useApp } from "../../store";
 import { ago, longDate, plural, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
-import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle } from "../../components/ui";
+import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle, type StatusKind } from "../../components/ui";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { TaskModePicker } from "../../components/TaskMode";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
@@ -51,6 +52,7 @@ function WorkflowTab({ project }: { project: Project }) {
       <ParallelCleanupRow project={project} />
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
+      <CiRow project={project} />
       {!project.parentId && <LanesRow project={project} />}
       <WslRow project={project} />
       <div className="setrow">
@@ -206,6 +208,65 @@ function PullRequestRow({ project }: { project: Project }) {
       {project.prMode && <button className="btn sm" disabled={busy || running} title={running ? "Stop the automation first" : undefined} onClick={() => void open()}>{busy ? "Pushing…" : "Open pull request"}</button>}
       <ScopeChip />
       <Toggle on={project.prMode === true} onChange={(v) => void saveProject({ ...project, prMode: v })} label="Pull-request mode" />
+    </div>
+  );
+}
+
+const CI_LABEL: Record<CiState, string> = { pending: "Running", pass: "Passed", fail: "Failed", cancelled: "Cancelled", none: "No runs", unavailable: "Unavailable" };
+const CI_ST: Record<CiState, StatusKind> = { pending: "active", pass: "done", fail: "blocked", cancelled: "attn", none: "pending", unavailable: "pending" };
+const CHECK_ST: Record<CiCheck["bucket"], StatusKind> = { pending: "active", pass: "done", fail: "blocked", cancel: "attn", skipping: "pending" };
+
+/** GitHub CI: the Actions runs of the pushed run branch, read with GitHub CLI, and the opt-in fix loop. */
+function CiRow({ project }: { project: Project }) {
+  const { saveProject, toast, statuses } = useApp();
+  const [ci, setCi] = useState<CiStatus | null>(null);
+  const [busy, setBusy] = useState<"" | "refresh" | "fix">("");
+  const running = statuses[project.id]?.processAlive === true;
+  useEffect(() => {
+    let live = true;
+    void window.api.ciStatus(project.id).then((s) => { if (live) setCi(s); }).catch(() => {});
+    const off = window.api.onCi((s) => { if (s.projectId === project.id) setCi(s); });
+    return () => { live = false; off(); };
+  }, [project.id]);
+  const act = async (kind: "refresh" | "fix") => {
+    setBusy(kind);
+    try { setCi(await (kind === "refresh" ? window.api.refreshCi(project.id) : window.api.fixCi(project.id))); }
+    catch (error) { toast("error", cleanError(error)); }
+    finally { setBusy(""); }
+  };
+  const watch = ci?.watch ?? null;
+  if (!project.prMode && !watch) return null;
+  return (
+    <div className="setrow" style={{ alignItems: "flex-start" }}>
+      <div className="grow">
+        <div className="lt row" style={{ gap: 8 }}>GitHub CI<Support kind="app" />
+          {watch && ci && <span className="row sub" style={{ gap: 6 }}><St kind={CI_ST[ci.state]} title={CI_LABEL[ci.state]} />{watch.fixing ? "Fixing" : CI_LABEL[ci.state]}</span>}
+        </div>
+        <div className="ld">
+          {watch
+            ? <>GitHub Actions runs of {watch.branch} at <span className="mono">{watch.sha.slice(0, 7)}</span>, pushed {ago(watch.pushedAt)}{ci?.checkedAt ? `, checked ${ago(ci.checkedAt)}` : ""}. Read with GitHub CLI as you (gh auth login); the app stores no GitHub token.{watch.prUrl && <> <a href={watch.prUrl} target="_blank" rel="noreferrer">Pull request</a></>}</>
+            : "After Open pull request, the app shows that commit's GitHub Actions runs here and tells you when they finish. It reads them with GitHub CLI as you (gh auth login) and stores no GitHub token."}
+          {ci?.message && <div className="sub">{ci.message}</div>}
+        </div>
+        {ci && ci.checks.length > 0 && (
+          <div className="col" style={{ gap: 4, marginTop: 8 }}>
+            {ci.checks.map((c) => (
+              <div key={`${c.id}-${c.name}`} className="row sub" style={{ gap: 6 }}>
+                <St kind={CHECK_ST[c.bucket]} title={c.bucket} />
+                {c.url ? <a href={c.url} target="_blank" rel="noreferrer">{c.workflow || c.name}</a> : <span>{c.workflow || c.name}</span>}
+                {c.workflow && c.name !== c.workflow && <span className="mut">{c.name}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <label className="row sub" style={{ gap: 6, marginTop: 8 }} title={`When CI fails, start a run that fixes it from the failed log, then push the branch again. At most ${CI_FIX_MAX} fix runs per push of yours; checks and tests are never weakened to pass.`}>
+          <Toggle on={project.ciFixLoop === true} onChange={(v) => void saveProject({ ...project, ciFixLoop: v })} label="Fix CI failures automatically" />
+          Fix failures automatically (pushes the fix){watch && watch.fixAttempts > 0 ? ` · ${watch.fixAttempts} of ${CI_FIX_MAX} fix runs used` : ""}
+        </label>
+      </div>
+      {watch && <button className="btn sm" disabled={busy !== ""} onClick={() => void act("refresh")}>{busy === "refresh" ? "Checking…" : "Refresh"}</button>}
+      {watch && ci?.state === "fail" && !watch.fixing && <button className="btn sm" disabled={busy !== "" || running} title={running ? "Stop the automation first" : "Starts a run that fixes it from the failed log"} onClick={() => void act("fix")}>{busy === "fix" ? "Starting…" : "Fix CI failure"}</button>}
+      <ScopeChip />
     </div>
   );
 }

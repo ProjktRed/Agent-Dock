@@ -43,6 +43,9 @@ const api: DesktopApi = {
   runs: invoke("project:runs") as DesktopApi["runs"],
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],
   openPullRequest: invoke("project:openPullRequest") as DesktopApi["openPullRequest"],
+  ciStatus: invoke("project:ciStatus") as DesktopApi["ciStatus"],
+  refreshCi: invoke("project:ciRefresh") as DesktopApi["refreshCi"],
+  fixCi: invoke("project:ciFix") as DesktopApi["fixCi"],
   addLane: invoke("project:addLane") as DesktopApi["addLane"],
   removeLane: invoke("project:removeLane") as DesktopApi["removeLane"],
   parallelLeftovers: invoke("project:parallelLeftovers") as DesktopApi["parallelLeftovers"],
@@ -83,6 +86,7 @@ const api: DesktopApi = {
   onUpdate: subscribe("update") as DesktopApi["onUpdate"],
   windowControl: invoke("window") as DesktopApi["windowControl"],
   onStatus: subscribe("status") as DesktopApi["onStatus"],
+  onCi: subscribe("ci") as DesktopApi["onCi"],
   onHealth: subscribe("health") as DesktopApi["onHealth"],
   onNotice: subscribe("notice") as DesktopApi["onNotice"],
 };

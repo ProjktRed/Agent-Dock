@@ -40,21 +40,32 @@ export async function ensureRunBranch(cwd: string, previousBase: string | null, 
 }
 
 /** Pushes the run branch and opens the pull request; returns its URL (or the compare page to finish it). */
-export async function openPullRequest(cwd: string, base: string, title: string, body: string, gh: string | null): Promise<{ url: string; created: boolean }> {
+export async function openPullRequest(cwd: string, base: string, title: string, body: string, gh: string | null): Promise<{ url: string; created: boolean; branch: string; sha: string; repo: string | null }> {
   const branch = await git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
   if (!branch.startsWith(PR_BRANCH_PREFIX)) throw new Error(`The project is on ${branch}, not an Agent Dock run branch.`);
   const ahead = Number(await git(cwd, "rev-list", "--count", `${base}..${branch}`).catch(() => "0"));
   if (!ahead) throw new Error(`${branch} has no commits that ${base} lacks yet.`);
   const remote = await git(cwd, "remote", "get-url", "origin");
   await git(cwd, "push", "-u", "origin", branch);
+  const sha = await git(cwd, "rev-parse", "HEAD");
   const repo = githubRepo(remote);
   if (gh && repo) {
     const r = await run(gh, ["pr", "create", "--repo", repo, "--base", base, "--head", branch, "--title", title, "--body", body], { cwd, timeoutMs: 120_000 });
     const url = r.stdout.trim().split(/\r?\n/).find((l) => /^https:\/\/github\.com\//.test(l));
-    if (r.code === 0 && url) return { url, created: true };
+    if (r.code === 0 && url) return { url, created: true, branch, sha, repo };
     const existing = (r.stderr + r.stdout).match(/https:\/\/github\.com\/\S+\/pull\/\d+/)?.[0];
-    if (existing) return { url: existing, created: false };
+    if (existing) return { url: existing, created: false, branch, sha, repo };
   }
   if (!repo) throw new Error(`Pushed ${branch}. The remote is not on GitHub, so open the pull request on your Git host.`);
-  return { url: compareUrl(repo, base, branch), created: false };
+  return { url: compareUrl(repo, base, branch), created: false, branch, sha, repo };
+}
+
+/** The CI fix loop: pushes the run branch again when a fix run added commits. Returns the new HEAD, or null when nothing is new. */
+export async function pushRunBranch(cwd: string, branch: string, pushedSha: string): Promise<string | null> {
+  const current = await git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
+  if (current !== branch) throw new Error(`The project is on ${current}, not ${branch}, so the fix was not pushed.`);
+  const sha = await git(cwd, "rev-parse", "HEAD");
+  if (sha === pushedSha) return null;
+  await git(cwd, "push", "origin", branch);
+  return sha;
 }

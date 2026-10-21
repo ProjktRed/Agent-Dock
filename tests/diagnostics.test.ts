@@ -68,6 +68,7 @@ describe("diagnostics export", () => {
       for (let i = 0; i < 12; i++) await writeFile(path.join(stateDir, "runs", `2026-10-${String(i + 1).padStart(2, "0")}.json`), JSON.stringify({ i }));
       await mkdir(path.join(stateDir, "codex"));
       await writeFile(path.join(stateDir, "codex", "prompt.txt"), "MODEL_PROMPT");
+      await writeFile(path.join(stateDir, "task-board.json"), JSON.stringify({ version: 1, revision: 3, order: ["abc123def456"] }));
       const project = { id: "p1", name: "My/App", stateDir, archived: false } as unknown as Project;
       const entries = await collectDiagnostics({
         about: { version: "0.23.6" }, settings: DEFAULT_SETTINGS, agents: [], clis: [], roles: [], projects: [project, { ...project, id: "p2" }],
@@ -85,6 +86,7 @@ describe("diagnostics export", () => {
       expect(files["projects/My_App/app-engine-tail.log"].length).toBeLessThanOrEqual(512 * 1024);
       expect(Object.keys(files).filter((n) => n.startsWith("projects/My_App/runs/"))).toHaveLength(10);
       expect(files["projects/My_App/runs/2026-10-12.json"]).toBeDefined();
+      expect(JSON.parse(files["projects/My_App/state/task-board.json"]).revision).toBe(3);
       expect(JSON.parse(files["projects/My_App/action-log-verify.json"])).toEqual({ ok: true, entries: 1 });
       expect(files["README.txt"]).toContain("Look through the files before you share them.");
       expect(unzip(zipFiles(entries))["about.json"]).toContain("0.23.6");

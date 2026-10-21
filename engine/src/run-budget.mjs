@@ -198,6 +198,10 @@ export function elevationAllowed() {
   return !RUN.maxElevations || RUN.elevations < RUN.maxElevations;
 }
 
+/** A parallel run's Elevation limit (0: none) and what its task engines used of it so far. */
+export const elevationBudget = () => ({ max: RUN.maxElevations, used: RUN.elevations });
+export function addRunElevations(count) { if (Number.isInteger(count) && count > 0) RUN.elevations += count; }
+
 async function reachLimit(state, limit, detail) {
   if (RUN.limit) return;
   RUN.limit = { limit, detail, at: new Date().toISOString() };

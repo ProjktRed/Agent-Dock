@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell, Tray } from "electron";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
-import type { AddProjectRequest, Agent, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
+import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
 import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
@@ -21,7 +21,8 @@ import { countCompactions, implementationUsage, readActivity, readOrchestratorUs
 import { dueScheduledStart, lastPassedSlot, missedScheduledStart, SCHEDULE_GRACE_MINUTES } from "@shared/schedule";
 import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
-import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
+import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-request";
+import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
@@ -368,9 +369,9 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   }
   const wasAlive = engine.isAlive(id);
   await engine.control(p, action, await launchArgs(p, check), providerEnv(p), source);
-  if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
-    // The attached task is a one-shot first task.
-    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
+  if ((p.pendingTaskFile || p.ciNote) && !wasAlive && engine.isAlive(id)) {
+    // The attached task and the CI failure note are for this start only.
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null, ciNote: null } : x));
     await store.saveProjects();
   }
   void pollOnce();
@@ -460,6 +461,103 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       osNotify(`Automation exited · ${p.name}`, "The engine process ended. See the engine log on the Overview page.");
     }
   }
+  if (prev?.processAlive && !next.processAlive && p.ci?.fixing) void ciFixEnded(p.id, next.runState).catch((error: Error) => notice({ kind: "error", message: `CI fix on ${p.name}: ${error.message}` }));
+}
+
+// ---------- GitHub CI: the Actions runs of a pushed run branch ----------
+
+const ciStatuses = new Map<string, CiStatus>();
+function setCi(id: string, ci: CiWatch | null, extra: Partial<Project> = {}) {
+  store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, ...extra, ci } : x));
+  return store.saveProjects();
+}
+function ciStatusOf(p: Project): CiStatus {
+  const known = ciStatuses.get(p.id);
+  return known && known.watch?.sha === p.ci?.sha ? { ...known, watch: p.ci ?? null } : { projectId: p.id, watch: p.ci ?? null, state: p.ci?.state ?? "none", checks: [], message: null, checkedAt: null };
+}
+const ghPath = async () => pickRunnable(await whereAll("gh"));
+
+/** Reads the watched commit's runs (force: also when final or past the give-up time) and acts when they finish. */
+async function pollCi(id: string, force = false): Promise<CiStatus> {
+  const p = project(id), w = p.ci;
+  if (!w) return ciStatusOf(p);
+  if (!force && (isFinal(w.state) || Date.now() - Date.parse(w.pushedAt) > CI_GIVE_UP_MS)) return ciStatusOf(p);
+  const gh = await ghPath();
+  const r = await readCi({ gh, repo: w.repo, branch: w.branch, sha: w.sha, pushedAt: w.pushedAt, cwd: p.path });
+  // The watch may have moved on (a new push) while gh was reading.
+  if (project(id).ci?.sha !== w.sha) return ciStatusOf(project(id));
+  const watch = { ...project(id).ci!, state: r.state };
+  const status: CiStatus = { projectId: id, watch, state: r.state, checks: r.checks, message: r.message, checkedAt: new Date().toISOString() };
+  ciStatuses.set(id, status);
+  send("ci", status);
+  if (r.state !== w.state) {
+    await setCi(id, watch);
+    if (isFinal(r.state)) await ciFinished(project(id), status, gh);
+  }
+  return status;
+}
+
+async function ciFinished(p: Project, status: CiStatus, gh: string | null) {
+  const general = store.data.settings.general;
+  const w = status.watch as CiWatch;
+  const failed = [...new Set(status.checks.filter((c) => c.bucket === "fail").map((c) => c.workflow || c.name))];
+  const word = status.state === "pass" ? "passed" : status.state === "fail" ? "failed" : "was cancelled";
+  const message = `CI ${word} on ${w.branch}${failed.length ? `: ${failed.join(", ")}` : ""}.`;
+  notice({ kind: status.state === "pass" ? "success" : status.state === "fail" ? "error" : "warning", message: `${p.name}: ${message}` });
+  if (status.state === "pass" ? general.notifyCompleted : general.notifyErrors) osNotify(`CI ${word} · ${p.name}`, message.slice(0, 180));
+  if (status.state !== "fail" || !p.ciFixLoop || !gh) return;
+  if (w.fixAttempts >= CI_FIX_MAX) { notice({ kind: "warning", message: `${p.name}: CI still fails after ${CI_FIX_MAX} fix runs, so the fix loop stopped. The failure is yours to look at.` }); return; }
+  if (engine.isAlive(p.id)) { notice({ kind: "warning", message: `${p.name}: CI failed while a run is going; press Fix CI failure when it ends.` }); return; }
+  await startCiFix(p.id, status, "ci-fix-loop").catch((error: Error) => notice({ kind: "error", message: `${p.name}: the CI fix run could not start: ${error.message}` }));
+}
+
+/** Starts a run whose objective begins with the failed log; the push follows when that run completes. */
+async function startCiFix(id: string, status: CiStatus, source: string) {
+  const p = project(id), w = p.ci;
+  if (!w || status.state !== "fail" || status.watch?.sha !== w.sha) throw new Error("There is no failed CI run to fix for the pushed commit.");
+  if (w.fixing) throw new Error("A CI fix run is already working on it.");
+  if (engine.isAlive(id)) throw new Error("Stop the automation first.");
+  const gh = await ghPath();
+  if (!gh) throw new Error("GitHub CLI (gh) is needed to read the failed log.");
+  const head = (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: p.path })).stdout.trim();
+  if (head !== w.branch) throw new Error(`The project is on ${head}, not ${w.branch}.`);
+  const logs = await failedLogs({ gh, repo: w.repo, cwd: p.path, checks: status.checks });
+  await setCi(id, { ...w, fixing: true, fixAttempts: w.fixAttempts + 1 }, { ciNote: ciFixNote(w.branch, w.sha, logs) });
+  try {
+    await runControl(id, "start", source);
+  } catch (error) {
+    await setCi(id, { ...w, fixing: false }, { ciNote: null });
+    throw error;
+  }
+  notice({ kind: "info", message: `${p.name}: fixing the CI failure (fix run ${w.fixAttempts + 1} of ${CI_FIX_MAX}).` });
+}
+
+/** A fix run ended: a complete run with new commits is pushed and watched again; anything else is left to you. */
+async function ciFixEnded(id: string, runState: string) {
+  const p = project(id), w = p.ci;
+  if (!w?.fixing) return;
+  if (runState !== "complete") {
+    await setCi(id, { ...w, fixing: false });
+    notice({ kind: "warning", message: `${p.name}: the CI fix run ended without completing, so nothing was pushed.` });
+    return;
+  }
+  let sha: string | null;
+  try { sha = await pushRunBranch(p.path, w.branch, w.sha); }
+  catch (error) { await setCi(id, { ...w, fixing: false }); throw error; }
+  if (!sha) {
+    await setCi(id, { ...w, fixing: false });
+    notice({ kind: "warning", message: `${p.name}: the CI fix run made no commits, so nothing was pushed.` });
+    return;
+  }
+  await setCi(id, { ...w, sha, pushedAt: new Date().toISOString(), state: "pending", fixing: false });
+  notice({ kind: "info", message: `${p.name}: pushed the CI fix (${sha.slice(0, 7)}); watching CI again.` });
+  void pollCi(id).catch(() => {});
+}
+
+function startCiPolling() {
+  setInterval(() => {
+    for (const p of store.data.projects) if (!p.archived && p.ci) void pollCi(p.id).catch((error: Error) => console.warn(`[ci] ${p.name}: ${error.message}`));
+  }, CI_POLL_MS);
 }
 
 const lastSent = new Map<string, string>();
@@ -838,7 +936,7 @@ function registerIpc() {
     const passed = JSON.stringify(before?.schedule) !== JSON.stringify(p.schedule) ? lastPassedSlot(p.schedule, new Date()) : null;
     const handled = (last?: string | null) => (passed && (!last || Date.parse(passed) > Date.parse(last)) ? passed : last ?? null);
     // The project folder and its state folder are set when the project is added, never by a window.
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart) } : x));
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart), ci: x.ci ?? null, ciNote: x.ciNote ?? null } : x));
     await store.saveProjects();
     if (JSON.stringify([before?.schedule, before?.archived]) !== JSON.stringify([p.schedule, p.archived])) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
@@ -918,10 +1016,21 @@ function registerIpc() {
     if (engine.isAlive(id)) throw new Error("Stop the automation first, so the branch is complete.");
     const report = (await engine.runs(p))[0];
     const body = [p.objective.trim(), "", report ? runReportMarkdown(report, p.name) : "", "_Opened by Agent Dock in pull-request mode._"].join("\n");
-    const { url, created } = await openPullRequest(p.path, p.prBase ?? "main", `${p.name}: ${p.objective.trim().split(/\r?\n/)[0].slice(0, 80)}`, body, pickRunnable(await whereAll("gh")));
+    const { url, created, branch, sha, repo } = await openPullRequest(p.path, p.prBase ?? "main", `${p.name}: ${p.objective.trim().split(/\r?\n/)[0].slice(0, 80)}`, body, await ghPath());
+    // Your push starts a fresh watch, and the fix loop's count starts again.
+    if (repo) {
+      await setCi(id, { repo, branch, sha, pushedAt: new Date().toISOString(), prUrl: /\/pull\/\d+$/.test(url) ? url : null, state: "pending", fixAttempts: 0, fixing: false });
+      void pollCi(id).catch(() => {});
+    }
     void shell.openExternal(url);
     notice({ kind: "success", message: created ? `Pull request opened: ${url}` : `Branch pushed; finish the pull request in your browser.` });
     return url;
+  });
+  handle("project:ciStatus", (id: string) => ciStatusOf(project(id)));
+  handle("project:ciRefresh", (id: string) => pollCi(id, true));
+  handle("project:ciFix", async (id: string) => {
+    await startCiFix(id, await pollCi(id, true), "app");
+    return ciStatusOf(project(id));
   });
   handle("project:rerunTask", async (id: string, taskId: string) => {
     const p = project(id);
@@ -1118,6 +1227,7 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   startPolling();
+  startCiPolling();
   void startApprovals().catch((error) => console.error("Remote approvals not started", error));
   void checkAllClis();
   setTimeout(() => void resumeAfterRestart(), 2500);

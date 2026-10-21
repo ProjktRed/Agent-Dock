@@ -11,7 +11,7 @@ import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
 import { noteStepDownApproval } from "./engine-tuning.mjs";
 import { validateTask } from "./node-loop.mjs";
 import { runCheckCommand } from "./qa-runner.mjs";
-import { addRunUsage, BUDGET_FLAGS, RUN_USAGE_FILE } from "./run-budget.mjs";
+import { addRunElevations, addRunUsage, BUDGET_FLAGS, elevationBudget, RUN_USAGE_FILE } from "./run-budget.mjs";
 
 // Parallel tasks in one run (0.35, --parallel N). Each round, Assessment picks up to N tasks whose
 // allowed files do not overlap. Every task then runs through a complete engine of its own (Implementation,
@@ -81,8 +81,20 @@ function rebaseProtected(value, workspace, worktree) {
  *  stepped down) replaces the configured task size, so the task's engine works at the size it was planned for.
  *  No Supervisor either (no alerts, model review or digests of its own): the parent supervises the whole run.
  *  No budget of its own (tokens, spend, tasks, hours): the parent counts its usage and stops it at the run's limits. */
-export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null }) {
-  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", ...BUDGET_FLAGS, ...(sizing ? SIZE_FLAGS : [])]);
+/**
+ * The run's Elevation limit shared by a round's task engines: what is left is split between them, the first
+ * ones getting any remainder, so together they never use more than the limit. null: no limit. A task given
+ * none runs without automatic Elevation.
+ */
+export function shareElevations({ max = 0, used = 0 } = {}, count) {
+  if (!max) return Array(count).fill(null);
+  const left = Math.max(0, max - used), each = Math.floor(left / count), extra = left % count;
+  return Array.from({ length: count }, (_, i) => each + (i < extra ? 1 : 0));
+}
+
+export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, elevations = null }) {
+  const limited = Number.isInteger(elevations);
+  const drop = new Set(["--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", ...BUDGET_FLAGS, ...(sizing ? SIZE_FLAGS : []), ...(limited ? ["--max-elevations"] : []), ...(limited && elevations === 0 ? ["--sol-reassessment"] : [])]);
   let workspace = null;
   for (let i = 0; i < argv.length; i += 2) if (argv[i] === "--workspace") workspace = argv[i + 1];
   const out = [];
@@ -91,7 +103,8 @@ export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null })
     out.push(argv[i], argv[i] === "--protected-paths" ? rebaseProtected(argv[i + 1], workspace, worktree) : argv[i + 1]);
   }
   const size = sizing ? ["--task-mode", sizing.taskMode, "--task-max-files", String(sizing.taskMaxFiles), "--task-max-new-lines", String(sizing.taskMaxNewLines), "--task-max-read-files", String(sizing.taskMaxReadFiles)] : [];
-  return [...out, ...size, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off"];
+  const share = !limited ? [] : elevations > 0 ? ["--max-elevations", String(elevations)] : ["--sol-reassessment", "false"];
+  return [...out, ...size, ...share, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off"];
 }
 
 /** A task engine's environment: the parent's without AGENT_DOCK_NOTIFY, so only the parent sends notifications. */
@@ -193,10 +206,12 @@ export async function countChildUsage({ childState, usage, addUsage }) {
 }
 
 /** Counts a task engine's usage toward the run once: its run totals, each role's share, then marks it imported. */
-async function importChild({ childState, stateDir, taskId, usage, addUsage, onEvent }) {
+async function importChild({ childState, stateDir, taskId, usage, addUsage, onEvent, addElevations = addRunElevations }) {
   if (readChildRecord(childState)?.usageImported) return;
   // Its final totals, or what it recorded so far when it ended without a report.
   await countChildUsage({ childState, usage: usage ?? readLiveUsage(childState), addUsage });
+  // Its automatic Elevations count toward the run's limit, as its tokens do.
+  try { addElevations(Number(JSON.parse(readFileSync(path.join(childState, "run-report.json"), "utf8"))?.elevations) || 0); } catch {}
   await importChildUsage({ childState, stateDir, taskId, onEvent }).catch(() => {});
   writeChildRecord(childState, { usageImported: true });
 }
@@ -246,7 +261,7 @@ export async function stopOrphanChildren({ stateDir, waitMs = 60_000, pollMs = 1
 }
 
 /** Usage of task engines whose run ended before it could count it (a crash, a kill): counted now, once. */
-export async function importLeftoverUsage({ stateDir, addUsage, onEvent }) {
+export async function importLeftoverUsage({ stateDir, addUsage, onEvent, addElevations = addRunElevations }) {
   const root = path.join(stateDir, "parallel");
   for (const name of await readdir(root).catch(() => [])) {
     const dir = path.join(root, name);
@@ -254,7 +269,7 @@ export async function importLeftoverUsage({ stateDir, addUsage, onEvent }) {
     // Only engines this version started and recorded, so the state of earlier runs is never counted twice.
     if (!Number.isInteger(record?.pid) || record.usageImported || !record.exitedAt) continue;
     const read = (file) => { try { return JSON.parse(readFileSync(path.join(dir, file), "utf8")); } catch { return null; } };
-    await importChild({ childState: dir, stateDir, taskId: read("task.json")?.id ?? name, usage: read("run-report.json")?.usage ?? null, addUsage, onEvent });
+    await importChild({ childState: dir, stateDir, taskId: read("task.json")?.id ?? name, usage: read("run-report.json")?.usage ?? null, addUsage, onEvent, addElevations });
   }
 }
 
@@ -292,9 +307,12 @@ async function restoreToHead(workspace, commit = null) {
 
 /** Default check runner: the task's approved check command in the project, through the QA runner (the same
  *  command check, and no secrets in its environment). A command it refuses, or that cannot start, fails the check. */
-export async function defaultRunCheck(command, cwd, { stateDir } = {}) {
+/** The combined check of a merge: a check that hangs (a watch mode, a server left running) fails after this. */
+export const MERGE_CHECK_TIMEOUT_MS = 30 * 60_000;
+
+export async function defaultRunCheck(command, cwd, { stateDir, timeoutMs = MERGE_CHECK_TIMEOUT_MS } = {}) {
   try {
-    const { exitCode, output } = await runCheckCommand(command, cwd, { stateDir });
+    const { exitCode, output } = await runCheckCommand(command, cwd, { stateDir, timeoutMs });
     return { exitCode, output: String(output ?? "").slice(-4000) };
   } catch (error) { return { exitCode: 1, output: String(error?.message ?? error) }; }
 }
@@ -311,7 +329,7 @@ async function beforeRound({ readControl, onEvent, pollMs }) {
   }
 }
 
-export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, addUsage = addRunUsage, pollMs = 3000, onChildActivity = async () => {}, stopOrphans = stopOrphanChildren, maxRounds = 0 }) {
+export async function runParallel({ workspace, stateDir, objective, lanes, assess, runChild, runCheck = defaultRunCheck, onEvent, readControl, betweenTasks = async () => {}, onMerged = async () => {}, addUsage = addRunUsage, pollMs = 3000, onChildActivity = async () => {}, stopOrphans = stopOrphanChildren, maxRounds = 0, elevations = elevationBudget, addElevations = addRunElevations }) {
   let previous = null;
   const mergeFailures = new Map();
   // As the normal loop's block() and correction limit: the ending is recorded (Activity, notifications, Overview) before the run returns.
@@ -326,7 +344,7 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
     // Task engines a crashed run left at work end first, and their usage counts; then the round can start.
     const orphans = await stopOrphans({ stateDir });
     if (orphans.length) await onEvent({ type: "parallel-orphans-stopped", count: orphans.length, folders: orphans.map((dir) => path.basename(dir)) });
-    await importLeftoverUsage({ stateDir, addUsage, onEvent }).catch(() => {});
+    await importLeftoverUsage({ stateDir, addUsage, onEvent, addElevations }).catch(() => {});
     await betweenTasks();
     if (await git(workspace, ["status", "--porcelain", "--untracked-files=all"])) return end("blocked", "Parallel tasks need a clean working tree between rounds.");
     const head = await git(workspace, ["rev-parse", "HEAD"]);
@@ -409,7 +427,8 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
     // One name per run and try, so a worktree kept from an earlier run never blocks this one.
     const stamp = Date.now().toString(36);
     const taken = new Set();
-    const settled = await Promise.allSettled(batch.map(async (task) => {
+    const allowance = shareElevations(elevations(), batch.length);
+    const settled = await Promise.allSettled(batch.map(async (task, index) => {
       const id = String(task.id).replace(/[^\w.-]+/g, "_");
       const worktree = freeWorktree(workspace, `${id}-${stamp}`, taken);
       const branch = `agent-dock/parallel-${path.basename(worktree)}`;
@@ -427,11 +446,11 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       await atomicWriteJson(taskFile, task);
       await onEvent({ type: "parallel-task-started", taskId: task.id, name: task.name ?? task.id, branch, worktree });
       await saveTask(task.id, { status: "running", folder: path.basename(childState), branch, startedAt: new Date().toISOString() });
-      const result = await runChild({ task, worktree, stateDir: childState, taskFile });
+      const result = await runChild({ task, worktree, stateDir: childState, taskFile, elevations: allowance[index] });
       await saveTask(task.id, { status: result.status === "passed" && result.commit ? "approved" : result.status === "stopped" ? "stopped" : "failed", endedAt: new Date().toISOString() });
       // Whatever the result: the task's tokens and spend count toward this run (its engine kept them in its own
       // state folder), and each role's share, which Overview reads from the run's own state folder.
-      await importChild({ childState, stateDir, taskId: task.id, usage: result.usage, addUsage, onEvent });
+      await importChild({ childState, stateDir, taskId: task.id, usage: result.usage, addUsage, onEvent, addElevations });
       // With its attempts and how it ended (summary, not qa: the round's own latest outcome stays), so Task history lists a task that did not pass as well.
       await onEvent({ type: "parallel-task-finished", taskId: task.id, status: result.status, commit: result.commit ?? null, branch, ...(Number.isInteger(result.attempts) ? { attempt: result.attempts } : {}), ...(result.output ? { summary: firstLine(result.output, 300) } : {}) });
       return { task, worktree, branch, childState, result };

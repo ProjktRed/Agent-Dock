@@ -13,7 +13,7 @@ import type { ZipEntry } from "./lib/zip";
 export const STATE_FILES = [
   "live.json", "control.json", "current-task.json", "last-result.json", "loop-result.json", "pending-codex.json",
   "run-report.json", "run-report.md", "plan-proposals.json", "deferred-tasks.json", "workflow-roles.json",
-  "supervisor-digest.md", "usage-day.json", "app-engine.json",
+  "supervisor-digest.md", "usage-day.json", "app-engine.json", "task-board.json", "parallel-round.json", "run-usage.json",
 ];
 const ACTIVITY_LINES = 2000;
 const LOG_BYTES = 512 * 1024;

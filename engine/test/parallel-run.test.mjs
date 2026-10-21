@@ -5,7 +5,7 @@ import {mkdtemp,readFile,rm,stat,utimes,writeFile} from 'node:fs/promises';
 import {execFileSync,spawn} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {childArgs,childEnv,defaultRunCheck,endStepDown,forwardControl,freeWorktree,readChildRecord,runParallel,spawnChildEngine,stopOrphanChildren,worktreeFor,writeChildRecord} from '../src/parallel-run.mjs';
+import {childArgs,childEnv,defaultRunCheck,shareElevations,endStepDown,forwardControl,freeWorktree,readChildRecord,runParallel,spawnChildEngine,stopOrphanChildren,worktreeFor,writeChildRecord} from '../src/parallel-run.mjs';
 import {deferTask} from '../src/defer-task.mjs';
 import {DashboardState} from '../src/dashboard-state.mjs';
 import {STEP_DOWN,TUNING,loadStepDown,parseTuning,stepDown,useTuning} from '../src/engine-tuning.mjs';
@@ -175,6 +175,30 @@ test('each task engine\'s tokens and spend count toward the run and the day, onc
  const day=await readJson(path.join(stateDir,'usage-day.json'));
  assert.equal(day.tokens,2200);
  assert.equal(day.costUsd,1);
+});
+
+test("the run's Elevation limit is split between a round's task engines and their Elevations count toward it",async t=>{
+ assert.deepEqual(shareElevations({max:0,used:0},2),[null,null]);
+ assert.deepEqual(shareElevations({max:3,used:0},2),[2,1]);
+ assert.deepEqual(shareElevations({max:1,used:0},2),[1,0]);
+ assert.deepEqual(shareElevations({max:2,used:5},2),[0,0]);
+ const base=['--objective','B','--max-elevations','2','--sol-reassessment','true'];
+ const opts={worktree:'W',stateDir:'S',taskFile:'T'};
+ const flag=(args,name)=>args.filter((_,i)=>args[i-1]===name);
+ assert.deepEqual(flag(childArgs(base,opts),'--max-elevations'),['2'],'no limit: unchanged');
+ assert.deepEqual(flag(childArgs(base,{...opts,elevations:1}),'--max-elevations'),['1']);
+ const none=childArgs(base,{...opts,elevations:0});
+ assert.deepEqual([flag(none,'--max-elevations'),flag(none,'--sol-reassessment')],[[],['false']]);
+ const {ws,stateDir,git}=await repo(t);
+ let assessments=0,used=0;const given=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,maxRounds:1,
+  elevations:()=>({max:3,used}),addElevations:n=>{used+=n;},
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:assessments===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async run=>{given.push(run.elevations);await writeFile(path.join(run.stateDir,'run-report.json'),JSON.stringify({elevations:1}));return commitIn(git,run);},
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async()=>{},readControl:async()=>({})});
+ assert.notEqual(result.status,'blocked',result.output);
+ assert.deepEqual(given.sort(),[1,2]);
+ assert.equal(used,2);
 });
 
 test('a merged task carries its attempts, and its engine\'s usage reaches the run per role',async t=>{
@@ -650,6 +674,16 @@ test('the combined check runs through the QA runner: an unapproved command never
  const passed=await defaultRunCheck('npm test',ws,{stateDir});
  assert.equal(passed.exitCode,0,passed.output);
  assert.equal(typeof passed.output,'string');
+});
+
+test('a combined check that hangs is ended after its timeout and fails',async t=>{
+ const {ws,stateDir}=await repo(t);
+ await writeFile(path.join(ws,'package.json'),JSON.stringify({scripts:{test:'node -e "setTimeout(()=>{},600000)"'}}));
+ const started=Date.now();
+ const hung=await defaultRunCheck('npm test',ws,{stateDir,timeoutMs:1500});
+ assert.equal(hung.exitCode,1);
+ assert.match(hung.output,/ended after <1 minutes without finishing/);
+ assert.ok(Date.now()-started<60_000);
 });
 
 test('parallel-round.json follows the round: each task, its folder and branch, and how it ended',async t=>{

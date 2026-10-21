@@ -202,6 +202,14 @@ All per project in Projects › Workflow, unless noted.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
+- **GitHub CI**: once the app has pushed a run branch, Projects › Workflow › GitHub CI shows that
+  commit's GitHub Actions runs (`gh run list`, polled every minute until they finish, for at most six
+  hours) and tells you when they pass or fail (Windows notification per the notification settings).
+  It uses your own `gh auth login`; the app stores no GitHub token. **Fix CI failure** (or the opt-in
+  fix loop, off by default) starts a run whose objective begins with the failed jobs' log (`gh run view
+  --log-failed`, the last 120 lines, fenced as data), for that start only. When that run completes with
+  new commits the app pushes the branch again and watches CI anew; a run that does not complete, or
+  makes no commits, pushes nothing. The loop stops after 3 fix runs per push of yours.
 - **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
   round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
   (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>-<run>`)
@@ -252,8 +260,10 @@ All per project in Projects › Workflow, unless noted.
 - Parallel tasks need a cloud Implementation agent (a local model server answers one request at a
   time). A task's tokens and spend count toward the run's budgets while it works (checked every few
   seconds, so a limit can be passed by what the tasks use in that time and until their next safe
-  point); its per-role usage reaches Overview when its engine finishes. The Elevation limit applies to
-  each task's engine on its own.
+  point); its per-role usage reaches Overview when its engine finishes. The Elevation limit is shared:
+  what is left of it is split between the round's tasks (a task given none runs without automatic
+  Elevation), and each task's Elevations count toward it. The check of the combined code is ended after
+  30 minutes (a watch mode or a server left running) and counts as a failed check.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file lock,
   usually antivirus or indexing). The engine retries a blocked rename for about five seconds; if a
   lock lasts longer, excluding the engine state folders from real-time scanning is the usual fix.
