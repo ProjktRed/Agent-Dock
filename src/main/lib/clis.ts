@@ -1,12 +1,22 @@
 import { existsSync } from "node:fs";
 import type { Capability, CliConnection, CliHealth, PathDetection } from "@shared/types";
 import { run } from "./git";
+import { cmdLine, resolveProgram } from "./cmd-line";
 
-const quote = (value: string) => (/[\s&()]/.test(value) && !value.startsWith('"') ? `"${value}"` : value);
-
-/** Runs a CLI through the shell (npm shims are .cmd files, which execFile cannot start directly on Windows). */
-function runCli(location: string, args: string[], timeoutMs: number) {
-  return run(quote(location), args, { shell: true, timeoutMs });
+/**
+ * Runs a CLI. Windows: through cmd.exe (npm shims are .cmd files, which execFile cannot start directly),
+ * with the program resolved through PATH and PATHEXT and every argument escaped (cmd-line); elsewhere directly.
+ */
+async function runCli(location: string, args: string[], timeoutMs: number) {
+  const program = location.replace(/^"(.*)"$/, "$1");
+  if (process.platform !== "win32") return run(program, args, { timeoutMs });
+  let line: string;
+  try {
+    line = cmdLine(resolveProgram(program), args);
+  } catch (error) {
+    return { stdout: "", stderr: (error as Error).message, code: 1 };
+  }
+  return run(line, [], { shell: true, timeoutMs });
 }
 
 export async function whereAll(command: string): Promise<string[]> {

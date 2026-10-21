@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ClaudeWorker, claudeChildEnv, extractClaudeResult } from "../src/claude-worker.mjs";
+import { ClaudeWorker, claudeChildEnv, extractClaudeResult, preflightClaude } from "../src/claude-worker.mjs";
 import { CodexUsageLimitError } from "../src/codex-worker.mjs";
 
 function fakeSpawn(envelope, calls) {
@@ -107,4 +107,38 @@ test("a second answer without the Task skill line still blocks", async () => {
   const w = await worker(({ is_error: false, result: "", structured_output: { status: "task", task: { id: "t1", name: "n", prompt: "Goal: x", qaCommand: "npm test", allowedPaths: ["a.ts"] }, output: "", correction: "", commit: "", manualReviewCause: null } }), calls);
   await assert.rejects(w.assess({ objective: "obj", previous: null }), /Task skill selection is required/);
   assert.equal(calls.length, 2);
+});
+
+// npm installs Claude Code as claude.cmd: a fake one that records its arguments and stdin and answers like the CLI.
+async function claudeShim(root, envelope) {
+  await writeFile(path.join(root, "fake-claude.js"), `const fs = require("fs"), path = require("path");
+const args = process.argv.slice(2);
+if (args[0] === "auth") { process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: "shim" })); process.exit(0); }
+let input = "";
+process.stdin.on("data", (c) => (input += c)).on("end", () => {
+  fs.writeFileSync(path.join(__dirname, "call.json"), JSON.stringify({ args, input }));
+  process.stdout.write(${JSON.stringify(JSON.stringify(envelope))});
+});
+`);
+  await writeFile(path.join(root, "claude.cmd"), `@ECHO off\r\nSETLOCAL\r\n"${process.execPath}" "%~dp0\\fake-claude.js" %*\r\n`);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"));
+  return { ...env, PATH: `${root};${process.env.PATH ?? ""}` };
+}
+
+test("an npm claude.cmd on PATH starts through cmd.exe for the worker and the preflight", { skip: process.platform !== "win32" }, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "claude shim "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const task = { id: "t1", name: "n", prompt: "Task skill: implement\nGoal: x & \"y\" 100%", qaCommand: "npm test", allowedPaths: ["a.ts"] };
+  const env = await claudeShim(root, { is_error: false, result: "", structured_output: { status: "task", task, output: "", correction: "", commit: "", manualReviewCause: null } });
+  assert.deepEqual(await preflightClaude("claude", env), { command: "claude", auth: "shim" });
+  const w = new ClaudeWorker({ stateDir: root, workspace: root, claudeCommand: "claude", env, writeProcessState: async () => {}, clearProcessState: async () => {} });
+  assert.match(w.prefixArgs.join(" "), /^\/d \/s \/c .*claude\.cmd$/i);
+  const result = await w.assess({ objective: "obj & more", previous: null });
+  assert.equal(result.task.prompt, task.prompt);
+  const { args, input } = JSON.parse(await readFile(path.join(root, "call.json"), "utf8"));
+  assert.deepEqual(args.slice(args.indexOf("--setting-sources"), args.indexOf("--setting-sources") + 2), ["--setting-sources", "user"]);
+  assert.ok(JSON.parse(args[args.indexOf("--json-schema") + 1]).properties, "the JSON schema arrives intact");
+  assert.ok(JSON.parse(args[args.indexOf("--settings") + 1]).hooks.PreToolUse.length, "the hook settings arrive intact");
+  assert.ok(args.includes("--disallowedTools") && args.includes("dontAsk"));
+  assert.match(input, /^You are Assessment, performing[\s\S]*obj & more/, "the prompt goes through stdin");
 });

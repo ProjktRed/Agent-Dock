@@ -23,6 +23,7 @@ function showAttentionPanel() {
 
 const NAV: { route: Route; label: string; icon: IconName }[] = [
   { route: "overview", label: "Overview", icon: "overview" },
+  { route: "tasks", label: "Tasks", icon: "board" },
   { route: "projects", label: "Projects", icon: "folder" },
   { route: "workflow", label: "Workflow", icon: "workflow" },
   { route: "agents", label: "Agents", icon: "agent" },

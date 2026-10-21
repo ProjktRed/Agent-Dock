@@ -36,7 +36,7 @@ export function cmdLine(command: string, args: string[] = []): string {
  * else, or a name not found, is returned unchanged.
  */
 export function resolveProgram(command: string, env: NodeJS.ProcessEnv = process.env): string {
-  if (process.platform !== "win32" || /[\/:]/.test(command) || /\.[^.]+$/.test(command)) return command;
+  if (process.platform !== "win32" || /[\\/:]/.test(command) || /\.[^.]+$/.test(command)) return command;
   const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
   for (const dir of (env.PATH ?? env.Path ?? "").split(";").filter(Boolean)) {
     for (const ext of exts) {

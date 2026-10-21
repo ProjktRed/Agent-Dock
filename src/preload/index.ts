@@ -54,6 +54,8 @@ const api: DesktopApi = {
   importSettings: invoke("settings:import") as DesktopApi["importSettings"],
   setAside: invoke("engine:setAside") as DesktopApi["setAside"],
   decidePlanProposal: invoke("plan:decide") as DesktopApi["decidePlanProposal"],
+  taskBoard: invoke("taskBoard:get") as DesktopApi["taskBoard"],
+  setTaskBoard: invoke("taskBoard:set") as DesktopApi["setTaskBoard"],
   usage: invoke("usage") as DesktopApi["usage"],
   localContext: invoke("usage:localContext") as DesktopApi["localContext"],
   history: invoke("project:history") as DesktopApi["history"],

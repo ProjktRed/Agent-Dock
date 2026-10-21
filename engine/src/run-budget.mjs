@@ -14,6 +14,9 @@ export const RUN = {
 };
 const NO_LIMITS = { unattended: false, limitRetryMinutes: null, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0, prices: [] };
 let watched = null; // { state, stateDir } once the run is watched for its token and spend budget
+export const RUN_USAGE_FILE = "run-usage.json";
+/** Budget flags a parallel task's engine runs without: the parent enforces one budget for the whole run. */
+export const BUDGET_FLAGS = ["--max-tasks", "--max-hours", "--max-tokens", "--max-cost", "--max-tokens-day", "--max-cost-day"];
 let dayWrite = Promise.resolve();
 
 function count(value, flag, { decimal = false } = {}) {
@@ -124,8 +127,9 @@ export async function addRunUsage({ input = 0, cached = 0, output = 0, costUsd =
   if (RUN.day.date !== today()) RUN.day = { date: today(), tokens: 0, costUsd: 0 };
   RUN.day.tokens += countedTokens({ input, cached, output }); RUN.day.costUsd += costUsd;
   if (!watched) return;
-  const { state, stateDir } = watched, day = { ...RUN.day };
-  dayWrite = dayWrite.then(() => atomicWriteJson(path.join(stateDir, "usage-day.json"), day)).catch(() => {});
+  const { state, stateDir } = watched, day = { ...RUN.day }, run = { ...RUN.usage, updatedAt: new Date().toISOString() };
+  // run-usage.json: the run's totals so far, which a parallel run reads from each task's engine while it works.
+  dayWrite = dayWrite.then(() => atomicWriteJson(path.join(stateDir, "usage-day.json"), day)).then(() => atomicWriteJson(path.join(stateDir, RUN_USAGE_FILE), run)).catch(() => {});
   await dayWrite;
   if (RUN.maxTokens && runTokens() >= RUN.maxTokens) await reachLimit(state, "tokens", `Token budget reached: ${n(runTokens())} of ${n(RUN.maxTokens)} tokens this run.`);
   else if (RUN.maxCost && RUN.usage.costUsd >= RUN.maxCost) await reachLimit(state, "cost", `Spend budget reached: ${money(RUN.usage.costUsd)} of ${money(RUN.maxCost)} this run.`);

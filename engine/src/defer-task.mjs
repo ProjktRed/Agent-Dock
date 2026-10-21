@@ -74,7 +74,7 @@ export async function deferTask({ workspace, stateDir, task, baselineSha, reason
     const message = `Agent Dock: deferred ${task.id} - ${String(reason ?? "").replace(/\s+/g, " ").slice(0, 80)}`;
     stash = { ref: await stashWork(workspace, message, [".", ...exclude]), message };
   }
-  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, at: new Date().toISOString(), ...(stepDown ? { stepDown } : {}) };
+  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, planItems: [...(task.planItems ?? [])], at: new Date().toISOString(), ...(stepDown ? { stepDown } : {}) };
   const list = await readDeferred(stateDir);
   await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), [...list.filter((d) => d.id !== task.id), entry]);
   return { entry };

@@ -62,20 +62,24 @@ export interface ImportResult {
   agents: Agent[];
   clis: CliConnection[];
   roles: PortableRole[];
-  /** skipped: what the file had that was not applied (program locations, a weaker guard), for the result message. */
+  /** skipped: what the file had that was not applied (program locations, environment variables, a weaker guard), for the result message. */
   summary: { agents: number; clis: number; roles: number; skipped: string[] };
 }
 
 /** Connections whose location is a program Agent Dock starts (the others are a URL). */
 const PROGRAM_KINDS = new Set<CliConnection["kind"]>(["codex", "cline", "claude", "opencode"]);
+/** A connection's environment as it would change a launch (secret values are never in a file). */
+const envShape = (env: CliConnection["env"]) => JSON.stringify(env.map((e) => [e.key, e.secret, e.secret ? "" : e.value]));
 
 /**
  * Applies an export on top of this machine. Settings are replaced except the machine-local ones.
  * Agents and roles with the same id are replaced, others added; nothing local is deleted.
  * Connections with the same id keep their local executable or URL, secret values and model lists.
  * Programs to start are never taken from a file: connection program paths, the llama.cpp launcher and
- * the Node runtime stay as they are here (a new connection starts its program from PATH). A file cannot
- * turn the tool guard off, and its protected paths are added to this computer's.
+ * the Node runtime stay as they are here (a new connection starts its program from PATH). Neither are
+ * connection environment variables: one such as NODE_OPTIONS, PATH, ComSpec or a proxy changes how a CLI
+ * starts or where it connects, so a new connection starts with none and an existing one keeps its own.
+ * A file cannot turn the tool guard off, and its protected paths are added to this computer's.
  */
 export function mergeImport(current: { settings: Settings; agents: Agent[]; clis: CliConnection[] }, file: SettingsFile): ImportResult {
   const incoming = file.settings;
@@ -117,11 +121,13 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
     if (at < 0) {
       const location = PROGRAM_KINDS.has(cli.kind) ? cli.kind : cli.location;
       if (location !== cli.location) skipped.push(`${cli.name || cli.id} location`);
-      clis.push({ ...cli, location, hasSecret: false, modelsDir: null, collected: null, env: cli.env.map((e) => (e.secret ? { ...e, value: "" } : e)) });
+      if (cli.env.length) skipped.push(`${cli.name || cli.id} environment variables`);
+      clis.push({ ...cli, location, hasSecret: false, modelsDir: null, collected: null, env: [] });
       continue;
     }
     const mine = clis[at];
     if (cli.location !== mine.location) skipped.push(`${mine.name || mine.id} location`);
+    if (envShape(cli.env) !== envShape(mine.env)) skipped.push(`${mine.name || mine.id} environment variables`);
     clis[at] = {
       ...cli,
       location: mine.location,
@@ -129,7 +135,7 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
       collected: mine.collected,
       hasSecret: mine.hasSecret,
       modelsDir: mine.modelsDir,
-      env: cli.env.map((e) => (e.secret ? { ...e, value: mine.env.find((m) => m.key === e.key)?.value ?? "" } : e)),
+      env: mine.env,
     };
   }
   return { settings, agents, clis, roles: file.roles, summary: { agents: file.agents.length, clis: file.clis.length, roles: file.roles.length, skipped } };

@@ -281,9 +281,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tbl tbody tr.sel td { background: var(--sel-bg); }
 .tbl tbody tr.sel td:first-child { box-shadow: var(--sel-edge); }
 .tbl tr.click { cursor: pointer; }
-/* Overview › Tokens › Per-agent usage: fixed columns that fit the card. */
+/* Fixed columns that fit the card (Overview › Tokens › Per-agent usage, Projects › Task history). */
 .tbl.usage-tbl { table-layout: fixed; }
 .tbl.usage-tbl th, .tbl.usage-tbl td { padding-left: 8px; padding-right: 8px; }
+.tbl.usage-tbl th { overflow: hidden; text-overflow: ellipsis; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .nowrap { white-space: nowrap; }
 .scroll-x { overflow-x: auto; }
@@ -296,6 +297,31 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tree-btn.cur { box-shadow: var(--in-s); }
 .task { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 4px 12px; border-radius: 10px; font-size: 12.5px; }
 .task.cur { box-shadow: var(--in-s), 0 0 0 1px rgba(130, 169, 232, 0.3); }
+/* Tasks (task board): three columns of plan items; Planned rows reorder by drag or by their move buttons. */
+.tcols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.tcol { display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 16px; min-width: 0; }
+.tcol-h { padding: 2px 4px 4px; }
+.tcol-h .h2 { flex: 1; }
+.tcol-e { padding: 4px; }
+.tlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.item.titem { flex-direction: row; align-items: flex-start; gap: 8px; padding: 9px 10px; font-size: 12.5px; }
+.item.titem.static { cursor: default; }
+.item.titem.static:hover .name { color: inherit; }
+.item.titem.done .name { color: var(--t2); }
+.item.titem .name { overflow-wrap: anywhere; }
+.item.titem .grip { cursor: grab; margin-top: 2px; }
+.item.titem .rank { min-width: 18px; text-align: right; font-size: 11px; margin-top: 1px; }
+.item.titem > .i, .item.titem > .dot { margin-top: 4px; }
+.item.titem .tmoves { flex: none; margin: -4px -4px -4px 0; opacity: 0.55; transition: opacity 0.15s; }
+.item.titem:hover .tmoves, .item.titem:focus-within .tmoves, .item.titem.on .tmoves { opacity: 1; }
+/* Drop marker as its own line, so each style keeps its own item border and shadow. */
+.item.titem { position: relative; }
+.item.titem.drop-before::before, .item.titem.drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--a); pointer-events: none; }
+.item.titem.drop-before::before { top: -5px; }
+.item.titem.drop-after::after { bottom: -5px; }
+.tphase { display: flex; flex-direction: column; gap: 6px; }
+.tphase + .tphase { margin-top: 6px; }
+.tphase-h { padding: 0 4px; }
 .stage { flex: 1; min-width: 150px; padding: 13px; border-radius: 14px; background: var(--b); box-shadow: var(--out-s); display: flex; flex-direction: column; gap: 4px; }
 .stage.active { box-shadow: var(--in-s), 0 0 0 1.5px rgba(130, 169, 232, 0.5); }
 .stage.paused { box-shadow: var(--in-s), 0 0 0 1.5px rgba(218, 183, 119, 0.5); }
@@ -358,6 +384,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 @media (max-width: 1180px) {
+  .tcols { grid-template-columns: minmax(0, 1fr); }
   .grid2, .split, .split.wide-right, .setgrid { grid-template-columns: minmax(0, 1fr); }
   .prompt { width: 300px; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { cmdLine, resolveProgram } from "../src/main/lib/cmd-line";
 import { gitCommonDir, ownerFixCommand } from "../src/main/lib/git";
 import { renameWithRetry } from "../src/main/lib/json-file";
+import { spawnCli } from "../src/main/proc";
 import { managedProjectFolder } from "../src/main/projects";
 import { DEFAULT_SETTINGS, TOOL_CONFIG_PATHS, upgradeSafety } from "../src/shared/defaults";
 
@@ -86,6 +87,24 @@ describe("cmd.exe command lines", () => {
         expect(JSON.parse(out.stdout)).toEqual(args);
       }
       expect(resolveProgram("print", { PATH: root, PATHEXT: ".EXE;.CMD" }).toLowerCase()).toBe(path.join(root, "print.cmd").toLowerCase());
+      expect(resolveProgram("sub\\print", { PATH: root, PATHEXT: ".EXE;.CMD" })).toBe("sub\\print");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "win32")("spawnCli starts an npm-style claude.cmd from PATH with JSON and empty arguments intact", async () => {
+    const root = tmp("spawn-cli-");
+    try {
+      writeFileSync(path.join(root, "print.js"), "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
+      writeFileSync(path.join(root, "claude.cmd"), `@"${process.execPath}" "%~dp0print.js" %*\r\n`);
+      const args = ["-p", "Reply with the single word ok.", "--tools", "", "--settings", JSON.stringify({ disableAllHooks: true })];
+      const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH")), PATH: root };
+      const child = spawnCli("claude", args, { env });
+      let out = "";
+      child.stdout.on("data", (chunk) => (out += chunk));
+      await new Promise((resolve) => child.on("close", resolve));
+      expect(JSON.parse(out)).toEqual(args);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

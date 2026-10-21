@@ -74,8 +74,8 @@ export function parseRecoveryResult(text) {
 
 const taskSchema = {
   type: "object", additionalProperties: false,
-  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } }, planItems: { type: "array", items: { type: "string" } } },
-  required: ["id", "name", "prompt", "qaCommand", "allowedPaths", "planItems"],
+  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } }, planItems: { type: "array", items: { type: "string" } }, planItemIds: { type: "array", items: { type: "string" } } },
+  required: ["id", "name", "prompt", "qaCommand", "allowedPaths", "planItems", "planItemIds"],
 };
 export const codexOutputSchema = {
   type: "object", additionalProperties: false,
@@ -123,10 +123,13 @@ export function parseCodexResult(text) {
     if (!value.task || typeof value.task !== "object" || Array.isArray(value.task)) throw new Error("Invalid Codex structured result: task must be an object or null");
     // planItems arrived in 0.20.2; results saved by older versions (or written by hand) have none.
     if (!Object.hasOwn(value.task, "planItems")) value.task.planItems = [];
+    // planItemIds (the Task board keys of those items) arrived after 0.36; earlier results have none.
+    if (!Object.hasOwn(value.task, "planItemIds")) value.task.planItemIds = [];
     const taskKeys = Object.keys(taskSchema.properties);
     for (const key of taskKeys) if (!Object.hasOwn(value.task, key)) throw new Error(`Invalid Codex structured result: task missing ${key}`);
     for (const key of Object.keys(value.task)) if (!taskKeys.includes(key)) throw new Error(`Invalid Codex structured result: unexpected task.${key}`);
     if (!Array.isArray(value.task.planItems) || value.task.planItems.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.planItems must be a string array");
+    if (!Array.isArray(value.task.planItemIds) || value.task.planItemIds.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.planItemIds must be a string array");
     for (const key of ["id", "name", "prompt", "qaCommand"]) if (typeof value.task[key] !== "string") throw new Error(`Invalid Codex structured result: task.${key} must be a string`);
     if (!Array.isArray(value.task.allowedPaths) || value.task.allowedPaths.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.allowedPaths must be a string array");
   }
@@ -356,6 +359,7 @@ export class CodexWorker {
       workerSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. " + readFilesText() + " Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
       "planItems: the unchecked IMPLEMENTATION_PLAN.md items that will be finished once this task is approved, counting work already committed (for example, a tests task that completes an item whose code an earlier task added, or an item the repository already fully satisfies). Copy each item's text exactly, without the leading \"- [ ] \"; use [] when none. Do not add the plan file to allowedPaths for this: after QA approves the task, the engine checks these items off itself.",
+      "planItemIds: when the objective lists a Task priority, the bracketed id of each item in planItems, in the same order; otherwise [].",
       "qaCommand must use an existing project npm test/run script, or a supported local check (npx tsc, eslint, prettier, vitest or playwright), optionally chained with &&. No arbitrary executables, package installation, interpreters, shell expressions or output redirection. Protected paths cannot be inspected or edited; narrow file searches to public source directories and use git ls-files for discovery.",
       "Before returning a task, verify that allowedPaths are sufficient for every implementation change reasonably required to make qaCommand pass. Do not create a task whose required contract change predictably breaks typed fixtures or callers that the task forbids Cline to update.",
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",

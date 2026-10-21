@@ -138,16 +138,21 @@ export function taskHistory(events: EngineEvent[]): TaskHistoryEntry[] {
     blocked: "blocked",
     stopped: "stopped",
   };
+  // A parallel task's engine ending: one that passed is listed once merged (its qa-pass), so only the others count here.
+  const parallelEnds: Record<string, TaskHistoryEntry["outcome"]> = { "user-attention": "attention", "manual-review": "attention", blocked: "blocked", stopped: "stopped", "correction-limit": "failed" };
   const latest = new Map<string, TaskHistoryEntry>();
   for (const event of events) {
-    const outcome = outcomes[event.type];
-    if (!outcome || !event.taskId) continue;
+    const outcome = event.type === "parallel-task-finished"
+      ? event.status === "passed" ? undefined : parallelEnds[String(event.status)] ?? "failed"
+      : event.type === "parallel-merge-failed" ? "failed" : outcomes[event.type];
+    // A parallel round's own entry (parallel-round-N) is not a task: each of its tasks has an entry of its own.
+    if (!outcome || !event.taskId || /^parallel-round-\d+$/.test(event.taskId)) continue;
     latest.set(event.taskId, {
       taskId: event.taskId,
       outcome,
       attempts: event.attempt ?? 0,
       finishedAt: event.timestamp,
-      summary: String(event.qa ?? "").split(/\r?\n/)[0].slice(0, 200),
+      summary: String(event.qa ?? event.summary ?? (event.type === "parallel-merge-failed" ? `Not merged: ${event.message ?? ""}` : "")).split(/\r?\n/)[0].slice(0, 200),
     });
   }
   return [...latest.values()].sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));

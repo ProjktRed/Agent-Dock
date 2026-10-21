@@ -1,13 +1,12 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { shellLine, stopAndClean } from "./proc";
+import { spawnCli, stopAndClean } from "./proc";
 import type { LimitsState, ProviderLimits, Settings } from "@shared/types";
 import { lastRateLimitEvent, parseClaudeRateLimit, parseClaudeUsage, parseCodexLimits, type ClaudeRateLimitInfo, type ClaudeUsageResponse, type CodexRateLimitsResult } from "./lib/limits-parse";
 import { readJson, writeJson } from "./lib/json-file";
 
-const quote = (p: string) => (/[\s&()]/.test(p) && !p.startsWith('"') ? `"${p}"` : p);
 const failed = (provider: ProviderLimits["provider"], source: string, error: string): ProviderLimits => ({
   provider,
   ok: false,
@@ -28,7 +27,12 @@ const failed = (provider: ProviderLimits["provider"], source: string, error: str
 export function readCodexLimits(codexPath: string, timeoutMs = 30_000): Promise<ProviderLimits> {
   const source = "Codex app-server · account/rateLimits/read";
   return new Promise((resolve) => {
-    const child = spawn(shellLine(quote(codexPath), ["app-server"]), { shell: true, windowsHide: true });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnCli(codexPath, ["app-server"]);
+    } catch (error) {
+      return resolve(failed("codex", source, (error as Error).message));
+    }
     let buffer = "";
     let stderr = "";
     let done = false;
@@ -81,10 +85,16 @@ export function readClaudeUsage(claudePath: string, timeoutMs = 45_000): Promise
   const source = "Claude Code · get_usage";
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
-  const settings = `"${JSON.stringify({ disableAllHooks: true }).replace(/"/g, '\\"')}"`;
+  const settings = JSON.stringify({ disableAllHooks: true });
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--settings", settings];
   return new Promise((resolve) => {
-    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnCli(claudePath, args, { cwd, env });
+    } catch (error) {
+      rmSync(cwd, { recursive: true, force: true });
+      return resolve(failed("claude", source, (error as Error).message));
+    }
     let buffer = "";
     let stderr = "";
     let done = false;
@@ -138,9 +148,15 @@ export function probeClaudeLimits(claudePath: string, timeoutMs = 90_000): Promi
   const source = "Claude Code · rate_limit_event (stream-json)";
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
-  const args = ["-p", '"Reply with the single word ok."', "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", '""', "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands"];
+  const args = ["-p", "Reply with the single word ok.", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands"];
   return new Promise((resolve) => {
-    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnCli(claudePath, args, { cwd, env });
+    } catch (error) {
+      rmSync(cwd, { recursive: true, force: true });
+      return resolve(failed("claude", source, (error as Error).message));
+    }
     let out = "";
     let err = "";
     let done = false;

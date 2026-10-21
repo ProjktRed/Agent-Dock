@@ -1,6 +1,7 @@
 import "./lib/tool-lookup";
 import os from "node:os";
 import { runReportHtml, runReportMarkdown } from "./lib/run-export";
+import { sanitizeTaskBoardUpdate } from "./lib/task-board";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
@@ -963,6 +964,8 @@ function registerIpc() {
   handle("settings:export", exportSettingsFile);
   handle("settings:import", importSettingsFile);
   handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
+  handle("taskBoard:get", (id: string) => engine.taskBoard(project(id)));
+  handle("taskBoard:set", async (id: string, update: unknown) => { const r = await engine.setTaskBoard(project(id), sanitizeTaskBoardUpdate(update)); void pollOnce(); return r; });
   handle("usage", (id: string | null) => usage(id));
   handle("usage:localContext", (id: string) => { const p = project(id); return readLocalContext(agentForRole("implementation", p, agents()), store.data.clis, lastStatus.get(id)?.clineModel ?? null); });
   handle("skills:list", () => listSkills(engineDir, store.data.settings.skills.importedDirs));
@@ -1018,7 +1021,8 @@ function registerIpc() {
       // missing target: shell.openPath reports it
     }
     if (!canOpenPath(target, roots, isDirectory)) throw new Error("This path cannot be opened from Agent Dock.");
-    await shell.openPath(target);
+    // "" when it opened; otherwise Windows' reason (missing file, no app for the file type).
+    return shell.openPath(target);
   });
   handle("window", (action: "minimize" | "maximize" | "close") => {
     if (action === "minimize") win?.minimize();

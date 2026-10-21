@@ -4,14 +4,15 @@ import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, GitInfo, PlanProposal, Project, ProjectStatus, RunReport } from "@shared/types";
+import type { EngineInfo, GitInfo, ParallelRound, PlanProposal, Project, ProjectStatus, RunReport, TaskBoard, TaskBoardUpdate, TaskBoardWriteResult } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
 import { gitInfo, run } from "./lib/git";
 import { readPlan } from "./lib/plan";
-import { buildStatus, type EngineControl, type EngineLive } from "./lib/status";
+import { buildStatus, parallelRound, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
 import { readActivity } from "./lib/usage";
+import { buildTaskBoard, writeTaskBoard } from "./lib/task-board";
 
 // Bypass the bundler: engine modules are plain ESM files loaded at runtime from disk.
 const nativeImport = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, any>>;
@@ -259,6 +260,19 @@ export class EngineManager {
     return this.stopAfterTask.has(projectId);
   }
 
+  /** The Task board as status() builds it, with what is being worked on now. */
+  async taskBoard(project: Project): Promise<TaskBoard> {
+    const record = await this.refreshAlive(project);
+    const live = await readJson<EngineLive | null>(path.join(project.stateDir, "live.json"), null).catch(() => null);
+    return buildTaskBoard(project.stateDir, await readPlan(project.path, live?.task ?? {}), live, Boolean(record));
+  }
+
+  /** Saves a Task board change (priority order, reset, grouping). A reorder made on a stale board is rejected with the current one. */
+  async setTaskBoard(project: Project, update: TaskBoardUpdate): Promise<TaskBoardWriteResult> {
+    const plan = await readPlan(project.path);
+    return writeTaskBoard(project.stateDir, plan, update, { board: () => this.taskBoard(project) });
+  }
+
   async status(project: Project): Promise<ProjectStatus> {
     const record = await this.refreshAlive(project);
     const [live, control, events, git] = await Promise.all([
@@ -307,7 +321,23 @@ export class EngineManager {
         // engine without Retry QA
       }
     }
-    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry });
+    const board = await buildTaskBoard(project.stateDir, plan, live, Boolean(record)).catch(() => undefined);
+    const parallel = await this.parallelRound(project, Boolean(record)).catch(() => null);
+    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}) };
+  }
+
+  /** A parallel round in progress: each task's live state from its engine's folder (<state>/parallel/<task>/live.json). */
+  private async parallelRound(project: Project, processAlive: boolean): Promise<ParallelRound | null> {
+    if (!processAlive) return null;
+    const round = await readJson<EngineParallelRound | null>(path.join(project.stateDir, "parallel-round.json"), null).catch(() => null);
+    if (!round || round.endedAt || !Array.isArray(round.tasks)) return null;
+    const lives: Record<string, EngineLive | null> = {};
+    await Promise.all(round.tasks.map(async (task) => {
+      // Only a folder name: never a path outside the run's parallel folder.
+      if (typeof task?.folder !== "string" || !task.folder || path.basename(task.folder) !== task.folder) return;
+      lives[task.folder] = await readJson<EngineLive | null>(path.join(project.stateDir, "parallel", task.folder, "live.json"), null).catch(() => null);
+    }));
+    return parallelRound(round, lives, processAlive);
   }
 
   /**

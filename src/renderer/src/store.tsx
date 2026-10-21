@@ -3,7 +3,7 @@ import type { ControlAction, Notice } from "@shared/api";
 import type { Agent, AppSnapshot, CliConnection, CliHealth, Project, ProjectStatus, Settings, WorkflowRole } from "@shared/types";
 import { styleAccent } from "@shared/appearance";
 
-export type Route = "overview" | "projects" | "workflow" | "agents" | "clis" | "settings";
+export type Route = "overview" | "tasks" | "projects" | "workflow" | "agents" | "clis" | "settings";
 interface Toast extends Notice {
   id: number;
 }

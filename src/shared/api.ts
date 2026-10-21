@@ -12,6 +12,9 @@ import type {
   ProjectStatus,
   Settings,
   SkillInfo,
+  TaskBoard,
+  TaskBoardUpdate,
+  TaskBoardWriteResult,
   LibraryPreview,
   UpdateStatus,
   UsageSummary,
@@ -128,6 +131,10 @@ export interface DesktopApi {
   planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */
   decidePlanProposal(projectId: string, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]>;
+  /** The Task board (Planned, In progress, Finished) with what is being worked on now. */
+  taskBoard(projectId: string): Promise<TaskBoard>;
+  /** Saves the priority order, a reset to plan order or the grouping; a reorder on a stale revision returns ok: false with the current board. */
+  setTaskBoard(projectId: string, update: TaskBoardUpdate): Promise<TaskBoardWriteResult>;
   verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
@@ -159,7 +166,8 @@ export interface DesktopApi {
   saveRole(role: RoleDraft): Promise<WorkflowRole[]>;
   deleteRole(id: string): Promise<WorkflowRole[]>;
   importRoleFolder(): Promise<{ roles: WorkflowRole[]; imported: number }>;
-  openPath(target: string): Promise<void>;
+  /** "" when the path opened, otherwise why not (missing, no app for the file type). Throws for a path the app may not open. */
+  openPath(target: string): Promise<string>;
   limits(): Promise<LimitsState>;
   refreshLimits(provider: "codex" | "claude"): Promise<LimitsState>;
   onLimits(callback: (state: LimitsState) => void): () => void;

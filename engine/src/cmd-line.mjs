@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 // Command lines for cmd.exe (`cmd /d /s /c "<line>"`; src/main/lib/cmd-line.ts is the same for the app).
@@ -37,4 +38,36 @@ const isCmd = (command) => /^(?:.*[\\/])?cmd(?:\.exe)?$/i.test(String(command));
 export function launchSpec(command, args) {
   if (!isCmd(command) || args.length < 4 || args[0] !== "/d" || args[1] !== "/s" || args[2] !== "/c") return { command, args, options: {} };
   return { command, args: ["/d", "/s", "/c", `"${cmdLine(args[3], args.slice(4))}"`], options: { windowsVerbatimArguments: true } };
+}
+
+const envValue = (env, name) => env[Object.keys(env).find((key) => key.toUpperCase() === name) ?? name];
+
+/**
+ * Windows: a bare program name resolved the way cmd.exe does (each PATH folder, each PATHEXT extension;
+ * never the current folder), so a launcher knows whether it starts a program or a batch file. Anything
+ * else, or a name not found, is returned unchanged. Same as resolveProgram in src/main/lib/cmd-line.ts.
+ */
+export function resolveProgram(command, { platform = process.platform, env = process.env, fileExists = existsSync } = {}) {
+  const program = String(command);
+  if (platform !== "win32" || /[\/:]/.test(program) || /\.[^.]+$/.test(program)) return program;
+  const exts = String(envValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of String(envValue(env, "PATH") ?? "").split(";").filter(Boolean)) {
+    for (const ext of exts) {
+      const candidate = path.win32.join(dir.replace(/^"(.*)"$/, "$1"), program + ext);
+      if (fileExists(candidate)) return candidate;
+    }
+  }
+  return program;
+}
+
+/**
+ * { command, prefixArgs } for a CLI that npm may have installed as a .cmd/.bat shim (claude.cmd): on
+ * Windows the program is resolved through PATH and PATHEXT, and a batch file runs as
+ * `cmd /d /s /c <file>`, which launchSpec turns into one escaped command line. Otherwise unchanged.
+ */
+export function cliLauncher(command, { platform = process.platform, env = process.env, fileExists = existsSync } = {}) {
+  const program = resolveProgram(command, { platform, env, fileExists });
+  if (platform !== "win32" || !/\.(?:cmd|bat)$/i.test(program)) return { command: program, prefixArgs: [] };
+  const comspec = envValue(env, "COMSPEC");
+  return { command: comspec && isCmd(comspec) ? comspec : "cmd.exe", prefixArgs: ["/d", "/s", "/c", program] };
 }

@@ -184,6 +184,8 @@ function git(args, cwd) {
 }
 
 const normalizeItem = (text) => String(text ?? "").replace(/^\s*-\s+\[[ xX]\]\s+/, "").replace(/\s+/g, " ").trim();
+// An item copied from the Task priority list may carry its "[key]" or a "Phase N:" label in front.
+const unlabelled = (text) => text.replace(/^\[[0-9a-f]{6,40}\]\s*/i, "").replace(/^Phase\s+\d+\s*[:·.-]\s*/i, "");
 
 /** QA approved a task that completes a plan item: queue the check-off for the next task boundary. */
 export async function queuePlanTick({ stateDir, taskId, item }) {
@@ -211,9 +213,11 @@ async function applyPlanTicks({ stateDir, workspace, state }) {
     let plan;
     try { plan = await readPlan(workspace); } catch { break; }
     const eol = /\r\n/.test(plan) ? "\r\n" : "\n", lines = plan.split(/\r?\n/);
-    const matches = lines.flatMap((line, i) => (/^\s*-\s+\[ \]\s+/.test(line) && normalizeItem(line) === tick.item ? [i] : []));
+    const find = (item) => lines.flatMap((line, i) => (/^\s*-\s+\[ \]\s+/.test(line) && normalizeItem(line) === item ? [i] : []));
+    let matches = find(tick.item);
+    if (!matches.length && unlabelled(tick.item) !== tick.item) matches = find(unlabelled(tick.item));
     if (matches.length !== 1) {
-      const already = lines.some((line) => /^\s*-\s+\[[xX]\]\s+/.test(line) && normalizeItem(line) === tick.item);
+      const already = lines.some((line) => /^\s*-\s+\[[xX]\]\s+/.test(line) && [tick.item, unlabelled(tick.item)].includes(normalizeItem(line)));
       if (!already) await state?.record({ type: "plan-tick-skipped", taskId: tick.taskId, message: `${matches.length ? "More than one" : "No"} unchecked plan item reads "${tick.item.slice(0, 120)}"; check it off yourself if it is done.` });
       continue;
     }

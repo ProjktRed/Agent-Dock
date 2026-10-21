@@ -147,8 +147,12 @@ if (retention && (retention.calls || retention.sessions || retention.setAside ||
 const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
 // Parallel rounds start only from a task boundary: a task in progress finishes on its own first.
 const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf8").then((text) => JSON.parse(text)?.automation?.recovery?.phase !== "passed", () => false);
-const parallel = lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress && options.unattended !== "true";
-if (lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: options.unattended === "true" ? "unattended" : "a task is in progress" } }));
+// Unattended mode too: the run keeps one budget for all its tasks (their engines run without limits of their own).
+const parallel = lanes > 1 && !singleTask && !initialTask && !pendingCodex && !inProgress;
+if (lanes > 1 && !parallel) console.log(JSON.stringify({ parallel: { lanes: 1, reason: "a task is in progress" } }));
+// --max-rounds N: a parallel run ends after N rounds (0 = no limit).
+const maxRounds = options["max-rounds"] === undefined ? 0 : Number(options["max-rounds"]);
+if (!Number.isInteger(maxRounds) || maxRounds < 0) throw new Error("--max-rounds must be a whole number of at least 0");
 const loopEvent = async (event) => {
   // Overview follows a parallel round as one task (each task's own engine keeps its live state in its folder).
   if (event.type === "parallel-round") await state.initialize({ task: { id: `parallel-round-${event.round}`, name: `Parallel round ${event.round}: tasks ${event.tasks.map((t) => t.id).join(", ")}`, prompt: options.objective }, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider });
@@ -158,7 +162,7 @@ const loopEvent = async (event) => {
 const betweenTasks = () => (singleTask ? Promise.resolve() : applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}));
 try {
   const result = parallel ? await runParallel({
-    workspace, stateDir, objective: options.objective, lanes,
+    workspace, stateDir, objective: options.objective, lanes, maxRounds,
     assess: (input) => codex.assess(input),
     // While stepped down, a task's engine works at the smaller size its task was planned for.
     runChild: ({ worktree, stateDir: childState, taskFile }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null }), stateDir: childState }),

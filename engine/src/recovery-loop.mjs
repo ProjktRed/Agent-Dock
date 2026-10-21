@@ -14,6 +14,7 @@ import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadR
 import {TUNING,stepDown,noteStepDownApproval} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
+import {objectiveWithPriority} from './task-priority.mjs';
 import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
@@ -185,7 +186,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           const sha=correctionResume?.baselineSha??pending?.inputs?.baselineSha??pending?.inputs?.baselineHead??pending?.context?.baselineHead??(await baseline()).head;
           let assessmentOperationId;
           if(!task) {
-            const op=await operation('assessment',{objective:await objectiveWithDeferred(stateDir,objective),previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
+            const op=await operation('assessment',{objective:await objectiveWithPriority({workspace,stateDir,objective:await objectiveWithDeferred(stateDir,objective)}),previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
             if(op.result.status==='done'){await emit('loop-complete');return{status:'done'};}
             if(op.result.status!=='task'){await consumeAssessment();return block(op.result.output??'Assessment could not produce a safe task');}
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');

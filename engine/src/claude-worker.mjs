@@ -9,6 +9,7 @@ import {installProtection} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
+import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -50,6 +51,10 @@ export function extractClaudeResult(stdout) {
 export class ClaudeWorker extends CodexWorker {
   constructor({ claudeCommand = "claude", timeoutMs = 45 * 60_000, env = process.env, ...rest }) {
     super({ ...rest, command: claudeCommand });
+    // Windows: `claude` may be only npm's claude.cmd, which a shell-free spawn cannot start.
+    const launcher = cliLauncher(claudeCommand, { env });
+    this.command = launcher.command;
+    this.prefixArgs = [...launcher.prefixArgs, ...this.prefixArgs];
     this.timeoutMs = timeoutMs;
     this.env = claudeChildEnv(env);
     this.pidFile = path.join(this.stateDir, "codex-process.json"); // same single-orchestrator lock as Codex
@@ -81,7 +86,8 @@ export class ClaudeWorker extends CodexWorker {
     let stdout = "", stderr = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const launch = launchSpec(this.command, args);
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false, closed = false, closeCode = 1, registrationError = null, finished = false, timedOut = false;
         const timer = setTimeout(() => { timedOut = true; child.kill(); }, this.timeoutMs);
         child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -131,7 +137,9 @@ export class ClaudeWorker extends CodexWorker {
 /** Fails before any loop work if the CLI is missing or not logged in. */
 export function preflightClaude(command = "claude", env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, ["auth", "status"], { env: claudeChildEnv(env), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const launcher = cliLauncher(command, { env });
+    const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "auth", "status"]);
+    const child = spawn(launch.command, launch.args, { ...launch.options, env: claudeChildEnv(env), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (c) => (output += c));
     child.stderr.on("data", (c) => (output += c));

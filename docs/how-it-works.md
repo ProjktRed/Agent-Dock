@@ -217,10 +217,15 @@ All per project in Projects › Workflow, unless noted.
   running task; a task waiting out a usage limit shows in Activity, and Resume continues it as in a
   normal run;
   between rounds the run pauses and stops as it does between tasks, so with Automatic continuation off
-  it pauses after a round that merged a change. Each task's tokens and spend count toward the run's
-  report and the day's budgets, and Overview shows the round in progress. Needs a cloud Implementation
-  agent (a local model server answers one request at a time) and is off in Unattended mode; a task in
-  progress finishes on its own before parallel rounds start. Plan items are checked off as each change
+  it pauses after a round that merged a change. The run keeps one budget for all its tasks, in Unattended mode
+  too: a task's engine has no token, spend, task or time limit of its own; while a round runs, the run
+  counts each task's tokens and spend so far (`run-usage.json` in its state folder) toward the run's
+  report and the day's budgets (`usage-day.json` of the project only), and a limit reached stops every
+  task at its next safe point (`--max-rounds N` also ends the run after N rounds). The check of the
+  combined code goes through the QA runner: the same approved-command check, without secrets in its
+  environment. Overview's Current task card lists the round's tasks with each one's stage
+  (`parallel-round.json`). Needs a cloud Implementation agent (a local model server answers one
+  request at a time); a task in progress finishes on its own before parallel rounds start. Plan items are checked off as each change
   is merged. Projects › Workflow › **Clean up parallel worktrees** removes the kept worktrees (each
   `node_modules` link first) and every `agent-dock/parallel-…` branch, after you confirm; unmerged work
   on them is lost, and it waits while a run of the project or its lanes is active.
@@ -244,9 +249,11 @@ All per project in Projects › Workflow, unless noted.
 - Workflow roles review read-only, except a **fixer** gate (Before QA), which edits the task's
   approved files under the tool guard, once per attempt, and never commits. Roles run only on Codex
   CLI or Claude Code.
-- Parallel tasks are off in Unattended mode and need a cloud Implementation agent (a local model
-  server answers one request at a time). Each task's per-role usage reaches Overview and the run's
-  totals when that task's engine finishes, not while it is still working.
+- Parallel tasks need a cloud Implementation agent (a local model server answers one request at a
+  time). A task's tokens and spend count toward the run's budgets while it works (checked every few
+  seconds, so a limit can be passed by what the tasks use in that time and until their next safe
+  point); its per-role usage reaches Overview when its engine finishes. The Elevation limit applies to
+  each task's engine on its own.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file lock,
   usually antivirus or indexing). The engine retries a blocked rename for about five seconds; if a
   lock lasts longer, excluding the engine state folders from real-time scanning is the usual fix.

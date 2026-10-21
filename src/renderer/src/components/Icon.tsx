@@ -9,6 +9,13 @@ const paths: Record<string, JSX.Element> = {
       <rect x="3.5" y="15.5" width="7" height="5" rx="1.5" />
     </>
   ),
+  board: (
+    <>
+      <rect x="3.5" y="4" width="5" height="16" rx="1.5" />
+      <rect x="9.5" y="4" width="5" height="11" rx="1.5" />
+      <rect x="15.5" y="4" width="5" height="7" rx="1.5" />
+    </>
+  ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   workflow: (
     <>
@@ -79,6 +86,10 @@ const paths: Record<string, JSX.Element> = {
   download: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
   refresh: <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
+  arrowDown: <path d="M12 5v14M6 13l6 6 6-6" />,
+  toTop: <path d="M5 4h14M12 20V9M7 13l5-5 5 5" />,
+  grip: <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" strokeWidth="3" />,
 };
 
 export type IconName = keyof typeof paths;

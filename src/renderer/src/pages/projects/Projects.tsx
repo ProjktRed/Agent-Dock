@@ -108,7 +108,7 @@ function ParallelRow({ project }: { project: Project }) {
   };
   return (
     <div className="setrow">
-      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent; off in Unattended mode.</div></div>
+      <div className="grow"><div className="lt row" style={{ gap: 8 }}>Parallel tasks<Support kind="engine" /></div><div className="ld">Tasks at once, each in a worktree next to the project. Each approved change is checked again on the combined code before it is committed. Needs a cloud Implementation agent. In Unattended mode the run limits count all tasks together.</div></div>
       <ScopeChip overridden={overridden} onReset={() => set(undefined)} />
       <select className="sel" value={String(value ?? 1)} onChange={(e) => set(Number(e.target.value))} aria-label="Parallel tasks for this project">
         <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
@@ -328,17 +328,19 @@ function HistoryTab({ project }: { project: Project }) {
   if (!history) return <div className="skel" style={{ width: "60%" }} />;
   if (!history.length) return <Empty title="No tasks have run in this project yet" icon="play" />;
   return (
-    <div className="fade-in well scroll-x" style={{ padding: 6 }}>
-      <table className="tbl" style={{ minWidth: 640 }}>
-        <thead><tr><th>Task</th><th>Outcome</th><th>Attempts</th><th>Summary</th><th>When</th><th /></tr></thead>
+    <div className="fade-in well" style={{ padding: 6 }}>
+      {/* Fixed columns so the table fits its card; a long task id or summary is cut with its full text on hover. */}
+      <table className="tbl usage-tbl">
+        <colgroup><col style={{ width: "18%" }} /><col style={{ width: 104 }} /><col style={{ width: 84 }} /><col /><col style={{ width: 104 }} /><col style={{ width: 116 }} /></colgroup>
+        <thead><tr><th>Task</th><th>Outcome</th><th className="num">Attempts</th><th>Summary</th><th>When</th><th /></tr></thead>
         <tbody>
           {history.map((h) => (
             <tr key={h.taskId}>
-              <td className="mono nowrap">{h.taskId}</td>
+              <td><div className="mono ellipsis" title={h.taskId}>{h.taskId}</div></td>
               <td><span className={`chip ${tone[h.outcome]}`}>{h.outcome}</span></td>
-              <td className="tnum">{h.attempts || "—"}</td>
-              <td className="sub" style={{ maxWidth: 360 }}><span className="ellipsis" style={{ display: "block" }} title={h.summary}>{h.summary || "—"}</span></td>
-              <td className="sub nowrap">{ago(h.finishedAt)}</td>
+              <td className="num">{h.attempts || "—"}</td>
+              <td className="sub"><div className="ellipsis" title={h.summary || undefined}>{h.summary || "—"}</div></td>
+              <td className="sub"><div className="ellipsis" title={h.finishedAt ? new Date(h.finishedAt).toLocaleString() : undefined}>{ago(h.finishedAt)}</div></td>
               <td>{h.canRerun && <button className="btn sm" disabled={running} title={running ? "Stop the automation first" : "Run this task again with the same prompt, files and check"} onClick={() => void rerun(h.taskId)}>Run again</button>}</td>
             </tr>
           ))}

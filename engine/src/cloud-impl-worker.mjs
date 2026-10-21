@@ -8,7 +8,7 @@ import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claud
 import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
-import { launchSpec } from "./cmd-line.mjs";
+import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
@@ -75,6 +75,8 @@ export class CloudImplementationWorker {
     this.workspace = path.resolve(workspace);
     this.command = command ?? cli;
     this.prefixArgs = prefixArgs;
+    // Claude: npm's claude.cmd runs through cmd.exe like codex.cmd (Codex arrives already resolved).
+    if (cli === "claude" && !prefixArgs.length) ({ command: this.command, prefixArgs: this.prefixArgs } = cliLauncher(this.command, { env }));
     this.model = model;
     this.effort = effort;
     this.fast = fast;

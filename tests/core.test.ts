@@ -6,7 +6,7 @@ import { isHiddenEvent } from "../src/renderer/src/lib/events";
 import { runFinished } from "../src/renderer/src/lib/format";
 import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
-import { buildStatus, cycleStage, deriveRunState, interruptedWork } from "../src/main/lib/status";
+import { buildStatus, cycleStage, deriveRunState, interruptedWork, parallelRound } from "../src/main/lib/status";
 import { agentForRole, buildEngineArgs } from "../src/main/lib/engine-args";
 import { classifyPrompt, countCompactions, implementationUsage, parseInvocationUsage } from "../src/main/lib/usage";
 import { gitCommonDir, parsePorcelain } from "../src/main/lib/git";
@@ -390,6 +390,47 @@ describe("parsers", () => {
     ]);
     expect(history[1].summary).toBe("All checks passed");
   });
+  it("lists each task of a parallel round in task history, not the round itself", () => {
+    const history = taskHistory([
+      { timestamp: "2026-01-01T00:00:01Z", type: "parallel-task-finished", taskId: "A", status: "passed", attempt: 2 },
+      { timestamp: "2026-01-01T00:00:02Z", type: "parallel-task-finished", taskId: "B", status: "user-attention", summary: "QA failed twice" },
+      { timestamp: "2026-01-01T00:00:03Z", type: "parallel-task-finished", taskId: "C", status: "passed", attempt: 1 },
+      { timestamp: "2026-01-01T00:00:04Z", type: "qa-pass", taskId: "A", attempt: 2, qa: "Merged from agent-dock/parallel-A", parallel: true },
+      { timestamp: "2026-01-01T00:00:05Z", type: "parallel-merge-failed", taskId: "C", attempt: 1, message: "its check failed on the combined code" },
+      { timestamp: "2026-01-01T00:00:06Z", type: "user-attention", taskId: "parallel-round-1", qa: "Parallel round 1: ..." },
+    ]);
+    expect(history.map((h) => [h.taskId, h.outcome, h.attempts])).toEqual([
+      ["C", "failed", 1],
+      ["A", "approved", 2],
+      ["B", "attention", 0],
+    ]);
+    expect(history[0].summary).toBe("Not merged: its check failed on the combined code");
+    expect(history[2].summary).toBe("QA failed twice");
+  });
+  it("shows each task of a running parallel round with its own live stage", () => {
+    const round = { round: 2, startedAt: "2026-01-01T00:00:00Z", endedAt: null, tasks: [
+      { id: "A", name: "Add a", status: "running", folder: "A-x", branch: "agent-dock/parallel-A-x", startedAt: "2026-01-01T00:00:01Z" },
+      { id: "B", name: "Add b", status: "running", folder: "B-x", branch: "agent-dock/parallel-B-x", startedAt: "2026-01-01T00:00:01Z" },
+      { id: "C", status: "running", folder: "C-x" },
+      { id: "D", status: "merged", folder: "D-x" },
+      { id: "E", status: "starting" },
+    ] };
+    const lives = { "A-x": { stage: "implementing", clineStatus: "running", attempt: 1 }, "B-x": { stage: "WAITING_FOR_LIMIT", attempt: 2 }, "C-x": { stage: "qa", qaStatus: "running" }, "D-x": { stage: "pass" } };
+    const view = parallelRound(round, lives, true)!;
+    expect(view.round).toBe(2);
+    expect(view.tasks.map((t) => [t.id, t.stage, t.attempt, Boolean(t.waiting)])).toEqual([
+      ["A", "implementation", 1, false],
+      ["B", "waiting-limit", 2, true],
+      ["C", "qa", 0, false],
+      ["D", "merged", 0, false],
+      ["E", "starting", 0, false],
+    ]);
+    expect(view.tasks[0]).toMatchObject({ name: "Add a", branch: "agent-dock/parallel-A-x" });
+    expect(view.tasks[2].name).toBe("C");
+    expect(parallelRound({ ...round, endedAt: "2026-01-01T01:00:00Z" }, lives, true)).toBeNull();
+    expect(parallelRound(round, lives, false)).toBeNull();
+    expect(parallelRound(null, lives, true)).toBeNull();
+  });
 });
 
 describe("engine startup errors", () => {
@@ -528,7 +569,7 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
-  it("passes parallel tasks only for a cloud Implementation agent outside Unattended mode", () => {
+  it("passes parallel tasks only for a cloud Implementation agent, in Unattended mode too", () => {
     const s = settings();
     s.workflow.parallelTasks = 3;
     const local = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
@@ -538,9 +579,11 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     const cloud = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: claude.id, provider: undefined, model: "claude-sonnet-5-5" } : a));
     expect(flag(buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s }).args, "--parallel")).toBe("3");
     s.workflow.unattended = true;
+    // One budget for the whole run: the engine counts every task's usage toward the Unattended limits.
     const unattended = buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s });
-    expect(unattended.args).not.toContain("--parallel");
-    expect(unattended.warnings.join(" ")).toMatch(/off in Unattended mode/);
+    expect(flag(unattended.args, "--parallel")).toBe("3");
+    expect(flag(unattended.args, "--unattended")).toBe("true");
+    expect(unattended.warnings.join(" ")).not.toMatch(/Parallel tasks/);
   });
 
   it("passes the task size mode: eco by default, standard fixed, max with only the limits you set", () => {

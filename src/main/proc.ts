@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { cmdLine, resolveProgram } from "./lib/cmd-line";
 
 /**
  * Stops a CLI started with `shell: true` and removes its temporary working folder.
@@ -28,7 +29,13 @@ export function stopAndClean(child: ChildProcess, dir: string): void {
 }
 
 /**
- * The command line for a `shell: true` spawn, joined the way Node joins command and arguments.
- * Passing it whole (no argument array) keeps the same behaviour without Node's DEP0190 warning.
+ * Starts a CLI. Windows: through cmd.exe (`shell: true`) so npm's .cmd launchers run, with the program
+ * resolved through PATH and PATHEXT and every argument escaped for cmd (lib/cmd-line); elsewhere
+ * directly. Arguments are passed as they are, never pre-quoted. Throws when one cannot be passed safely.
  */
-export const shellLine = (command: string, args: string[]) => [command, ...args].join(" ");
+export function spawnCli(command: string, args: string[], options: SpawnOptionsWithoutStdio = {}): ChildProcessWithoutNullStreams {
+  const program = command.replace(/^"(.*)"$/, "$1");
+  return process.platform === "win32"
+    ? spawn(cmdLine(resolveProgram(program, options.env ?? process.env), args), { ...options, shell: true, windowsHide: true })
+    : spawn(program, args, { ...options, windowsHide: true });
+}

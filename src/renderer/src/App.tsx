@@ -4,6 +4,7 @@ import { Sidebar, StatusBar, TitleBar, Toasts } from "./components/Shell";
 import { OverviewPage } from "./pages/overview/Overview";
 
 // Overview opens first; the other pages load when first visited.
+const TaskBoardPage = lazy(() => import("./pages/TaskBoard").then((m) => ({ default: m.TaskBoardPage })));
 const ProjectsPage = lazy(() => import("./pages/projects/Projects").then((m) => ({ default: m.ProjectsPage })));
 const AgentsPage = lazy(() => import("./pages/Agents").then((m) => ({ default: m.AgentsPage })));
 const WorkflowPage = lazy(() => import("./pages/Workflow").then((m) => ({ default: m.WorkflowPage })));
@@ -58,6 +59,7 @@ export function App() {
           ) : (
             <>
               {route === "overview" && <OverviewPage />}
+              {route === "tasks" && <TaskBoardPage />}
               {route === "projects" && <ProjectsPage />}
               {route === "workflow" && <WorkflowPage />}
               {route === "agents" && <AgentsPage />}

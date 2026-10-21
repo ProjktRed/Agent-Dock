@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cmdLine, launchSpec } from '../src/cmd-line.mjs';
+import { cliLauncher, cmdLine, launchSpec, resolveProgram } from '../src/cmd-line.mjs';
 
 const ARGS = ['plain', 'two words', 'a&b', 'p|q', '<in>', '100%', '%PATH%', '^c', '!x!', '(p)', 'model_reasoning_effort="high"', 'tail\\', 'q\\"x', '', '& echo MARKER', 'C:\\dir with space\\'];
 
@@ -42,4 +42,34 @@ test('a bare program name gets no argument that only one kind of program could r
 
 test('other launchers are spawned as they are', () => {
   assert.deepEqual(launchSpec('C:\\bin\\codex.exe', ['exec', 'a&b']), { command: 'C:\\bin\\codex.exe', args: ['exec', 'a&b'], options: {} });
+});
+
+test('a bare name resolves through PATH and PATHEXT on Windows, and a batch file runs through cmd.exe', () => {
+  const files = new Set(['C:\\npm\\claude.cmd', 'C:\\bin\\tool.exe']);
+  const env = { Path: 'C:\\empty;"C:\\npm";C:\\bin', PATHEXT: '.exe;.cmd', ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+  const options = { platform: 'win32', env, fileExists: (file) => files.has(file) };
+  assert.equal(resolveProgram('claude', options), 'C:\\npm\\claude.cmd');
+  assert.equal(resolveProgram('tool', options), 'C:\\bin\\tool.exe');
+  assert.equal(resolveProgram('missing', options), 'missing');
+  assert.equal(resolveProgram('.\\claude', options), '.\\claude', 'a path is never searched');
+  assert.deepEqual(cliLauncher('claude', options), { command: 'C:\\Windows\\system32\\cmd.exe', prefixArgs: ['/d', '/s', '/c', 'C:\\npm\\claude.cmd'] });
+  assert.deepEqual(cliLauncher('tool', options), { command: 'C:\\bin\\tool.exe', prefixArgs: [] });
+  assert.equal(cliLauncher('claude', { ...options, env: { ...env, ComSpec: 'C:\\other.exe' } }).command, 'cmd.exe', 'ComSpec only when it is cmd.exe');
+  assert.deepEqual(cliLauncher('claude', { ...options, platform: 'linux' }), { command: 'claude', prefixArgs: [] });
+});
+
+test('an npm-style claude.cmd found on PATH starts through cmd.exe with its arguments intact', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'cmd-line-'));
+  try {
+    const dir = shim(root);
+    writeFileSync(path.join(dir, 'claude.cmd'), readFileSync(path.join(dir, 'tool.cmd')));
+    const launcher = cliLauncher('claude', { env: { PATH: dir, PATHEXT: '.exe;.cmd' } });
+    assert.equal(launcher.prefixArgs.at(-1), path.join(dir, 'claude.cmd'));
+    const args = ['--setting-sources', 'user', '--json-schema', JSON.stringify({ type: 'object', required: ['a&b'] }), ...ARGS];
+    const launch = launchSpec(launcher.command, [...launcher.prefixArgs, ...args]);
+    const out = spawnSync(launch.command, launch.args, { ...launch.options, encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(out.stdout), args);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

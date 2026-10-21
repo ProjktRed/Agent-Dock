@@ -1,4 +1,4 @@
-import type { EngineEvent, GitInfo, PlanProgress, ProjectStatus, QaChecks, RunState } from "@shared/types";
+import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState } from "@shared/types";
 
 /** Shape of the engine's live.json (engine/src/dashboard-state.mjs). Only fields the app reads. */
 export interface EngineLive {
@@ -70,7 +70,37 @@ export function cycleStage(live: EngineLive | null): "assessment" | "implementat
   return null;
 }
 
-const defaultChecks: QaChecks = { tests: "NOT RUN", typecheck: "NOT RUN", lint: "NOT RUN", scopeCheck: "NOT RUN" };
+/** parallel-round.json in the run's state folder (engine/src/parallel-run.mjs). Only fields the app reads. */
+export interface EngineParallelRound {
+  round?: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  tasks?: { id: string; name?: string; status?: string; folder?: string; branch?: string; startedAt?: string }[];
+}
+
+const ENDED: Record<string, ParallelTaskStage> = { approved: "approved", merged: "merged", failed: "failed", "merge-failed": "merge-failed", stopped: "stopped" };
+
+/**
+ * The round in progress with each task's live stage, read from its engine's live.json (lives, by folder).
+ * Null when no round runs: no file, a round that ended, or an engine that is not running.
+ */
+export function parallelRound(round: EngineParallelRound | null, lives: Record<string, EngineLive | null>, processAlive: boolean): ParallelRound | null {
+  if (!processAlive || !round || round.endedAt || !Array.isArray(round.tasks) || !round.tasks.length) return null;
+  return {
+    round: Number(round.round) || 0,
+    startedAt: round.startedAt ?? null,
+    tasks: round.tasks.map((task) => {
+      const live = task.folder ? lives[task.folder] ?? null : null;
+      const ended = ENDED[task.status ?? ""];
+      const waiting = !ended && stageOf(live) === "WAITING_FOR_LIMIT";
+      const cycle = cycleStage(live);
+      const stage: ParallelTaskStage = ended ?? (task.status !== "running" ? "starting" : waiting ? "waiting-limit" : live?.stage === "paused" ? "paused" : cycle && cycle !== "next" ? cycle : "working");
+      return { id: task.id, name: task.name ?? task.id, stage, attempt: live?.attempt ?? 0, branch: task.branch ?? null, startedAt: task.startedAt ?? null, ...(waiting ? { waiting: true } : {}) };
+    }),
+  };
+}
+
+const defaultChecks: QaChecks ={ tests: "NOT RUN", typecheck: "NOT RUN", lint: "NOT RUN", scopeCheck: "NOT RUN" };
 
 export function buildStatus(args: {
   projectId: string;

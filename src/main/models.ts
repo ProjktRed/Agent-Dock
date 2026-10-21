@@ -1,15 +1,12 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { shellLine, stopAndClean } from "./proc";
+import { spawnCli, stopAndClean } from "./proc";
 import type { ModelCatalog, ProviderModels } from "@shared/types";
 import { claudeFastPending, parseClaudeModels, parseCodexModels, type CodexModelListResult } from "./lib/models-parse";
 import { readJson, writeJson } from "./lib/json-file";
 
-const quote = (p: string) => (/[\s&()]/.test(p) && !p.startsWith('"') ? `"${p}"` : p);
-/** One argument for a `shell: true` spawn on Windows (cmd → MSVC argv rules). */
-const winArg = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
 const failed = (provider: ProviderModels["provider"], source: string, error: string): ProviderModels => ({
   provider,
   ok: false,
@@ -43,7 +40,12 @@ function onJsonLines(stream: NodeJS.ReadableStream, handle: (message: any) => vo
 export function readCodexModels(codexPath: string, timeoutMs = 30_000): Promise<ProviderModels> {
   const source = "Codex app-server · model/list";
   return new Promise((resolve) => {
-    const child = spawn(shellLine(quote(codexPath), ["app-server"]), { shell: true, windowsHide: true });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnCli(codexPath, ["app-server"]);
+    } catch (error) {
+      return resolve(failed("codex", source, (error as Error).message));
+    }
     const data: CodexModelListResult["data"] = [];
     let stderr = "";
     let done = false;
@@ -97,10 +99,16 @@ function readClaudeModelsOnce(claudePath: string, timeoutMs = 45_000): Promise<{
   const source = "Claude Code · initialize (models)";
   const cwd = mkdtempSync(path.join(os.tmpdir(), "agent-dock-claude-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
-  const settings = winArg(JSON.stringify({ fastMode: true, disableAllHooks: true }));
+  const settings = JSON.stringify({ fastMode: true, disableAllHooks: true });
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--settings", settings];
   return new Promise((resolve) => {
-    const child = spawn(shellLine(quote(claudePath), args), { shell: true, windowsHide: true, cwd, env });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnCli(claudePath, args, { cwd, env });
+    } catch (error) {
+      rmSync(cwd, { recursive: true, force: true });
+      return resolve({ models: failed("claude", source, (error as Error).message), pending: false });
+    }
     let stderr = "";
     let done = false;
     const finish = (value: ProviderModels, pending = false) => {

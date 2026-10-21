@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useState } from "react";
-import type { EngineEvent, PlanPhase, PlanProposal, ProjectStatus, RunReport } from "@shared/types";
+import type { EngineEvent, ParallelRound, ParallelTaskStage, PlanPhase, PlanProposal, ProjectStatus, RunReport, TaskBoard } from "@shared/types";
 import { useApp } from "../../store";
 import { clock, duration, engineStageLabel, num, plural, runFinished, sentenceCase, tokens } from "../../lib/format";
 import { modeEstimates, planEstimate } from "../../lib/estimate";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 import { describeEvent, isHiddenEvent } from "../../lib/events";
 import { agentForRoleClient } from "../../lib/agents";
+import { PARALLEL_STAGE_LABEL, parallelCycleKeys, parallelRoundSummary, planItemActive } from "../../lib/parallel-round";
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
 
@@ -141,7 +142,8 @@ function eventLine(e: EngineEvent): string {
   return `${clock(e.timestamp)}  ${describeEvent(e)}`;
 }
 
-function PlanTree({ phases, current, activeTitle }: { phases: PlanPhase[]; current: number | null; activeTitle: string | null }) {
+/** Items in progress come from the Task board when there is one (several during a parallel round), otherwise from the current task's name. */
+function PlanTree({ phases, current, activeTitle, board }: { phases: PlanPhase[]; current: number | null; activeTitle: string | null; board?: TaskBoard }) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const isOpen = (n: number) => open[n] ?? n === current;
   const kindOf = (p: PlanPhase): StatusKind => (p.total && p.completed === p.total ? "done" : p.number === current ? "active" : p.completed ? "part" : "pending");
@@ -165,7 +167,7 @@ function PlanTree({ phases, current, activeTitle }: { phases: PlanPhase[]; curre
               <div className="fade-in stack" style={{ gap: 2, padding: "2px 0 6px" }}>
                 {p.tasks.length === 0 && <div className="sub" style={{ padding: "4px 12px 4px 60px" }}>No checklist items in this phase.</div>}
                 {p.tasks.map((t, i) => {
-                  const cur = !t.completed && activeTitle != null && t.title.toLowerCase().includes(activeTitle.toLowerCase().slice(0, 24));
+                  const cur = planItemActive(t, p.number, board, activeTitle);
                   return (
                     <div key={i} className={`task ${cur ? "cur" : ""}`} style={{ paddingLeft: 60 + t.depth * 20 }}>
                       <St kind={t.completed ? "done" : cur ? "active" : "pending"} />
@@ -189,6 +191,45 @@ function checkKind(value: string): StatusKind {
   if (v === "RUNNING") return "active";
   if (v === "INCONCLUSIVE") return "part";
   return "pending";
+}
+
+const PARALLEL_STAGE: Record<ParallelTaskStage, { label: string; kind: StatusKind; tone: string }> = {
+  starting: { label: PARALLEL_STAGE_LABEL.starting, kind: "pending", tone: "mut" },
+  assessment: { label: PARALLEL_STAGE_LABEL.assessment, kind: "active", tone: "info" },
+  implementation: { label: PARALLEL_STAGE_LABEL.implementation, kind: "active", tone: "info" },
+  qa: { label: PARALLEL_STAGE_LABEL.qa, kind: "active", tone: "info" },
+  correction: { label: PARALLEL_STAGE_LABEL.correction, kind: "active", tone: "warn" },
+  "waiting-limit": { label: PARALLEL_STAGE_LABEL["waiting-limit"], kind: "paused", tone: "warn" },
+  paused: { label: PARALLEL_STAGE_LABEL.paused, kind: "paused", tone: "mut" },
+  working: { label: PARALLEL_STAGE_LABEL.working, kind: "active", tone: "info" },
+  approved: { label: PARALLEL_STAGE_LABEL.approved, kind: "part", tone: "ok" },
+  merged: { label: PARALLEL_STAGE_LABEL.merged, kind: "done", tone: "ok" },
+  failed: { label: PARALLEL_STAGE_LABEL.failed, kind: "blocked", tone: "err" },
+  "merge-failed": { label: PARALLEL_STAGE_LABEL["merge-failed"], kind: "blocked", tone: "err" },
+  stopped: { label: PARALLEL_STAGE_LABEL.stopped, kind: "pending", tone: "mut" },
+};
+
+/** The tasks of the parallel round in progress, each with its own engine's live stage. */
+function ParallelRoundList({ round }: { round: ParallelRound }) {
+  return (
+    <div className="well" style={{ padding: "12px 14px", borderRadius: "var(--radius-well-sm, 12px)" }} aria-label={`Parallel round ${round.round}`}>
+      <div className="eyebrow" style={{ marginBottom: 6 }}>Round {round.round} · {plural(round.tasks.length, "task")} side by side</div>
+      <ul className="list">
+        {round.tasks.map((t) => {
+          const stage = PARALLEL_STAGE[t.stage] ?? PARALLEL_STAGE.working;
+          return (
+            <li key={t.id} title={t.branch ?? undefined}>
+              <St kind={stage.kind} title={stage.label} />
+              <span className="grow ellipsis"><span className="mono mut">{t.id}</span> {t.name !== t.id ? t.name : ""}</span>
+              {t.attempt > 1 && <span className="sub">Attempt {t.attempt}</span>}
+              {t.startedAt && <span className="sub mono">{clock(t.startedAt)}</span>}
+              <span className={`chip ${stage.tone}`}>{stage.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 export function ProgressTab() {
@@ -220,6 +261,9 @@ export function ProgressTab() {
   const approval = lastApproval(s.events);
   const elapsedMs = s.clineStartedAt && s.clineStatus === "running" ? Date.now() - new Date(s.clineStartedAt).getTime() : s.clineElapsedMs;
   const activeIndex = CYCLE.findIndex((c) => c.key === s.cycle);
+  // During a parallel round each task runs its own engine: the boxes its tasks are in show as active instead.
+  const round = s.parallel && s.parallel.tasks.length ? s.parallel : null;
+  const roundKeys = parallelCycleKeys(round);
   const paused = ["paused", "pausing"].includes(s.runState);
   const noRuns = !s.task && s.events.length === 0;
   // Finished (runFinished): not running, nothing interrupted mid-step, and "Objective complete" or every plan item checked.
@@ -290,7 +334,7 @@ export function ProgressTab() {
           <div className="row sub">
             <span className="ellipsis">{curPhase ? <>Phase {curPhase.number} of {plan.phases.length} · <span style={{ color: "var(--t)" }}>{curPhase.title}</span></> : "No current phase"}</span>
             <span className="grow" />
-            {curPhase && <span>{curPhase.completed} / {curPhase.total}</span>}
+            {curPhase && <span style={{ whiteSpace: "nowrap" }}>{curPhase.completed} / {curPhase.total}</span>}
           </div>
           <Bar pct={curPhase?.percent ?? 0} large />
         </div>
@@ -313,6 +357,22 @@ export function ProgressTab() {
           {CYCLE.map((c, i) => {
             // After a finished run every stage of the loop has run except Correction, which only follows a failed QA.
             const doneAfterRun = finished && c.key !== "correction";
+            if (round && !finished) {
+              const on = roundKeys.has(c.key);
+              const roundKind: StatusKind = on ? (paused ? "paused" : s.processAlive ? "active" : "pending") : "pending";
+              return (
+                <Fragment key={c.key}>
+                  <div className={`stage ${on ? (paused ? "paused" : "active") : ""}`}>
+                    <div className="row" style={{ gap: 8 }}>
+                      <St kind={roundKind} />
+                      <span style={{ fontWeight: 600 }}>{c.name}</span>
+                    </div>
+                    <div className="sub">{c.key === "implementation" ? implLabel : c.agent}</div>
+                  </div>
+                  {i < CYCLE.length - 1 && <span className="arrow" aria-hidden="true"><Icon name="chevronRight" /></span>}
+                </Fragment>
+              );
+            }
             const active = !finished && i === activeIndex;
             const cls = finished ? (doneAfterRun ? "done" : "") : active ? (paused ? "paused" : "active") : activeIndex >= 0 && i > activeIndex ? "next" : activeIndex < 0 ? "next" : "";
             const kind: StatusKind = finished ? (doneAfterRun ? "done" : "pending") : active ? (paused ? "paused" : s.processAlive ? "active" : "pending") : activeIndex >= 0 && i < activeIndex ? "done" : "pending";
@@ -336,7 +396,7 @@ export function ProgressTab() {
           <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
         </div>
         <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: "var(--radius-well-sm, 12px)" }}>
-          <span><span className="sub">Stage</span> {engineStageLabel(s.stage)}</span>
+          <span><span className="sub">Stage</span> {round ? parallelRoundSummary(round) : engineStageLabel(s.stage)}</span>
           <span><span className="sub">Agent</span> {s.activeRole ?? "—"}</span>
           <span><span className="sub">Status</span> <span className={s.processAlive ? "ok" : "mut"}>{s.label}</span></span>
           <span><span className="sub">Implementation elapsed</span> <span className={elapsedMs != null && Number.isFinite(elapsedMs) ? "mono" : undefined}>{duration(elapsedMs)}</span></span>
@@ -347,7 +407,7 @@ export function ProgressTab() {
       {(
         <div className="grid2">
           {plan.phases.length ? (
-            <PlanTree phases={plan.phases} current={plan.currentPhase} activeTitle={s.task?.name ?? null} />
+            <PlanTree phases={plan.phases} current={plan.currentPhase} activeTitle={s.task?.name ?? null} board={s.board} />
           ) : (
             <section className="card pad stack" style={{ gap: 8 }}>
               <h2 className="h2">Implementation plan</h2>
@@ -377,38 +437,44 @@ export function ProgressTab() {
                   </div>
                   <h2 className="h2" style={{ marginTop: 6 }}>{s.task.name}</h2>
                 </div>
-                <Disclosure title="Task prompt" meta={`${s.task.prompt.length} chars`}>
-                  <div className="mono log selectable">{s.task.prompt}</div>
-                </Disclosure>
-                <dl className="kv two">
-                  <div><dt>Implementation</dt><dd>{implLabel}</dd></div>
-                  <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "—")}</dd></div>
-                  <div><dt>QA command</dt><dd className={s.task.qaCommand ? "mono" : undefined} title={s.task.qaCommand}>{s.task.qaCommand || "—"}</dd></div>
-                  <div><dt>Context</dt><dd>{s.contextTokens ? `${num(s.contextTokens)} tokens` : "—"}</dd></div>
-                </dl>
-                <div className="well" style={{ padding: "12px 14px", borderRadius: "var(--radius-well-sm, 12px)" }}>
-                  <div className="eyebrow" style={{ marginBottom: 6 }}>QA checks</div>
-                  <ul className="list">
-                    {Object.entries(s.qaChecks).map(([k, v]) => (
-                      <li key={k}><St kind={checkKind(String(v))} title={sentenceCase(String(v))} /><span className="grow">{k === "scopeCheck" ? "Scope check" : k[0].toUpperCase() + k.slice(1)}</span><span className="sub">{sentenceCase(String(v))}</span></li>
-                    ))}
-                  </ul>
-                  <div className="eyebrow" style={{ margin: "12px 0 6px" }}>Approved paths</div>
-                  <ul className="list">
-                    {!(s.task.allowedPaths ?? []).length && <li className="sub">No approved paths</li>}
-                    {(s.task.allowedPaths ?? []).map((p) => {
-                      const change = s.git.changedFiles.find((f) => f.path === p.replaceAll("\\", "/"));
-                      return <li key={p}><span className="mono grow">{p}</span><span className={`chip ${change ? "warn" : "mut"}`}>{change ? change.status.trim() || "changed" : "unchanged"}</span></li>;
-                    })}
-                  </ul>
-                  {s.git.changedFiles.some((f) => !(s.task!.allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")).includes(f.path)) && (
-                    <div className="row warn" style={{ marginTop: 8, fontSize: 12 }}><Icon name="warn" size="sm" />Files outside the approved paths have changed. QA will reject them.</div>
-                  )}
-                </div>
-                {s.latestQa && (
-                  <Disclosure title="Latest QA output">
-                    <div className="mono log selectable">{s.latestQa}</div>
-                  </Disclosure>
+                {s.parallel && <ParallelRoundList round={s.parallel} />}
+                {/* A round's task is a placeholder: its prompt, checks and paths describe no real task, so only the round list shows. */}
+                {!s.parallel && (
+                  <>
+                    <Disclosure title="Task prompt" meta={`${s.task.prompt.length} chars`}>
+                      <div className="mono log selectable">{s.task.prompt}</div>
+                    </Disclosure>
+                    <dl className="kv two">
+                      <div><dt>Implementation</dt><dd>{implLabel}</dd></div>
+                      <div><dt>Current operation</dt><dd>{s.activeRole ?? (s.processAlive ? "Between steps" : "—")}</dd></div>
+                      <div><dt>QA command</dt><dd className={s.task.qaCommand ? "mono" : undefined} title={s.task.qaCommand}>{s.task.qaCommand || "—"}</dd></div>
+                      <div><dt>Context</dt><dd>{s.contextTokens ? `${num(s.contextTokens)} tokens` : "—"}</dd></div>
+                    </dl>
+                    <div className="well" style={{ padding: "12px 14px", borderRadius: "var(--radius-well-sm, 12px)" }}>
+                      <div className="eyebrow" style={{ marginBottom: 6 }}>QA checks</div>
+                      <ul className="list">
+                        {Object.entries(s.qaChecks).map(([k, v]) => (
+                          <li key={k}><St kind={checkKind(String(v))} title={sentenceCase(String(v))} /><span className="grow">{k === "scopeCheck" ? "Scope check" : k[0].toUpperCase() + k.slice(1)}</span><span className="sub">{sentenceCase(String(v))}</span></li>
+                        ))}
+                      </ul>
+                      <div className="eyebrow" style={{ margin: "12px 0 6px" }}>Approved paths</div>
+                      <ul className="list">
+                        {!(s.task.allowedPaths ?? []).length && <li className="sub">No approved paths</li>}
+                        {(s.task.allowedPaths ?? []).map((p) => {
+                          const change = s.git.changedFiles.find((f) => f.path === p.replaceAll("\\", "/"));
+                          return <li key={p}><span className="mono grow">{p}</span><span className={`chip ${change ? "warn" : "mut"}`}>{change ? change.status.trim() || "changed" : "unchanged"}</span></li>;
+                        })}
+                      </ul>
+                      {s.git.changedFiles.some((f) => !(s.task!.allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")).includes(f.path)) && (
+                        <div className="row warn" style={{ marginTop: 8, fontSize: 12 }}><Icon name="warn" size="sm" />Files outside the approved paths have changed. QA will reject them.</div>
+                      )}
+                    </div>
+                    {s.latestQa && (
+                      <Disclosure title="Latest QA output">
+                        <div className="mono log selectable">{s.latestQa}</div>
+                      </Disclosure>
+                    )}
+                  </>
                 )}
               </>
             ) : noRuns ? (

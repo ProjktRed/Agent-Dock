@@ -120,6 +120,16 @@ test('an approved task checks off its plan item between tasks, as its own commit
  assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws}),{applied:0},'the queue is consumed');
 });
 
+test('an item copied with its Task priority key or phase label is still checked off',async t=>{
+ const {ws,state}=await repo(t);const events=fakeState();
+ await queuePlanTick({stateDir:state,taskId:'T1',item:'Phase 2: Docs'});
+ await queuePlanTick({stateDir:state,taskId:'T2',item:'[0123456789ab] Old idea'});
+ assert.deepEqual(await applyApprovedPlanProposals({stateDir:state,workspace:ws,state:events}),{applied:0,ticked:2});
+ const plan=await readFile(path.join(ws,'IMPLEMENTATION_PLAN.md'),'utf8');
+ assert.ok(plan.includes('- [x] Docs'));assert.ok(plan.includes('- [x] Old idea'));
+ assert.deepEqual(events.events.map(e=>e.type),['plan-item-done','plan-item-done']);
+});
+
 test('a Supervisor review with plan edits stores a pending proposal and never edits the plan',async t=>{
  const {ws,state}=await repo(t),events=fakeState();
  const reviewer=async()=>({summary:'Plan item too big',actions:[],plan:{reason:'Split login work',edits:[{op:'edit',line:'- [ ] Add login and signup and password reset',text:'- [ ] Add login'}]}});

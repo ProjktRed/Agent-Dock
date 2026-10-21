@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { takeSettingsSection, type SettingsSection } from "../lib/nav";
+import { openDoc } from "../lib/open-doc";
 import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo, UiStyle } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { STYLE_ACCENTS, styleAccent, withStyleAccent } from "@shared/appearance";
@@ -80,13 +81,13 @@ function StylePreview({ style, accent }: { style: UiStyle; accent: string }) {
 /** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
 const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
 
-/** Opens a guide bundled with the app in the default Markdown viewer (works offline); GitHub when it is missing. */
+/** Opens a guide bundled with the app in the default Markdown viewer (works offline); GitHub when it is missing or nothing opens .md files. */
 function DocLink({ file }: { file: "user-guide.md" | "how-it-works.md" }) {
   const { snap } = useApp();
   const local = snap.paths.docs?.[file];
   const online = docUrl(snap.version, file);
   if (!local) return <a className="btn sm" href={online} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>;
-  return <button className="btn sm" title={local} onClick={() => void window.api.openPath(local).catch(() => window.open(online, "_blank", "noreferrer"))}>Open<Icon name="external" size="sm" /></button>;
+  return <button className="btn sm" title={local} onClick={() => void openDoc(window.api.openPath, local, online, (url) => window.open(url, "_blank", "noreferrer"))}>Open<Icon name="external" size="sm" /></button>;
 }
 
 function useSettingsPatch() {
@@ -421,7 +422,7 @@ function Workflow() {
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
         <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
-        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent; off in Unattended mode." support="engine">
+        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent. In Unattended mode the run limits count all tasks together." support="engine">
           <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
             <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
           </select>

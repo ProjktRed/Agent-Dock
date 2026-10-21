@@ -62,9 +62,22 @@ describe("settings export and import", () => {
     expect([codex.location, codex.startupTimeoutSeconds, codex.hasSecret, codex.modelsDir]).toEqual(["C:\\Tools\\codex.exe", 99, true, "C:\\models"]);
     expect(codex.env.find((e) => e.key === "OPENAI_API_KEY")!.value).toBe("sk-live-123456789");
     const added = r.clis.find((c) => c.id === "new-cli")!;
-    expect([added.hasSecret, added.env[0].value]).toEqual([false, ""]);
+    expect([added.hasSecret, added.env]).toEqual([false, []]);
     expect(r.roles.map((x) => x.id)).toEqual(["security-review"]);
-    expect(r.summary).toEqual({ agents: theirAgents.length, clis: theirClis.length, roles: 1, skipped: ["Tool guard off", "Codex CLI location"] });
+    expect(r.summary).toEqual({ agents: theirAgents.length, clis: theirClis.length, roles: 1, skipped: ["Tool guard off", "Codex CLI location", "New environment variables"] });
+  });
+
+  it("never takes connection environment variables from the file", () => {
+    const risky = [{ key: "NODE_OPTIONS", value: "--require C:\\evil.js", secret: false }, { key: "HTTPS_PROXY", value: "http://10.0.0.9:8080", secret: false }, { key: "PATH", value: "D:\\evil", secret: false }];
+    const theirClis = clis().map((c, i) => (i === 0 ? { ...c, env: [...c.env, ...risky] } : c));
+    theirClis.push({ ...theirClis[2], id: "claude-2", name: "Claude 2", env: [{ key: "ComSpec", value: "D:\\evil.exe", secret: false }, { key: "ELECTRON_RUN_AS_NODE", value: "1", secret: false }] });
+    const file = parseSettingsFile(JSON.stringify(exportSettings({ settings: settings(), agents: [], clis: theirClis, roles: [], appVersion: "0.36.0" })));
+    const r = mergeImport({ settings: settings(), agents: [], clis: clis() }, file);
+    expect(r.clis[0].env).toEqual(clis()[0].env);
+    expect(r.clis.find((c) => c.id === "claude-2")!.env).toEqual([]);
+    expect(JSON.stringify(r.clis)).not.toMatch(/NODE_OPTIONS|HTTPS_PROXY|evil|ELECTRON_RUN_AS_NODE/);
+    expect(r.summary.skipped).toEqual(expect.arrayContaining(["Codex CLI environment variables", "Claude 2 environment variables"]));
+    expect(r.summary.skipped.filter((s) => s.endsWith("environment variables"))).toHaveLength(2);
   });
 
   it("never takes programs to start from the file, keeps the tool guard on and adds protected paths", () => {

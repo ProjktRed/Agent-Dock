@@ -458,6 +458,61 @@ export interface PlanProgress {
   error?: string;
 }
 
+/** A plan item's key: hash of phase number, normalized title and duplicate ordinal (engine/src/task-priority.mjs). */
+export type PlanItemKey = string;
+
+/** <stateDir>/task-board.json: the Task board's priority order. Written by the app, read by the engine at each Assessment. */
+export interface TaskBoardState {
+  version: 1;
+  revision: number;
+  order: PlanItemKey[];
+  groupByPhase: boolean;
+  updatedAt: string | null;
+}
+
+export type TaskBoardColumn = "planned" | "in-progress" | "finished";
+
+/** Who is working on an In progress item, or why a Planned one is set aside. */
+export interface TaskBoardActivity {
+  kind: "current" | "parallel" | "step-down" | "deferred";
+  taskId: string;
+  name: string;
+  /** Parallel: the task engine's lane folder. Deferred: the reason. */
+  detail?: string;
+}
+
+export interface TaskBoardItem {
+  id: PlanItemKey;
+  phase: { number: number; title: string };
+  title: string;
+  depth: number;
+  column: TaskBoardColumn;
+  /** Place in the priority order, from 0, for open items; null when finished. */
+  priority: number | null;
+  /** Its title appears on more than one plan line: the engine cannot check it off by text. */
+  ambiguous: boolean;
+  activity: TaskBoardActivity[];
+}
+
+export interface TaskBoard {
+  revision: number;
+  groupByPhase: boolean;
+  /** Open items in priority order (In progress and Planned), then finished ones in plan order. */
+  items: TaskBoardItem[];
+}
+
+export interface TaskBoardUpdate {
+  /** The revision the change was made on; a different one on disk rejects it. */
+  expectedRevision: number;
+  /** The new priority order of open items. */
+  order?: PlanItemKey[];
+  /** Back to plan order. */
+  reset?: boolean;
+  groupByPhase?: boolean;
+}
+
+export type TaskBoardWriteResult = { ok: true; board: TaskBoard } | { ok: false; reason: "stale"; board: TaskBoard };
+
 export interface GitInfo {
   isRepo: boolean;
   branch: string | null;
@@ -508,7 +563,32 @@ export interface ProjectStatus {
   events: EngineEvent[];
   git: GitInfo;
   plan: PlanProgress;
+  /** The Task board: plan items in Planned, In progress and Finished, in priority order. Absent from older builds. */
+  board?: TaskBoard;
+  /** The parallel round in progress (engine --parallel): each task with its live stage. Absent outside a round. */
+  parallel?: ParallelRound;
   updatedAt: string | null;
+}
+
+/** Where one task of a parallel round is: its engine's stage while it works, then how it ended. */
+export type ParallelTaskStage = "starting" | "assessment" | "implementation" | "qa" | "correction" | "waiting-limit" | "paused" | "working" | "approved" | "merged" | "failed" | "merge-failed" | "stopped";
+
+export interface ParallelRoundTask {
+  id: string;
+  name: string;
+  stage: ParallelTaskStage;
+  attempt: number;
+  branch: string | null;
+  startedAt: string | null;
+  /** Waiting out a usage limit. */
+  waiting?: boolean;
+}
+
+/** A parallel round (engine parallel-round.json), with each task's live state from <state>/parallel/<task>/. */
+export interface ParallelRound {
+  round: number;
+  startedAt: string | null;
+  tasks: ParallelRoundTask[];
 }
 
 export interface TokenRecord {
