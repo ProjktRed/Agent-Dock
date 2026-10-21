@@ -6,7 +6,9 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, session, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol, session, shell, Tray } from "electron";
+import { pathToFileURL } from "node:url";
+import { APP_SCHEME, appUrl, resolveAppPath } from "./lib/app-protocol";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
 import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
@@ -54,6 +56,8 @@ try {
   app.exit(64);
 }
 app.on('web-contents-created',(_event,contents)=>hardenWebContents(contents));
+// The renderer is served from app://agent-dock/ (lib/app-protocol.ts), never file://; registered before ready.
+protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.on('session-created',created=>hardenSession(created));
 
 // Portable copy: a portable.json beside AgentDock.exe keeps every setting, project and log in a
@@ -693,7 +697,7 @@ function createWindow() {
   // The style rides on the query string so the renderer applies it before the settings snapshot arrives.
   const look = { ui: style, theme, accent: styleAccent({ accent, styleAccents }, style) };
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${new URLSearchParams(look)}`);
-  else void win.loadFile(path.join(__dirname, "../renderer/index.html"), { query: look });
+  else void win.loadURL(appUrl(look));
 }
 
 function showWindow() {
@@ -1250,6 +1254,11 @@ app.on("window-all-closed", () => {
 });
 
 app.whenReady().then(async () => {
+  const rendererDir = path.join(__dirname, "../renderer");
+  protocol.handle(APP_SCHEME, (request) => {
+    const file = resolveAppPath(rendererDir, request.url);
+    return file ? net.fetch(pathToFileURL(file).toString()) : new Response("Not found", { status: 404 });
+  });
   hardenSession(session.defaultSession);
   // Packaged builds have no application menu (and so no reload or developer-tools shortcuts); text
   // fields keep their own copy, paste and undo keys without it.

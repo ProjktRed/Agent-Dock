@@ -53,7 +53,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - Packaged Electron refuses debugging/inspection switches, has developer tools and the application
   menu turned off, ignores development renderer URL overrides, denies web permissions and webviews, and packages with ASAR integrity/load-path and Node
   environment/inspection fuses. Electron's RunAsNode fuse remains enabled because the engine and CLI
-  hooks use its bundled Node runtime. The fuses are flipped by `scripts/harden-electron.cjs`, which
+  hooks use its bundled Node runtime. The window loads app://agent-dock/ (only files inside the built
+  renderer folder are served), not file://, so the GrantFileProtocolExtraPrivileges fuse is off. The fuses are flipped by `scripts/harden-electron.cjs`, which
   runs as electron-builder's `afterPack` hook (before signing). electron-builder 26 also has an
   `electronFuses` configuration option; the build does not use it, so the fuse list is set in one
   script that `verify-packaged-security.mjs` checks. See
