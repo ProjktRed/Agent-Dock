@@ -193,7 +193,10 @@ All per project in Projects › Workflow, unless noted.
   definition: it starts on battery and keeps going if the PC goes on battery, a start missed while the
   PC was off or asleep runs as soon as it can (still subject to the 30 minutes), it has no time limit,
   a second start while the app it launched is open is ignored (the open app handles it), and
-  **Wake to run** (off by default) lets it wake the PC from sleep. If Task Scheduler refuses the XML,
+  On Linux the AppImage uses a systemd user timer per project instead (`agent-dock-run-<id>.timer` and
+  `.service` in `~/.config/systemd/user`, `Persistent=true`, the session's DISPLAY/WAYLAND_DISPLAY
+  captured at each launch); a timer whose service starts another existing AppImage is left alone.
+  **Wake to run** (off by default, Windows) lets it wake the PC from sleep. If Task Scheduler refuses the XML,
   the task is created the old way with default settings and a warning says so. A scheduled start that
   could not start, or (with Also when closed) was missed, goes to the saved notification channels,
   email included, and a Windows notification (with Settings › General › Notifications › **Usage

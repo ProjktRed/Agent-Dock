@@ -64,6 +64,10 @@ mode for overnight work, and check the run report in the morning.
   except email. Each missed start is reported once, and only for Also when closed schedules.
 - If Task Scheduler refuses the task's settings, Agent Dock creates it with Windows' default
   settings instead and warns you; those may skip starts on battery and never catch up.
+- **Linux (AppImage)**: Also when closed adds a systemd user timer (`~/.config/systemd/user/agent-dock-run-*`)
+  that launches the AppImage minimized. No root; it runs while you are signed in, and a start missed while
+  the PC was off runs at the next sign-in (reported as missed when it is past the grace period). Wake to
+  run is Windows only. Keep the AppImage where it is, or open the new copy once so the timers follow it.
 
 ## Spend and usage
 

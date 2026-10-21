@@ -21,6 +21,7 @@ import { countCompactions, implementationUsage, readActivity, readOrchestratorUs
 import { dueScheduledStart, lastPassedSlot, missedScheduledStart, SCHEDULE_GRACE_MINUTES } from "@shared/schedule";
 import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
 import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
+import { syncLinuxSchedules } from "./lib/linux-schedule";
 import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-request";
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
@@ -298,12 +299,22 @@ async function warnUncappedKey(p: Project) {
   if ((await openRouterKeyLimit(secret)) === "uncapped") notice({ kind: "warning", message: `The OpenRouter key in ${provider.name} has no credit limit. Set a low limit for it on openrouter.ai (Settings › Keys), so a leaked key can cost at most that.` });
 }
 
-/** Windows: keeps Task Scheduler in step with the schedules marked "also when closed" (packaged builds only). */
+/**
+ * Keeps the OS in step with the schedules marked "also when closed" (packaged builds only): Task Scheduler
+ * on Windows, systemd user timers for the AppImage on Linux (its path is in $APPIMAGE).
+ */
 async function syncWindowsSchedulesNow() {
-  if (process.platform !== "win32" || !app.isPackaged) return;
+  if (!app.isPackaged) return;
   // The projects as they are when this sync runs, not when it was asked for.
-  const problems = await syncOsSchedules(store.data.projects, process.execPath, undefined, undefined, undefined, (message) => console.warn(`[schedule] ${message}`));
-  if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
+  if (process.platform === "win32") {
+    const problems = await syncOsSchedules(store.data.projects, process.execPath, undefined, undefined, undefined, (message) => console.warn(`[schedule] ${message}`));
+    if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
+  } else if (process.platform === "linux") {
+    const wanted = store.data.projects.some((p) => p.schedule?.whenClosed);
+    if (!process.env.APPIMAGE) { if (wanted) notice({ kind: "warning", message: "Scheduled runs while Agent Dock is closed need the AppImage build on Linux." }); return; }
+    const problems = await syncLinuxSchedules(store.data.projects, process.env.APPIMAGE);
+    if (problems.length) notice({ kind: "warning", message: `systemd user timers: ${problems.join(" ")}` });
+  }
 }
 // Syncs run one at a time, so an older one never undoes a newer one. A sync that is queued but not yet
 // running already reads the latest projects, so further requests join it instead of queueing more.
