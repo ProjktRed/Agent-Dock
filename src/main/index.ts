@@ -28,7 +28,7 @@ import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-requ
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
 import { taskModeOf } from "@shared/task-mode";
-import { cleanRunSettings } from "@shared/cli-settings";
+import { cleanRunSettings, isRunSettingKind } from "@shared/cli-settings";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -905,8 +905,8 @@ function registerIpc() {
     return agents();
   });
   handle("cli:save", async (cli: CliConnection, secret?: string | null) => {
-    // Per-run settings only for Codex and Claude Code, and only listed, valid ones.
-    if (cli.kind === "codex" || cli.kind === "claude") cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
+    // Per-run settings only for Codex, Claude Code, Cline and OpenCode, and only listed, valid ones.
+    if (isRunSettingKind(cli.kind)) cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
     else delete cli.runSettings;
     const i = store.data.clis.findIndex((c) => c.id === cli.id);
     store.data.clis = i >= 0 ? store.data.clis.map((c) => (c.id === cli.id ? cli : c)) : [...store.data.clis, cli];

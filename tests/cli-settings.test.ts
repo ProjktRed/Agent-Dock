@@ -2,11 +2,11 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { OLLAMA_SETTINGS, RUN_SETTINGS, cleanRunSettings, ollamaValue } from "@shared/cli-settings";
+import { OLLAMA_SETTINGS, RUN_SETTINGS, RUN_SETTING_KINDS, cleanRunSettings, ollamaValue } from "@shared/cli-settings";
 import { configFilePath, configProblem, readConfigFile, writeConfigFile } from "../src/main/lib/cli-config-files";
 import { isLocalUrl, parseServerConfig } from "../src/main/lib/ollama-settings";
 // @ts-expect-error The engine is plain JavaScript without type declarations.
-import { RUN_SETTING_RULES, claudeRunArgs, claudeRunEnv, cleanRunSettings as engineClean, codexRunArgs, setCliRunSettings } from "../engine/src/cli-run-settings.mjs";
+import { RUN_SETTING_RULES, claudeRunArgs, claudeRunEnv, cleanRunSettings as engineClean, clineRunOptions, codexRunArgs, openCodeRunOptions, setCliRunSettings } from "../engine/src/cli-run-settings.mjs";
 
 describe("per-run CLI settings", () => {
   it("keep only listed, valid settings: nothing that loosens the sandbox, approvals or permissions gets through", () => {
@@ -17,7 +17,8 @@ describe("per-run CLI settings", () => {
   });
 
   it("are the same list in the app and the engine, which checks them again", () => {
-    for (const kind of ["codex", "claude"] as const) {
+    expect(Object.keys(RUN_SETTING_RULES).sort()).toEqual([...RUN_SETTING_KINDS].sort());
+    for (const kind of RUN_SETTING_KINDS) {
       expect(RUN_SETTINGS[kind].map((d) => d.key).sort()).toEqual(Object.keys(RUN_SETTING_RULES[kind]).sort());
       for (const d of RUN_SETTINGS[kind].filter((x) => x.type === "number")) expect([RUN_SETTING_RULES[kind][d.key].min, RUN_SETTING_RULES[kind][d.key].max]).toEqual([d.min, d.max]);
       for (const d of RUN_SETTINGS[kind].filter((x) => x.type === "choice")) expect(RUN_SETTING_RULES[kind][d.key].choices).toEqual(d.choices);
@@ -31,10 +32,23 @@ describe("per-run CLI settings", () => {
     expect(claudeRunArgs({ settings: { fallbackModel: "sonnet" }, model: "sonnet" })).toEqual([]);
     expect(claudeRunEnv({ fallbackModel: "sonnet", MAX_THINKING_TOKENS: 8000, DISABLE_TELEMETRY: true })).toEqual({ MAX_THINKING_TOKENS: "8000", DISABLE_TELEMETRY: "1" });
     expect(() => setCliRunSettings("{nope")).toThrow(/must be JSON/);
-    expect(setCliRunSettings(JSON.stringify({ codex: { model_verbosity: "high", approval_policy: "never" } }))).toEqual({ codex: { model_verbosity: "high" }, claude: {} });
+    expect(setCliRunSettings(JSON.stringify({ codex: { model_verbosity: "high", approval_policy: "never" } }))).toEqual({ codex: { model_verbosity: "high" }, claude: {}, cline: {}, opencode: {} });
     expect(codexRunArgs()).toEqual(["-c", 'model_verbosity="high"']);
     setCliRunSettings(undefined);
     expect(codexRunArgs()).toEqual([]);
+  });
+
+  it("Cline and OpenCode: their run options, or Agent Dock's defaults when nothing is set", () => {
+    expect(cleanRunSettings("cline", { retries: 3, compaction: "basic", yolo: true, autoApprove: true })).toEqual({ retries: 3, compaction: "basic" });
+    expect(cleanRunSettings("opencode", { steps: 80, variant: "high", permission: "allow", steps2: 1 })).toEqual({ steps: 80, variant: "high" });
+    expect(cleanRunSettings("opencode", { steps: 4, variant: "high --auto" })).toEqual({});
+    expect(clineRunOptions({})).toEqual({ retries: 6, compaction: "agentic" });
+    expect(clineRunOptions({ retries: 2, compaction: "off" })).toEqual({ retries: 2, compaction: "off" });
+    expect(openCodeRunOptions({})).toEqual({ steps: null, variantArgs: [] });
+    expect(openCodeRunOptions({ steps: 80, variant: "max" })).toEqual({ steps: 80, variantArgs: ["--variant", "max"] });
+    setCliRunSettings(JSON.stringify({ cline: { retries: 9 }, opencode: { variant: "low", steps: 1 } }));
+    expect([clineRunOptions(), openCodeRunOptions()]).toEqual([{ retries: 9, compaction: "agentic" }, { steps: null, variantArgs: ["--variant", "low"] }]);
+    setCliRunSettings(undefined);
   });
 
 });

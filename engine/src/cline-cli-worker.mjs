@@ -9,6 +9,7 @@ import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestri
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
 import { clineUsage, noteUsage } from "./run-budget.mjs";
+import { clineRunOptions } from "./cli-run-settings.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -425,6 +426,7 @@ export function buildClineArgs({
   guardLaunchArgs,
   prompt,
   thinking = "none",
+  runOptions = clineRunOptions(),
 }) {
   const args = [
     clineJs,
@@ -432,9 +434,9 @@ export function buildClineArgs({
     "--auto-approve",
     "true",
     "--compaction",
-    "agentic",
+    runOptions.compaction,
     "--retries",
-    "6",
+    String(runOptions.retries),
     "--thinking",
     thinking,
     "--provider",

@@ -1,12 +1,17 @@
-// CLI settings changed from the app (0.38). Codex CLI and Claude Code only: Cline, OpenCode and the
-// OpenAI-compatible providers run through kadono's code and are left out for now.
+// CLI settings changed from the app (0.38; Cline and OpenCode 0.38.1).
 //
-// Per-run settings are passed to every Assessment, QA, Resolver, Elevation and implementation run (in
-// implementation they go before the scope guard's flags, so the guard wins; kadono agreed) and never loosen what
-// Agent Dock sets: no sandbox, approval, permission, hook, network or MCP setting is on these lists. The
-// engine checks them again against its own copy (engine/src/cli-run-settings.mjs).
+// Per-run settings are passed to every run of that CLI: Codex and Claude Code for Assessment, QA, Resolver,
+// Elevation and implementation (in implementation before the scope guard's flags, so the guard wins), Cline
+// and OpenCode for implementation. None loosens what Agent Dock sets: no sandbox, approval, permission, hook,
+// network or MCP setting is on these lists. The engine checks them again against its own copy
+// (engine/src/cli-run-settings.mjs). Cline and OpenCode run with their own config isolated, so they have
+// run settings only, no config file editor.
 
-export type RunSettingKind = "codex" | "claude";
+export type RunSettingKind = "codex" | "claude" | "cline" | "opencode";
+export const RUN_SETTING_KINDS: RunSettingKind[] = ["codex", "claude", "cline", "opencode"];
+export const isRunSettingKind = (kind: string): kind is RunSettingKind => (RUN_SETTING_KINDS as string[]).includes(kind);
+/** The CLIs whose own config file the app can edit. */
+export type ConfigFileKind = "codex" | "claude";
 export type RunSettingValue = string | number | boolean;
 export type RunSettings = Record<string, RunSettingValue>;
 
@@ -36,6 +41,14 @@ export const RUN_SETTINGS: Record<RunSettingKind, RunSettingDef[]> = {
     { key: "BASH_MAX_TIMEOUT_MS", label: "Longest command timeout (ms)", type: "number", min: 10_000, max: 3_600_000, help: "The most Claude Code may ask for one command (BASH_MAX_TIMEOUT_MS)." },
     { key: "DISABLE_TELEMETRY", label: "No telemetry", type: "bool", help: "Claude Code sends no usage telemetry (DISABLE_TELEMETRY)." },
     { key: "DISABLE_ERROR_REPORTING", label: "No error reports", type: "bool", help: "Claude Code sends no error reports (DISABLE_ERROR_REPORTING)." },
+  ],
+  cline: [
+    { key: "retries", label: "Retries", type: "number", min: 1, max: 20, help: "How many mistakes in a row Cline may make before it stops (--retries). Agent Dock's default is 6." },
+    { key: "compaction", label: "Context compaction", type: "choice", choices: ["agentic", "basic", "off"], help: "How Cline shortens a long conversation (--compaction). Agent Dock's default is agentic." },
+  ],
+  opencode: [
+    { key: "steps", label: "Max steps", type: "number", min: 5, max: 200, help: "The most model turns OpenCode takes for one task. Agent Dock's default is 40." },
+    { key: "variant", label: "Reasoning variant", type: "choice", choices: ["minimal", "low", "medium", "high", "max"], help: "The model's reasoning effort, on providers that offer it (--variant)." },
   ],
 };
 

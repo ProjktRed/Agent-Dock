@@ -26,7 +26,7 @@ import type {
   WorkflowRole,
 } from "./types";
 import type { EstimateRecord } from "./estimate";
-import type { ConfigFile, OllamaSettingsState, RunSettingKind } from "./cli-settings";
+import type { ConfigFile, ConfigFileKind, OllamaSettingsState } from "./cli-settings";
 
 export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve" | "retry-qa";
 
@@ -87,9 +87,9 @@ export interface DesktopApi {
   deleteAgent(id: string): Promise<Agent[]>;
   saveCli(cli: CliConnection, secret?: string | null): Promise<CliConnection[]>;
   /** Codex's config.toml or Claude Code's user settings.json (CLIs › Settings). */
-  cliConfigFile(kind: RunSettingKind): Promise<ConfigFile>;
+  cliConfigFile(kind: ConfigFileKind): Promise<ConfigFile>;
   /** Checked, refused if the file changed since `mtimeMs`, previous version kept as .agent-dock.bak. */
-  saveCliConfigFile(kind: RunSettingKind, text: string, mtimeMs: number | null): Promise<ConfigFile>;
+  saveCliConfigFile(kind: ConfigFileKind, text: string, mtimeMs: number | null): Promise<ConfigFile>;
   ollamaSettings(): Promise<OllamaSettingsState>;
   /** Sets (value) or clears (null) Ollama's settings in your user environment (Windows). */
   saveOllamaSettings(changes: Record<string, string | null>): Promise<{ state: OllamaSettingsState; clis: CliConnection[] }>;

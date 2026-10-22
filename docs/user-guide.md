@@ -34,6 +34,10 @@ CLIs › select a connection › **Settings**:
   telemetry and error reports. Settings that could loosen what Agent Dock allows (sandbox, approvals,
   permissions, hooks, network, MCP) are not offered. When Codex or Claude Code implements a task, the task
   scope guard's own flags come after them, so the guard always has the last word.
+- **Cline and OpenCode: run settings.** Used when they implement a task: for Cline the retries (mistakes
+  in a row before it stops) and how it compacts a long conversation; for OpenCode the most steps per
+  task and the model's reasoning variant. Agent Dock runs both with their own config kept apart, so
+  there is no config file of theirs to edit here.
 - **Codex and Claude Code: their own config file** (`~/.codex/config.toml`, `~/.claude/settings.json`,
   or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). This changes the CLI everywhere, also outside Agent
   Dock. A save is checked first (TOML, or a JSON object), is refused if the file changed since you

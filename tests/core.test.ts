@@ -578,6 +578,13 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(Object.keys(passed).every((k) => k === "codex" || k === "claude")).toBe(true);
     expect(passed[used === "claude" ? "claude" : "codex"]).toEqual(used === "claude" ? { MAX_THINKING_TOKENS: 8000 } : { model_verbosity: "low" });
     expect(JSON.stringify(passed)).not.toMatch(/sandbox_mode|permissionMode/);
+    // A Cline or OpenCode implementation gets its own connection's settings; one not used gets nothing.
+    const implCli = (clis().find((c) => c.id === agents().find((a) => a.role === "implementation")!.cliId))!;
+    expect(["cline", "opencode"]).toContain(implCli.kind);
+    const local = clis().map((c) => (c.kind === "cline" ? { ...c, runSettings: { retries: 3, yolo: true } } : c.kind === "opencode" ? { ...c, runSettings: { steps: 80 } } : c));
+    const localPassed = JSON.parse(flag(buildEngineArgs({ project: project(), agents: agents(), clis: local, settings: settings() }).args, "--cli-settings")!);
+    expect(localPassed[implCli.kind]).toEqual(implCli.kind === "cline" ? { retries: 3 } : { steps: 80 });
+    expect(localPassed[implCli.kind === "cline" ? "opencode" : "cline"]).toBeUndefined();
   });
 
   it("passes parallel tasks for cloud and local Implementation agents, in Unattended mode too", () => {

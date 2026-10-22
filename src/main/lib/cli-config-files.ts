@@ -6,11 +6,9 @@ import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/prom
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
-import type { ConfigFile, RunSettingKind } from "@shared/cli-settings";
+import type { ConfigFile, ConfigFileKind } from "@shared/cli-settings";
 
-export type { ConfigFile };
-
-export type ConfigFileKind = RunSettingKind;
+export type { ConfigFile, ConfigFileKind };
 
 const MAX_BYTES = 1_000_000;
 

@@ -6,6 +6,7 @@ import {atomicWriteJson} from './dashboard-state.mjs';
 import {adapter,PLUGIN_ID,prepareOpenCodeGuard,readGuardOutcome} from './guard/adapters/opencode.mjs';
 import {stopMessage} from './guard/reasons.mjs';
 import {noteUsage,openCodeUsage} from './run-budget.mjs';
+import {openCodeRunOptions} from './cli-run-settings.mjs';
 
 const FAIL_CLOSED='OpenCode guard plugin did not initialize; guarded run refused';
 const redact=(text,env,keyEnv)=>keyEnv&&env[keyEnv]?String(text).replaceAll(env[keyEnv],'[REDACTED]'):String(text);
@@ -122,6 +123,11 @@ export async function preflightOpenCode({command='opencode',workspace,env=proces
  return {version:match[1]};
 }
 
+/** The guarded run: the agent-dock agent, with the variant from CLIs › OpenCode › Settings when one is set. */
+export function openCodeRunArgs(guard,prompt,runOptions=openCodeRunOptions()){
+ return ['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}`,...runOptions.variantArgs,'--agent','agent-dock','--auto',prompt];
+}
+
 export async function launchOpenCode({command='opencode',opencodeCommand,workspace,providerDescriptor,prompt,timeoutSeconds=1800,guard,onStart,onEvent,env=process.env,spawnProcess=spawn}){
  if(!guard?.policyPath||!guard?.handshake)throw Error(FAIL_CLOSED+' (guard configuration missing)');
  command=opencodeCommand??command;
@@ -131,7 +137,7 @@ export async function launchOpenCode({command='opencode',opencodeCommand,workspa
  const policy=await readGuardOutcome(guard.policyPath);
  policy.runtimeReady=false;policy.runtimeHandshake=null;
  await atomicWriteJson(guard.policyPath,policy);
- const result=await collectOpenCodeProcess(command,['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}`,'--agent','agent-dock','--auto',prompt],{cwd:workspace,env:childEnv,spawnProcess,timeoutMs:timeoutSeconds*1000,onStart,onEvent,apiKeyEnv:providerDescriptor.apiKeyEnv});
+ const result=await collectOpenCodeProcess(command,openCodeRunArgs(guard,prompt),{cwd:workspace,env:childEnv,spawnProcess,timeoutMs:timeoutSeconds*1000,onStart,onEvent,apiKeyEnv:providerDescriptor.apiKeyEnv});
  noteUsage(openCodeUsage(result.events));
  const outcome=await readGuardOutcome(guard.policyPath);
  if(!outcome.runtimeReady||outcome.runtimeHandshake!==guard.handshake)throw Error(FAIL_CLOSED+' (run handshake missing)');
@@ -177,7 +183,7 @@ export class OpenCodeCliWorker {
   const identity={requestedProvider:provider.id,provider:provider.id,baseUrl:provider.baseUrl,model:this.options.model};
   try{await provider.preflight?.();}catch(error){await onEvent({type:'cline-provider-validation-failed',...identity,error:error.message,fallbackAttempted:false});throw error;}
   await onEvent({type:'cline-provider-ready',...identity});
-  const guard=await prepareOpenCodeGuard({stateDir:this.stateDir,workspace:this.workspace,providerDescriptor:provider,model:this.options.model,steps:this.steps,task:hooks.task});
+  const guard=await prepareOpenCodeGuard({stateDir:this.stateDir,workspace:this.workspace,providerDescriptor:provider,model:this.options.model,steps:openCodeRunOptions().steps??this.steps,task:hooks.task});
   // OpenCode always uses the plugin: --tool-guard false cannot bypass its fail-closed boundary.
   return this.launch({...this.options,...hooks,guard,prompt:prompt+guard.instructions});
  }

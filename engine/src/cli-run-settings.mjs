@@ -1,5 +1,6 @@
-// Per-run CLI settings from the app (0.38, --cli-settings {"codex":{…},"claude":{…}}), for Codex CLI
-// and Claude Code as Assessment, QA, Resolver and Elevation. Only the settings below pass, checked again
+// Per-run CLI settings from the app (--cli-settings {"codex":{…},"claude":{…},"cline":{…},"opencode":{…}}):
+// Codex CLI and Claude Code for every run (0.38), Cline and OpenCode for implementation (0.38.1). Only the
+// settings below pass, checked again
 // here: none of them is a sandbox, approval, permission, hook, network or MCP setting, so they never
 // loosen what the engine sets. Same lists as the app's src/shared/cli-settings.ts.
 
@@ -22,9 +23,20 @@ export const RUN_SETTING_RULES = {
     DISABLE_TELEMETRY: { bool: true },
     DISABLE_ERROR_REPORTING: { bool: true },
   },
+  cline: {
+    retries: { min: 1, max: 20 },
+    compaction: { choices: ["agentic", "basic", "off"] },
+  },
+  opencode: {
+    steps: { min: 5, max: 200 },
+    variant: { choices: ["minimal", "low", "medium", "high", "max"] },
+  },
 };
 
-let SETTINGS = { codex: {}, claude: {} };
+const KINDS = Object.keys(RUN_SETTING_RULES);
+const empty = () => Object.fromEntries(KINDS.map((kind) => [kind, {}]));
+
+let SETTINGS = empty();
 
 /** The listed, valid settings of one CLI; anything else is dropped. */
 export function cleanRunSettings(kind, raw) {
@@ -43,10 +55,10 @@ export function cleanRunSettings(kind, raw) {
 
 /** Reads --cli-settings once at start. A value that is not JSON stops the engine instead of running without it. */
 export function setCliRunSettings(text) {
-  if (text === undefined) { SETTINGS = { codex: {}, claude: {} }; return SETTINGS; }
+  if (text === undefined) { SETTINGS = empty(); return SETTINGS; }
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error("--cli-settings must be JSON"); }
-  SETTINGS = { codex: cleanRunSettings("codex", parsed?.codex), claude: cleanRunSettings("claude", parsed?.claude) };
+  SETTINGS = Object.fromEntries(KINDS.map((kind) => [kind, cleanRunSettings(kind, parsed?.[kind])]));
   return SETTINGS;
 }
 
@@ -63,4 +75,14 @@ export function claudeRunArgs({ model = null, settings = SETTINGS.claude } = {})
 /** Claude Code: every other setting is an environment variable of the run. */
 export function claudeRunEnv(settings = SETTINGS.claude) {
   return Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "fallbackModel").map(([key, value]) => [key, value === true ? "1" : String(value)]));
+}
+
+/** Cline: the retries and compaction mode, or Agent Dock's defaults. */
+export function clineRunOptions(settings = SETTINGS.cline) {
+  return { retries: settings.retries ?? 6, compaction: settings.compaction ?? "agentic" };
+}
+
+/** OpenCode: the agent's step limit (null keeps the worker's own) and the model variant flag. */
+export function openCodeRunOptions(settings = SETTINGS.opencode) {
+  return { steps: settings.steps ?? null, variantArgs: settings.variant ? ["--variant", settings.variant] : [] };
 }

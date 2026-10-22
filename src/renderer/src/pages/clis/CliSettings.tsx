@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CliConnection } from "@shared/types";
-import { OLLAMA_SETTINGS, RUN_SETTINGS, cleanRunSettings, ollamaValue, type ConfigFile, type OllamaSettingsState, type RunSettingKind, type RunSettings } from "@shared/cli-settings";
+import { OLLAMA_SETTINGS, RUN_SETTINGS, cleanRunSettings, isRunSettingKind, ollamaValue, type ConfigFile, type ConfigFileKind, type OllamaSettingsState, type RunSettingKind, type RunSettings } from "@shared/cli-settings";
 import { cleanError, useApp } from "../../store";
 import { Icon } from "../../components/Icon";
 import { Spinner, Toggle } from "../../components/ui";
@@ -24,7 +24,7 @@ function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKi
   return (
     <div className="well pad stack" style={{ gap: 12 }}>
       <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Run settings</b><span className="chip">{Object.keys(saved).length ? `${Object.keys(saved).length} set` : "CLI defaults"}</span></div>
-      <span className="hint">Used for every run of {cli.name}: Assessment, QA, Resolver, Elevation and implementation. Empty keeps the CLI's own default. Settings that could loosen what Agent Dock allows (sandbox, approvals, permissions, hooks, network, MCP) are not offered, and the task scope guard always has the last word.</span>
+      <span className="hint">{kind === "cline" || kind === "opencode" ? `Used when ${cli.name} implements a task.` : `Used for every run of ${cli.name}: Assessment, QA, Resolver, Elevation and implementation.`} Empty keeps the default. Settings that could loosen what Agent Dock allows (sandbox, approvals, permissions, hooks, network, MCP) are not offered, and the task scope guard always has the last word.</span>
       <div className="grid-f">
         {RUN_SETTINGS[kind].map((d) => (
           <label className="field" key={d.key} title={d.help}>
@@ -51,7 +51,7 @@ function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKi
 }
 
 /** The CLI's own config file: changes the CLI everywhere, also outside Agent Dock. */
-function ConfigFileEditor({ kind, name }: { kind: RunSettingKind; name: string }) {
+function ConfigFileEditor({ kind, name }: { kind: ConfigFileKind; name: string }) {
   const { toast } = useApp();
   const [file, setFile] = useState<ConfigFile | null>(null);
   const [text, setText] = useState("");
@@ -174,13 +174,14 @@ function OllamaSettingsForm({ cli }: { cli: CliConnection }) {
   );
 }
 
-/** CLIs › Settings: Codex CLI and Claude Code (run settings and their config file) and Ollama's server. */
+/** CLIs › Settings: run settings (Codex, Claude Code, Cline, OpenCode), Codex's and Claude Code's config file, and Ollama's server. */
 export function CliSettings({ cli }: { cli: CliConnection }) {
-  if (cli.kind === "codex" || cli.kind === "claude") {
+  if (isRunSettingKind(cli.kind)) {
     return (
       <div className="stack fade-in" style={{ gap: 14 }}>
         <RunSettingsForm key={cli.id + JSON.stringify(cli.runSettings ?? {})} cli={cli} kind={cli.kind} />
-        <ConfigFileEditor kind={cli.kind} name={cli.name} />
+        {/* Cline and OpenCode run with their own config isolated: there is no file of theirs to edit. */}
+        {(cli.kind === "codex" || cli.kind === "claude") && <ConfigFileEditor kind={cli.kind} name={cli.name} />}
       </div>
     );
   }
@@ -188,4 +189,4 @@ export function CliSettings({ cli }: { cli: CliConnection }) {
   return null;
 }
 
-export const hasCliSettings = (cli: CliConnection) => cli.kind === "codex" || cli.kind === "claude" || cli.kind === "ollama";
+export const hasCliSettings = (cli: CliConnection) => isRunSettingKind(cli.kind) || cli.kind === "ollama";
