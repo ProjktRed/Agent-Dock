@@ -46,7 +46,8 @@ describe("parallel worktree cleanup helpers", () => {
   });
 });
 
-describe("cleanParallelWorktrees", () => {
+// Real git worktrees (and PowerShell for the short name): a busy Windows CI runner can take over 5 s.
+describe("cleanParallelWorktrees", { timeout: 30_000 }, () => {
   it("finds the worktrees when the project path uses an 8.3 short name", async () => {
     // Windows CI temp folders are short names (C:UsersRUNNER~1); git lists the long ones.
     if (process.platform !== "win32") return;
