@@ -1,7 +1,8 @@
 // CLI settings changed from the app (0.38). Codex CLI and Claude Code only: Cline, OpenCode and the
 // OpenAI-compatible providers run through kadono's code and are left out for now.
 //
-// Per-run settings are passed to every Assessment, QA, Resolver and Elevation run and never loosen what
+// Per-run settings are passed to every Assessment, QA, Resolver, Elevation and implementation run (in
+// implementation they go before the scope guard's flags, so the guard wins; kadono agreed) and never loosen what
 // Agent Dock sets: no sandbox, approval, permission, hook, network or MCP setting is on these lists. The
 // engine checks them again against its own copy (engine/src/cli-run-settings.mjs).
 

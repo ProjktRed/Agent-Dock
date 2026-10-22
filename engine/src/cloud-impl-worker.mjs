@@ -13,6 +13,7 @@ import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
+import { claudeRunArgs, claudeRunEnv, codexRunArgs } from "./cli-run-settings.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // A usage limit ends the attempt cleanly (the CLI has exited, its partial changes are on disk): the loop
@@ -52,13 +53,15 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
       ...(fast ? ["-c", `service_tier="priority"`] : []),
+      // The app's run settings come before the scope hook, so the guard's -c entries win if a key ever overlaps.
+      ...codexRunArgs(),
       ...hookArgs,
       ...codexSkillArgs({workspace, env}),
       // Same sandbox as Codex QA (workspace writes, approvals reviewed automatically); the scope hook limits changes to the task.
       "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
-  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...hookArgs, ...launchArgs];
+  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...claudeRunArgs({ model }), ...hookArgs, ...launchArgs];
 }
 
 function killTree(child) {
@@ -135,7 +138,7 @@ export class CloudImplementationWorker {
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {
       const launch = launchSpec(this.command, args);
-      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...this.env, ...claudeRunEnv() } : this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
       const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += chunk; });
       child.stderr.on("data", (chunk) => { stderr += chunk; });

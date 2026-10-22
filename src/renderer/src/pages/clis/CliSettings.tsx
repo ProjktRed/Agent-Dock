@@ -5,7 +5,7 @@ import { cleanError, useApp } from "../../store";
 import { Icon } from "../../components/Icon";
 import { Spinner, Toggle } from "../../components/ui";
 
-/** Settings passed to every Assessment, QA, Resolver and Elevation run of this CLI (none loosens the sandbox). */
+/** Settings passed to every run of this CLI, implementation included (none loosens the sandbox). */
 function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKind }) {
   const { setClis, toast } = useApp();
   const saved = cleanRunSettings(kind, cli.runSettings);
@@ -24,7 +24,7 @@ function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKi
   return (
     <div className="well pad stack" style={{ gap: 12 }}>
       <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Run settings</b><span className="chip">{Object.keys(saved).length ? `${Object.keys(saved).length} set` : "CLI defaults"}</span></div>
-      <span className="hint">Used for every Assessment, QA, Resolver and Elevation run of {cli.name}. Empty keeps the CLI's own default. Settings that could loosen what Agent Dock allows (sandbox, approvals, permissions, hooks, network, MCP) are not offered. Not yet used when {cli.name} implements tasks.</span>
+      <span className="hint">Used for every run of {cli.name}: Assessment, QA, Resolver, Elevation and implementation. Empty keeps the CLI's own default. Settings that could loosen what Agent Dock allows (sandbox, approvals, permissions, hooks, network, MCP) are not offered, and the task scope guard always has the last word.</span>
       <div className="grid-f">
         {RUN_SETTINGS[kind].map((d) => (
           <label className="field" key={d.key} title={d.help}>

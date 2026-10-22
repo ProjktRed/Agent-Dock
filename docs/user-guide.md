@@ -28,12 +28,12 @@ When something needs you (a manual review, a blocked case, a usage limit), the p
 
 CLIs › select a connection › **Settings**:
 
-- **Codex and Claude Code: run settings.** Used for every Assessment, QA, Resolver and Elevation run:
+- **Codex and Claude Code: run settings.** Used for every Assessment, QA, Resolver, Elevation and implementation run:
   for Codex the reasoning summary, verbosity, AGENTS.md read limit, tool output limit and when to compact;
   for Claude Code a fallback model, output and thinking tokens, command timeouts, and turning off
   telemetry and error reports. Settings that could loosen what Agent Dock allows (sandbox, approvals,
-  permissions, hooks, network, MCP) are not offered. They don't apply yet when Codex or Claude Code
-  implements a task.
+  permissions, hooks, network, MCP) are not offered. When Codex or Claude Code implements a task, the task
+  scope guard's own flags come after them, so the guard always has the last word.
 - **Codex and Claude Code: their own config file** (`~/.codex/config.toml`, `~/.claude/settings.json`,
   or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). This changes the CLI everywhere, also outside Agent
   Dock. A save is checked first (TOML, or a JSON object), is refused if the file changed since you

@@ -10,6 +10,7 @@ import { buildRolePrompt, parseRoleResult, parseRoles, roleGuidanceText } from '
 import { DEFAULT_TUNING, TUNING, parseTuning, taskSizingText, useTuning } from '../src/engine-tuning.mjs';
 import { CloudImplementationWorker, buildImplementationArgs, claudeImplementationTools } from '../src/cloud-impl-worker.mjs';
 import { parseImplementation } from '../src/loop-options.mjs';
+import { setCliRunSettings } from '../src/cli-run-settings.mjs';
 
 const task = { id:'W', name:'Roles', prompt:'Task skill: implement\nAdd x', allowedPaths:['src/x.js'], qaCommand:'npm test' };
 const packet = ({attempt,workerResult}) => ({task,baselineSha:'base',attempt,diff:{text:'diff '+attempt,bytes:6},changedFiles:['src/x.js'],clineSummary:{exitCode:workerResult.exitCode,text:'changed x'},qaEvidence:{command:{command:'npm test',exitCode:0},categories:{tests:'PASS',scopeCheck:'PASS'}}});
@@ -169,6 +170,33 @@ test('cloud implementation: Claude tools are scoped to the task with the tool gu
   assert.ok(!codex.includes('--dangerously-bypass-approvals-and-sandbox'));
   assert.deepEqual(parseImplementation({}), { cli:'cline', model:null, effort:null, fast:false });
   assert.throws(() => parseImplementation({ 'implementation-cli':'ollama' }), /must be one of/);
+});
+
+test('cloud implementation gets the app run settings before the guard flags, so the guard wins', async t => {
+  t.after(() => setCliRunSettings(undefined));
+  setCliRunSettings(JSON.stringify({ codex:{ model_verbosity:'low' }, claude:{ fallbackModel:'haiku', DISABLE_TELEMETRY:true } }));
+  const codex = buildImplementationArgs({ cli:'codex', model:'m', workspace:'/w', outputFile:'/o', task, toolGuard:true, hookArgs:['-c', 'hooks.guard=1'] });
+  assert.ok(codex.includes('model_verbosity="low"'));
+  assert.ok(codex.indexOf('model_verbosity="low"') < codex.indexOf('hooks.guard=1'));
+  const claude = buildImplementationArgs({ cli:'claude', model:'sonnet', workspace:'/w', outputFile:'/o', task, toolGuard:true, hookArgs:['--settings', 'guard.json'] });
+  const fallback = claude.indexOf('--fallback-model');
+  assert.equal(claude[fallback + 1], 'haiku');
+  assert.ok(fallback < claude.indexOf('guard.json') && fallback < claude.indexOf('--allowedTools'), 'guard flags come last');
+  assert.ok(!buildImplementationArgs({ cli:'claude', model:'haiku', workspace:'/w', outputFile:'/o', task, toolGuard:true }).includes('--fallback-model'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'cloud-impl-env-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let env = null;
+  const spawnProcess = (command, args, options) => {
+    env = options.env;
+    const child = new EventEmitter();
+    child.pid = 4243; child.exitCode = null;
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { end: () => setImmediate(() => { child.stdout.emit('data', JSON.stringify({ type:'result', is_error:false, result:'done' }) + '\n'); child.exitCode = 0; child.emit('close', 0); }) });
+    return child;
+  };
+  const worker = new CloudImplementationWorker({ cli:'claude', stateDir:root, workspace:root, command:'claude', model:'sonnet', spawnProcess });
+  await worker.withExclusive(() => worker.run('Add x', { task }));
+  assert.equal(env?.DISABLE_TELEMETRY, '1');
 });
 
 test('cloud implementation worker returns the final message as its summary and never runs twice at once', async t => {
