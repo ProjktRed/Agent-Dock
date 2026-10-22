@@ -11,6 +11,7 @@ import { DashboardState, atomicWriteJson, flushActionLog } from "./dashboard-sta
 import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
+import { setCliRunSettings } from "./cli-run-settings.mjs";
 import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
@@ -30,6 +31,7 @@ installTopLevelDiagnostics();
 
 const exec = promisify(execFile);
 const options = parseLoopOptions(process.argv.slice(2));
+setCliRunSettings(options["cli-settings"]);
 if (!options.workspace || !options.objective) {
   console.error('Usage: npm start -- --workspace <repo> --objective "<bounded project objective>" [--task task.json]');
   process.exit(64);

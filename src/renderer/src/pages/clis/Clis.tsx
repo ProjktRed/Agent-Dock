@@ -7,8 +7,9 @@ import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../comp
 import { AddCliDialog } from "./AddCliDialog";
 import { effortLabel, useModelCatalog } from "../../lib/models";
 import { CAPPED_KEY_HINT } from "@shared/key-limit";
+import { CliSettings, hasCliSettings } from "./CliSettings";
 
-type DetailTab = "connection" | "models" | "caps" | "env" | "logs";
+type DetailTab = "connection" | "models" | "settings" | "caps" | "env" | "logs";
 
 function ConnectionForm({ cli }: { cli: CliConnection }) {
   const { setClis, toast, healths } = useApp();
@@ -145,7 +146,7 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
             <input className="input tnum" style={{ width: 90 }} inputMode="numeric" value={atOnce} onChange={(e) => setAtOnce(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} aria-label="Requests Ollama answers at once" />
             <button className="btn sm" disabled={!Number(atOnce) || Number(atOnce) === (cli.parallelRequests ?? 1)} onClick={async () => setClis(await window.api.saveCli({ ...cli, parallelRequests: Math.min(16, Math.max(1, Number(atOnce))) }))}>Save</button>
           </div>
-          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL yourself.</span>
+          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL (Settings tab sets both).</span>
         </div>
       )}
       <div className="row" style={{ gap: 10 }}>
@@ -268,14 +269,16 @@ export function ClisPage() {
             {h && h.state !== "connected" && (
               <div className="banner errb" role="alert"><Icon name="warn" className="err" /><div className="grow"><div style={{ fontWeight: 600 }}>{connectionMeta[h.state].label}</div><div className="sub">{h.detail}</div></div></div>
             )}
-            <Tabs<DetailTab> label="Connection sections" small value={tab} onChange={setTab} options={[
+            <Tabs<DetailTab> label="Connection sections" small value={tab === "settings" && !hasCliSettings(sel) ? "connection" : tab} onChange={setTab} options={[
               { value: "connection", label: "Connection" },
               { value: "models", label: "Models" },
+              ...(hasCliSettings(sel) ? [{ value: "settings" as const, label: "Settings" }] : []),
               { value: "caps", label: "Capabilities" },
               { value: "env", label: "Environment" },
               { value: "logs", label: "Logs" },
             ]} />
-            {tab === "connection" && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
+            {(tab === "connection" || (tab === "settings" && !hasCliSettings(sel))) && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
+            {tab === "settings" && hasCliSettings(sel) && <CliSettings key={sel.id} cli={sel} />}
             {tab === "models" && (sel.kind === "llamacpp" || sel.kind === "ollama") && <LocalModels key={sel.id} cli={sel} />}
             {tab === "models" && (sel.kind === "codex" || sel.kind === "claude") && <CloudModels kind={sel.kind} name={sel.name} />}
             {tab === "models" && sel.kind === "cline" && (

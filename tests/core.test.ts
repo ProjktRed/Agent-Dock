@@ -569,6 +569,17 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(args).not.toContain("--task-max-files");
   });
 
+  it("passes per-run CLI settings for the CLIs a run uses, checked", () => {
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--cli-settings");
+    const withSettings = clis().map((c) => (c.kind === "codex" || c.kind === "claude" ? { ...c, runSettings: c.kind === "codex" ? { model_verbosity: "low", sandbox_mode: "danger-full-access" } : { MAX_THINKING_TOKENS: 8000, permissionMode: "bypassPermissions" } } : c));
+    const args = buildEngineArgs({ project: project(), agents: agents(), clis: withSettings, settings: settings() }).args;
+    const passed = JSON.parse(args[args.indexOf("--cli-settings") + 1]);
+    const used = args[args.indexOf("--orchestrator") + 1];
+    expect(Object.keys(passed).every((k) => k === "codex" || k === "claude")).toBe(true);
+    expect(passed[used === "claude" ? "claude" : "codex"]).toEqual(used === "claude" ? { MAX_THINKING_TOKENS: 8000 } : { model_verbosity: "low" });
+    expect(JSON.stringify(passed)).not.toMatch(/sandbox_mode|permissionMode/);
+  });
+
   it("passes parallel tasks for cloud and local Implementation agents, in Unattended mode too", () => {
     const s = settings();
     s.workflow.parallelTasks = 3;

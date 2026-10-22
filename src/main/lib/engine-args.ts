@@ -4,6 +4,7 @@ import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { SECOND_OPINION_ROLE_ID } from "@shared/workflow-templates";
 import { maxLimitsOf, taskModeOf } from "@shared/task-mode";
+import { cleanRunSettings } from "@shared/cli-settings";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -347,6 +348,9 @@ ${project.objective}` : project.objective;
   for (const [kind, conn] of usedConnections) {
     if (conn?.location && conn.location !== kind) args.push(kind === "claude" ? "--claude-command" : "--codex-exe", conn.location);
   }
+  // Per-run settings of those CLIs (CLIs › Settings); the engine checks them against its own list again.
+  const runSettings = Object.fromEntries([...usedConnections].map(([kind, conn]) => [kind, cleanRunSettings(kind, conn.runSettings)]).filter(([, s]) => Object.keys(s).length));
+  if (Object.keys(runSettings).length) args.push("--cli-settings", JSON.stringify(runSettings));
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
   const retentionDays = input.settings.general.retentionDays ?? DEFAULT_SETTINGS.general.retentionDays ?? 30;

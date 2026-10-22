@@ -10,6 +10,7 @@ import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
+import { claudeRunArgs, claudeRunEnv } from "./cli-run-settings.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -77,6 +78,8 @@ export class ClaudeWorker extends CodexWorker {
     const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
+      // Per-run settings from CLIs › Claude Code › Settings (cli-run-settings.mjs); the rest go in the environment.
+      ...claudeRunArgs({ model }),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
       ...protectionArgs,
       "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
@@ -87,7 +90,7 @@ export class ClaudeWorker extends CodexWorker {
     try {
       await new Promise((resolve, reject) => {
         const launch = launchSpec(this.command, args);
-        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: { ...this.env, ...claudeRunEnv() }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false, closed = false, closeCode = 1, registrationError = null, finished = false, timedOut = false;
         const timer = setTimeout(() => { timedOut = true; child.kill(); }, this.timeoutMs);
         child.stdout.on("data", (chunk) => { stdout += chunk; });

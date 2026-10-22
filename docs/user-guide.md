@@ -24,6 +24,29 @@ works](how-it-works.md) has the details behind each number and setting.
 When something needs you (a manual review, a blocked case, a usage limit), the project shows
 **Resolve attention** with the reason and the choices.
 
+## CLI settings
+
+CLIs › select a connection › **Settings**:
+
+- **Codex and Claude Code: run settings.** Used for every Assessment, QA, Resolver and Elevation run:
+  for Codex the reasoning summary, verbosity, AGENTS.md read limit, tool output limit and when to compact;
+  for Claude Code a fallback model, output and thinking tokens, command timeouts, and turning off
+  telemetry and error reports. Settings that could loosen what Agent Dock allows (sandbox, approvals,
+  permissions, hooks, network, MCP) are not offered. They don't apply yet when Codex or Claude Code
+  implements a task.
+- **Codex and Claude Code: their own config file** (`~/.codex/config.toml`, `~/.claude/settings.json`,
+  or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). This changes the CLI everywhere, also outside Agent
+  Dock. A save is checked first (TOML, or a JSON object), is refused if the file changed since you
+  opened it, and keeps the previous version next to it as `.agent-dock.bak`.
+- **Ollama: its server settings** (requests at once, default context length, KV cache type, flash
+  attention, keep-alive, models loaded at once, models folder). On Windows they're saved in your user
+  environment; quit Ollama from its tray icon and open it again to use them. Each one shows what the
+  running Ollama actually uses (from its `server.log`), so you can see when Ollama's own settings
+  window overrides one. Requests at once also sets the connection's limit for parallel tasks.
+
+Cline, OpenCode, the OpenAI-compatible providers and llama.cpp's server settings are not on this tab
+yet.
+
 ## Choosing a task size
 
 Settings › Workflow rules › **Task size**, or per project in Projects › Workflow:

@@ -11,6 +11,7 @@ import { launchSpec } from "./cmd-line.mjs";
 import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
+import { codexRunArgs } from "./cli-run-settings.mjs";
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -259,6 +260,8 @@ export class CodexWorker {
       ...(reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
       // Codex's Fast speed tier (model/list serviceTiers id "priority"); omitted keeps the user's config.
       ...(fast ? ["-c", `service_tier="priority"`] : []),
+      // Per-run settings from CLIs › Codex › Settings (cli-run-settings.mjs: none loosens the sandbox).
+      ...codexRunArgs(),
     ];
     const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,

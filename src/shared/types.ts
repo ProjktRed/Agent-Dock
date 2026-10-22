@@ -137,6 +137,8 @@ export interface CliConnection {
   modelsDir?: string | null;
   /** Ollama only: requests it answers at once (its OLLAMA_NUM_PARALLEL), the most parallel tasks it gets. Default 1. */
   parallelRequests?: number;
+  /** Codex CLI / Claude Code only: per-run settings (CLIs › Settings), checked against src/shared/cli-settings.ts. */
+  runSettings?: Record<string, string | number | boolean>;
   /** Local providers: the model list last collected from the provider itself (Models tab › Refresh). */
   collected?: CollectedModels | null;
 }

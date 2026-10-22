@@ -28,6 +28,7 @@ import { ensureRunBranch, openPullRequest, pushRunBranch } from "./lib/pull-requ
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
 import { taskModeOf } from "@shared/task-mode";
+import { cleanRunSettings } from "@shared/cli-settings";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -48,6 +49,8 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
+import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
+import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
 
 try {
   assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
@@ -902,11 +905,34 @@ function registerIpc() {
     return agents();
   });
   handle("cli:save", async (cli: CliConnection, secret?: string | null) => {
+    // Per-run settings only for Codex and Claude Code, and only listed, valid ones.
+    if (cli.kind === "codex" || cli.kind === "claude") cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
+    else delete cli.runSettings;
     const i = store.data.clis.findIndex((c) => c.id === cli.id);
     store.data.clis = i >= 0 ? store.data.clis.map((c) => (c.id === cli.id ? cli : c)) : [...store.data.clis, cli];
     if (secret !== undefined) await store.setSecret(cli.id, secret);
     await store.saveClis();
     return snapshot().clis;
+  });
+  const configKind = (kind: unknown) => {
+    if (kind !== "codex" && kind !== "claude") throw new Error("Only Codex's and Claude Code's config files are edited here.");
+    return kind;
+  };
+  handle("cli:configFile", (kind: unknown) => readConfigFile(configKind(kind)));
+  handle("cli:saveConfigFile", (kind: unknown, text: unknown, mtimeMs: unknown) => {
+    if (typeof text !== "string" || (mtimeMs !== null && typeof mtimeMs !== "number")) throw new Error("Invalid config file save");
+    return writeConfigFile(configKind(kind), text, mtimeMs);
+  });
+  handle("cli:ollamaSettings", () => readOllamaSettings());
+  handle("cli:saveOllamaSettings", async (changes: Record<string, string | null>) => {
+    const state = await writeOllamaSettings(changes ?? {});
+    // Requests at once is also the most parallel tasks a local Ollama connection gets: keep them the same.
+    if ("OLLAMA_NUM_PARALLEL" in (changes ?? {})) {
+      const atOnce = Math.max(1, Number(state.saved.OLLAMA_NUM_PARALLEL) || 1);
+      store.data.clis = store.data.clis.map((c) => (c.kind === "ollama" && isLocalUrl(c.location) ? { ...c, parallelRequests: atOnce } : c));
+      await store.saveClis();
+    }
+    return { state, clis: snapshot().clis };
   });
   handle("cli:collectModels", async (id: string) => {
     const conn = store.data.clis.find((c) => c.id === id);

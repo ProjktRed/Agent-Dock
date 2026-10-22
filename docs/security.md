@@ -41,6 +41,12 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   safely. Read-only git calls used for monitoring and QA evidence run with `core.fsmonitor=false`.
 - Claude Code always starts with `--setting-sources user`: a project's own `.claude/` settings
   (hooks, permissions) are not loaded. Agent Dock's protection hook is passed with `--settings`.
+- CLIs › Settings: run settings for Codex and Claude Code come from a fixed list, checked by the app
+  and again by the engine, with no sandbox, approval, permission, hook, network or MCP setting on it.
+  The config file editor writes only Codex's `config.toml` and Claude Code's user `settings.json`,
+  which are trusted configuration: that file can define hooks, which run commands. Ollama's settings
+  are written only to a fixed list of `OLLAMA_*` variables in your user environment, with checked
+  values passed to PowerShell as data, never as command text.
 - Importing a settings file never sets programs to start: connection program paths, the llama.cpp
   launcher and the Node runtime stay as they are on this computer. An import cannot turn the tool
   guard off, and its protected paths are added to yours.
