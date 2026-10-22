@@ -150,6 +150,8 @@ if (retention && (retention.calls || retention.sessions || retention.setAside ||
 const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
 // Parallel rounds start only from a task boundary: a task in progress finishes on its own first.
 const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf8").then((text) => JSON.parse(text)?.automation?.recovery?.phase !== "passed", () => false);
+// A fresh run: what happens before its first task (Assessment failing, a lane cap) is not the last run's task.
+state.carryTask = Boolean(inProgress || pendingCodex || initialTask);
 // Unattended mode too: the run keeps one budget for all its tasks (their engines run without limits of their own).
 // A local model server answers only as many requests at once as it has slots (local-parallel.mjs).
 const capped = lanes > 1 && !singleTask ? await localLanes({ provider: options.provider, lanes, options, baseUrl: implementation.runtime?.baseUrl ?? null }) : { lanes, reason: null };

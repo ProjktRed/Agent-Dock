@@ -307,7 +307,7 @@ export function ProgressTab() {
             const hrs = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(1)} h`);
             // A range (the middle half of single runs) when there are enough runs, else one figure.
             const time = (e: PlanEstimate) => (e.range && hrs(e.range.hours[0]) !== hrs(e.range.hours[1]) ? `${hrs(e.range.hours[0])}–${hrs(e.range.hours[1])}` : `about ${hrs(e.hours)}`);
-            const text = (e: PlanEstimate) => `${time(e)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · ${e.costUsd.toFixed(2)}` : ""}`;
+            const text = (e: PlanEstimate) => `${time(e)} · ${tokens(Math.round(e.tokens))} tokens${e.costUsd ? ` · $${e.costUsd.toFixed(2)}` : ""}`;
             const fixNote = (e?: PlanEstimate) => (e?.calibration ? ` Corrected by its last ${plural(e.calibration.runs, "estimate")} against what those runs took: time ×${e.calibration.hours.toFixed(2)}, tokens ×${e.calibration.tokens.toFixed(2)}.` : "");
             // Per task size, from runs that checked off plan items (0.35 on); otherwise per approved task.
             const byMode = modeEstimates(remaining, runs, { records });

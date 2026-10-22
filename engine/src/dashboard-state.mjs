@@ -46,10 +46,13 @@ export class DashboardState {
     this.controlPath = path.join(this.stateDir, "control.json");
     this.activityPath = path.join(this.stateDir, "activity.ndjson");
     this.live = null;
+    // false: a fresh run whose events, until it loads a task, belong to no task (not the last run's).
+    this.carryTask = true;
   }
 
   async initialize({ task, workspace, maxAttempts, contextTokens, timeoutSeconds, model, provider }) {
     const codexOperation = this.live?.codexOperation ?? null;
+    this.carryTask = true;
     this.live = {
       task: { ...task, id: task.id, name: task.name ?? task.id, prompt: task.prompt },
       workspace,
@@ -250,7 +253,7 @@ export class DashboardState {
 
   async appendEvent(event) {
     await mkdir(this.stateDir, { recursive: true });
-    const currentTaskId = (await this.readLive())?.task?.id;
+    const currentTaskId = this.carryTask ? (await this.readLive())?.task?.id : undefined;
     const entry = redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event });
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
     // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.

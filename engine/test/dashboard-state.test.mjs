@@ -166,3 +166,23 @@ test("live state saved with the old stage names reads with the current ones", as
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("a fresh run's events before its first task are not filed under the last run's task", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "dashboard-state-"));
+  try {
+    const first = new DashboardState({ stateDir });
+    await first.initialize({ task, workspace: "C:/fake", maxAttempts: 3 });
+    await first.record({ type: "qa-pass", attempt: 1 });
+    const next = new DashboardState({ stateDir });
+    next.carryTask = false;
+    await next.record({ type: "blocked", qa: "Assessment failed" });
+    await next.initialize({ task: { id: "second", prompt: "x" }, workspace: "C:/fake", maxAttempts: 3 });
+    await next.record({ type: "qa-pass", attempt: 1 });
+    const resumed = new DashboardState({ stateDir });
+    await resumed.record({ type: "control-resume" });
+    const events = (await readFile(path.join(stateDir, "activity.ndjson"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(events.filter((e) => e.type !== "task-loaded").map((e) => [e.type, e.taskId]), [["qa-pass", "fake-task"], ["blocked", undefined], ["qa-pass", "second"], ["control-resume", "second"]]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

@@ -319,7 +319,7 @@ ${project.objective}` : project.objective;
     if (local && impl?.provider === "ollama") {
       const at = Math.max(1, Math.floor(Number(clis.find((c) => c.kind === "ollama")?.parallelRequests) || 1));
       args.push("--ollama-parallel", String(at));
-      if (at < parallel) warnings.push(`Ollama answers ${at} request${at === 1 ? "" : "s"} at once as set on its connection (CLIs › Ollama, OLLAMA_NUM_PARALLEL), so at most ${at} task${at === 1 ? "" : "s"} run at once.`);
+      if (at < parallel) warnings.push(`Ollama answers ${at} request${at === 1 ? "" : "s"} at once as set on its connection (CLIs › Ollama, OLLAMA_NUM_PARALLEL), so at most ${at} task${at === 1 ? " runs" : "s run"} at once.`);
     }
   }
   // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
