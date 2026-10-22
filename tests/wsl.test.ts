@@ -38,8 +38,8 @@ describe("WSL isolation", () => {
     // On Linux (CI) the same script runs for real: a fake engine with a child, and an unrelated process.
     const dir = mkdtempSync(path.join(os.tmpdir(), "wsl-stop-"));
     const engine = path.join(dir, "cli.mjs");
-    writeFileSync(engine, `require("node:child_process").spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" }); setInterval(() => {}, 1000);`);
-    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "commonjs" }));
+    // A .mjs file is always an ES module, so the fake engine imports spawn rather than require it.
+    writeFileSync(engine, `import { spawn } from "node:child_process"; spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" }); setInterval(() => {}, 1000);`);
     const parent = spawn(process.execPath, [engine], { stdio: "ignore" });
     const other = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
     await new Promise((r) => setTimeout(r, 800));
