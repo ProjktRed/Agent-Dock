@@ -12,6 +12,12 @@ import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
 import { codexRunArgs } from "./cli-run-settings.mjs";
+import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
+
+/** Codex used a tool (patch, shell, MCP) according to its --json events. */
+export function codexUsedTools(stdout) {
+  return /"type"\s*:\s*"(?:file_change|command_execution|mcp_tool_call|patch_apply|exec_command)/.test(stdout);
+}
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -333,6 +339,9 @@ export class CodexWorker {
       await writeFile(path.join(invocation, "events.ndjson"), output);
       noteUsage(codexUsage(stdoutOutput), model);
     }
+    // Fail closed, as implementation does: tool use without a single hook decision means the protection hook did not run.
+    const decisions = (await readFile(path.join(invocation, "scope-hook.ndjson"), "utf8").catch(() => "")).trim();
+    if (codexUsedTools(stdoutOutput) && !decisions) throw new Error(CODEX_FAIL_CLOSED);
     return parse(await readFile(outputFile, "utf8"));
   }
 

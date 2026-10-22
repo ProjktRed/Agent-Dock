@@ -20,5 +20,10 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const output = process.argv[process.argv.indexOf("--output-last-message") + 1];
 await writeFile(output, input);
+// A tool call, with or without the protection hook having logged a decision next to the prompt.
+if (process.env.FAKE_CODEX_TOOL) {
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "ls", status: "completed" } }));
+  if (process.env.FAKE_CODEX_TOOL === "hooked") writeFileSync(output.replace(/result\.json$/, "scope-hook.ndjson"), JSON.stringify({ tool: "Bash", allowed: true, reason: null }) + "\n");
+}
 // Producing task JSON is not enough: the manager must wait for actual exit.
 await new Promise((resolve) => setTimeout(resolve, 150));

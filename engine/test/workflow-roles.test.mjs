@@ -252,9 +252,29 @@ test('a Claude implementation reports the protection hook refusals in Activity, 
 
 test('Codex implementation runs with the engine-written scope hook and refuses tool use the hook never saw', async t => {
   const { codexScopeHookArgs, codexUsedTools } = await import('../src/cloud-impl-worker.mjs');
-  const args = codexScopeHookArgs({ nodePath:'C:\node\node.exe', hookScript:'C:\e\hook.mjs', policyFile:'C:\s\p.json', logFile:'C:\s\l.ndjson' });
+  const args = codexScopeHookArgs({ nodePath:'/usr/bin/node', hookScript:'/e/hook.mjs', policyFile:'/s/p.json', logFile:'/s/l.ndjson', platform:'linux' });
   assert.equal(args[0], '--dangerously-bypass-hook-trust');
-  assert.match(args[2], /^hooks\.PreToolUse=\[\{matcher="\.\*",hooks=\[\{type="command",command="\\"C:\\node\\node\.exe\\" /);
+  assert.match(args[2], /^hooks\.PreToolUse=\[\{matcher="\.\*",hooks=\[\{type="command",command="\\"\/usr\/bin\/node\\" \\"\/e\/hook\.mjs\\" /);
+  // Windows: Codex runs hooks through Windows PowerShell -Command. The call operator runs the quoted path,
+  // single quotes expand nothing ($, backticks), and anything but exit 0 blocks (a crash, a missing node).
+  const { codexHookCommand } = await import('../src/guard/adapters/codex.mjs');
+  const windows = codexHookCommand(['C:\\Program Files\\nodejs\\node.exe', "C:\\Users\\o'brien\\$env\\h\u2019ook.mjs"], 'win32');
+  assert.equal(windows, "& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\o''brien\\$env\\h\u2019\u2019ook.mjs'; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 2 }");
+  assert.match(codexScopeHookArgs({ nodePath:'C:\\n.exe', hookScript:'C:\\h.mjs', policyFile:'C:\\p.json', logFile:'C:\\l.ndjson', platform:'win32' })[2], /command="& 'C:\\\\n\.exe' /);
+  if (process.platform === 'win32') {
+    // The real thing: Windows PowerShell runs the hook, passes its stdin, and turns its answers into Codex's 0 or 2.
+    const { spawnSync } = await import('node:child_process');
+    const dir = await mkdtemp(path.join(os.tmpdir(), "hook-ps-o'brien-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const { writeFile: write } = await import('node:fs/promises');
+    const script = path.join(dir, 'h.mjs');
+    await write(script, 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.exit(s.includes("block")?2:s.includes("crash")?7:0));');
+    const run = (parts, input) => spawnSync('powershell.exe', ['-NoProfile', '-Command', codexHookCommand(parts, 'win32')], { input, windowsHide: true }).status;
+    assert.equal(run([process.execPath, script], 'allow'), 0);
+    assert.equal(run([process.execPath, script], 'block'), 2);
+    assert.equal(run([process.execPath, script], 'crash'), 2, 'a hook error blocks');
+    assert.equal(run([path.join(dir, 'missing-node.exe'), script], 'allow'), 2, 'a missing node blocks');
+  }
   assert.equal(codexUsedTools('{"type":"item.completed","item":{"type":"file_change"}}'), true);
   assert.equal(codexUsedTools('{"type":"turn.completed"}'), false);
 

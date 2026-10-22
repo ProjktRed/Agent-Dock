@@ -42,6 +42,24 @@ test("explicit Windows sandbox mode is passed without disabling workspace bounda
   }
 });
 
+test("a Codex QA or Assessment run that used tools without a single protection hook decision is refused", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-fail-closed-"));
+  const previous = process.env.FAKE_CODEX_TOOL;
+  try {
+    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
+    const result = JSON.stringify(strictResult({ status: "fail" }));
+    process.env.FAKE_CODEX_TOOL = "unhooked";
+    await assert.rejects(codex.invoke(result, "workspace-write"), /without the scope hook/);
+    await assert.rejects(codex.invoke(result, "read-only"), /without the scope hook/);
+    process.env.FAKE_CODEX_TOOL = "hooked";
+    assert.equal((await codex.invoke(result, "workspace-write")).status, "fail");
+  } finally {
+    if (previous === undefined) delete process.env.FAKE_CODEX_TOOL;
+    else process.env.FAKE_CODEX_TOOL = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("one-shot Sol invocation passes the requested model and medium reasoning config", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-sol-args-"));
   const argsFile = path.join(root, "args.json");

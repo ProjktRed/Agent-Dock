@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CLAUDE_SETTING_SOURCES, claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
-import { detectCodexUsageLimit } from "./codex-worker.mjs";
+import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
 import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
@@ -42,10 +42,7 @@ export { claudeImplementationTools };
  */
 export { codexScopeHookArgs };
 
-/** Codex used a tool (patch, shell, MCP) according to its --json events. */
-export function codexUsedTools(stdout) {
-  return /"type"\s*:\s*"(?:file_change|command_execution|mcp_tool_call|patch_apply|exec_command)/.test(stdout);
-}
+export { codexUsedTools };
 
 export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env }) {
   if (cli === "codex") {

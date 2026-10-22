@@ -79,8 +79,20 @@ export function checkToolUse(policy, event) {
   return result.effect === "allow" ? null : result.reason;
 }
 
-export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile }) {
-  const command = [nodePath, hookScript, policyFile, logFile].map((p) => `"${p}"`).join(" ");
+/**
+ * The hook's command line. On Windows Codex runs it as `powershell.exe -NoProfile -Command "<command>"`:
+ * a leading quoted path is only a string there and a native exit code is not passed on, so the hook
+ * never ran. The call operator runs it, single quotes expand nothing (' and the curly quotes PowerShell
+ * also reads as ' are doubled), and any exit but 0 (a hook error, node missing) becomes the blocking 2.
+ */
+export function codexHookCommand(parts, platform = process.platform) {
+  if (platform !== "win32") return parts.map((p) => `"${p}"`).join(" ");
+  const quoted = parts.map((p) => `'${String(p).replace(/['‘’‚‛]/g, "$&$&")}'`).join(" ");
+  return `& ${quoted}; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 2 }`;
+}
+
+export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile, platform = process.platform }) {
+  const command = codexHookCommand([nodePath, hookScript, policyFile, logFile], platform);
   return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`];
 }
 
