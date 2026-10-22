@@ -23,11 +23,13 @@ describe("GitHub CI status", () => {
     const out = JSON.stringify([
       ghRun({}), ghRun({ databaseId: 2, status: "in_progress", conclusion: "" }), ghRun({ databaseId: 3, conclusion: "timed_out" }),
       ghRun({ databaseId: 4, conclusion: "skipped" }), ghRun({ databaseId: 5, conclusion: "cancelled" }), ghRun({ databaseId: 6, headSha: "b".repeat(40), conclusion: "failure" }),
-      ghRun({ databaseId: 7, url: "javascript:alert(1)" }),
+      ghRun({ databaseId: 7, url: "javascript:alert(1)", event: "pull_request" }), ghRun({ databaseId: 8, event: "push; rm" }),
     ]);
     const checks = parseRuns(out, SHA);
-    expect(checks.map((c) => [c.id, c.bucket])).toEqual([[1, "pass"], [2, "pending"], [3, "fail"], [4, "skipping"], [5, "cancel"], [7, "pass"]]);
-    expect(checks.at(-1)?.url).toBeNull();
+    expect(checks.map((c) => [c.id, c.bucket])).toEqual([[1, "pass"], [2, "pending"], [3, "fail"], [4, "skipping"], [5, "cancel"], [7, "pass"], [8, "pass"]]);
+    expect(checks.at(-2)?.url).toBeNull();
+    // What started each run (shown next to it), only when it looks like a GitHub event name.
+    expect(checks.slice(-2).map((c) => c.event)).toEqual(["pull_request", null]);
     expect(() => parseRuns("not json", SHA)).toThrow(/could not read/);
   });
 
@@ -44,7 +46,7 @@ describe("GitHub CI status", () => {
     expect((await readCi({ ...opts, runner: fake(4, "", "To get started with GitHub CLI, please run:  gh auth login").runner })).message).toMatch(/not signed in/);
     const { runner, calls } = fake(0, JSON.stringify([ghRun({ status: "queued", conclusion: "" })]));
     expect((await readCi({ ...opts, runner })).state).toBe("pending");
-    expect(calls[0]).toEqual(["run", "list", "--repo", "o/r", "--branch", "agent-dock/run-1", "--limit", "30", "--json", "databaseId,name,workflowName,status,conclusion,url,headSha"]);
+    expect(calls[0]).toEqual(["run", "list", "--repo", "o/r", "--branch", "agent-dock/run-1", "--limit", "30", "--json", "databaseId,name,workflowName,status,conclusion,url,headSha,event"]);
     expect((await readCi({ ...opts, now: 1000, runner: fake(0, "[]").runner })).state).toBe("pending");
     expect((await readCi({ ...opts, runner: fake(0, "[]").runner })).state).toBe("none");
   });

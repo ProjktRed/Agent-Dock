@@ -68,7 +68,7 @@ export interface CiWatch {
 
 export type CiState = "pending" | "pass" | "fail" | "cancelled" | "none" | "unavailable";
 export type CiBucket = "pass" | "fail" | "pending" | "skipping" | "cancel";
-export interface CiCheck { id: number; name: string; workflow: string; bucket: CiBucket; url: string | null }
+export interface CiCheck { id: number; name: string; workflow: string; bucket: CiBucket; url: string | null; /** What started the run (push, pull_request…), when gh says. */ event?: string | null }
 export interface CiStatus {
   projectId: string;
   watch: CiWatch | null;

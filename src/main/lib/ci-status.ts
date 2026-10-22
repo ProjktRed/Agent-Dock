@@ -16,7 +16,7 @@ const LOG_CHARS = 6000;
 
 export type Runner = typeof run;
 
-interface GhRun { databaseId?: number; name?: string; workflowName?: string; status?: string; conclusion?: string; url?: string; headSha?: string }
+interface GhRun { databaseId?: number; name?: string; workflowName?: string; status?: string; conclusion?: string; url?: string; headSha?: string; event?: string }
 
 const bucketOf = (r: GhRun): CiBucket => {
   if (r.status !== "completed") return "pending";
@@ -35,7 +35,7 @@ export function parseRuns(stdout: string, sha: string): CiCheck[] {
   if (!Array.isArray(list)) throw new Error("GitHub CLI returned output Agent Dock could not read.");
   return (list as GhRun[])
     .filter((r) => r && typeof r === "object" && String(r.headSha ?? "") === sha)
-    .map((r) => ({ id: Number(r.databaseId) || 0, name: String(r.name ?? r.workflowName ?? "run"), workflow: String(r.workflowName ?? ""), bucket: bucketOf(r), url: typeof r.url === "string" && /^https:\/\/github\.com\//.test(r.url) ? r.url : null }));
+    .map((r) => ({ id: Number(r.databaseId) || 0, name: String(r.name ?? r.workflowName ?? "run"), workflow: String(r.workflowName ?? ""), bucket: bucketOf(r), url: typeof r.url === "string" && /^https:\/\/github\.com\//.test(r.url) ? r.url : null, event: typeof r.event === "string" && /^[a-z_]{1,40}$/.test(r.event) ? r.event : null }));
 }
 
 /** One state for all of a commit's runs: a failure wins, then anything still running. */
@@ -57,7 +57,7 @@ const ghProblem = (text: string) =>
 /** The runs for a pushed commit: { state, checks, message }. Never throws; a problem is "unavailable" with the reason. */
 export async function readCi(opts: { gh: string | null; repo: string; branch: string; sha: string; pushedAt: string; cwd: string; now?: number; runner?: Runner }): Promise<{ state: CiState; checks: CiCheck[]; message: string | null }> {
   if (!opts.gh) return { state: "unavailable", checks: [], message: "Install GitHub CLI (gh) and run gh auth login to see CI results here." };
-  const r = await (opts.runner ?? run)(opts.gh, ["run", "list", "--repo", opts.repo, "--branch", opts.branch, "--limit", "30", "--json", "databaseId,name,workflowName,status,conclusion,url,headSha"], { cwd: opts.cwd, timeoutMs: 60_000 });
+  const r = await (opts.runner ?? run)(opts.gh, ["run", "list", "--repo", opts.repo, "--branch", opts.branch, "--limit", "30", "--json", "databaseId,name,workflowName,status,conclusion,url,headSha,event"], { cwd: opts.cwd, timeoutMs: 60_000 });
   if (r.code !== 0) return { state: "unavailable", checks: [], message: ghProblem(r.stderr || r.stdout) };
   let checks: CiCheck[];
   try { checks = parseRuns(r.stdout, opts.sha); } catch (error) { return { state: "unavailable", checks: [], message: (error as Error).message }; }

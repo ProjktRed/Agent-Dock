@@ -255,6 +255,7 @@ function CiRow({ project }: { project: Project }) {
                 <St kind={CHECK_ST[c.bucket]} title={c.bucket} />
                 {c.url ? <a href={c.url} target="_blank" rel="noreferrer">{c.workflow || c.name}</a> : <span>{c.workflow || c.name}</span>}
                 {c.workflow && c.name !== c.workflow && <span className="mut">{c.name}</span>}
+                {c.event && <span className="mut">· {c.event.replaceAll("_", " ")}</span>}
               </div>
             ))}
           </div>
