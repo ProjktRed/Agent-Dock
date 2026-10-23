@@ -61,12 +61,16 @@ export function primaryStatus(live, control) {
   return "waiting";
 }
 
+/** Every write route reads its body here: at most 16 KiB, counted in bytes before decoding. */
 async function readBody(request) {
-  let body = "";
+  const chunks = [];
+  let size = 0;
   for await (const chunk of request) {
-    body += chunk;
-    if (body.length > 16_384) throw new Error("Request body too large");
+    size += chunk.length;
+    if (size > 16_384) throw new Error("Request body too large");
+    chunks.push(chunk);
   }
+  const body = Buffer.concat(chunks).toString("utf8");
   return JSON.parse(body || "{}");
 }
 
@@ -171,6 +175,7 @@ export async function startDashboardServer({ stateDir, workspace, port = 4173, o
         return sendJson(response, 200, await state.readEvents(200));
       }
       if (request.method === "POST" && url.pathname === "/api/activity/clear") {
+        await readBody(request);
         await state.clearActivityHistory();
         return sendJson(response, 200, { cleared: true });
       }

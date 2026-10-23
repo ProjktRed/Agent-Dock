@@ -91,6 +91,8 @@ describe("GitHub skill import", () => {
     const dir = await tmp();
     await mkdir(path.join(dir, "references"));
     await writeFile(path.join(dir, "references", "a.md"), "Reference A");
+    // Audit AD-09: the dot was unescaped, so secretxmd (no extension) was attached too.
+    await writeFile(path.join(dir, "references", "secretxmd"), "NOT MARKDOWN");
     const skill = { id: "imported:x", name: "x", description: "", dir, source: "imported" as const, instructions: "Main", warnings: [] };
     expect(await skillDeliveryText(skill)).toEqual({ text: "Main\n\n### File: references/a.md\nReference A", referencesLeftOut: false });
     await writeFile(path.join(dir, "references", "big.md"), "x".repeat(SKILL_MAX_CHARS));

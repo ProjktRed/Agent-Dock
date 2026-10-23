@@ -221,3 +221,19 @@ test("status API answers before there is any live state", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// OWASP retest (0.38.1): the limit counted characters (20,027 UTF-8 bytes passed) and clear had none.
+test("every write route refuses a body over 16 KiB, counted in bytes", async () => {
+  const { root, dashboard } = await fixture();
+  try {
+    const wide = JSON.stringify({ action: "pause", note: "é".repeat(9_000) });
+    assert.ok(wide.length < 16_384 && Buffer.byteLength(wide) > 16_384);
+    for (const route of ["/api/control", "/api/activity/clear"]) {
+      const response = await dashboardFetch(dashboard, route, { method: "POST", headers: { "content-type": "application/json" }, body: wide });
+      assert.equal(response.status, 400, route);
+    }
+  } finally {
+    await dashboard.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
