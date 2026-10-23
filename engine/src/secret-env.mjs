@@ -7,6 +7,9 @@ export const CODEX_AUTH_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 export const CLAUDE_AUTH_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 const extra = new Set();
 
+/** Variables that are secrets by name, whatever their length (redact.mjs hides their values). */
+export const secretEnvNames = () => new Set([...PROVIDER_KEYS, ...ENGINE_KEYS, ...CODEX_AUTH_ENV, ...CLAUDE_AUTH_ENV, ...extra]);
+
 /** A provider key read from a custom variable (--provider-api-key-env) is a secret too. */
 export function registerSecretEnv(name) {
   if (name) extra.add(name.toUpperCase());

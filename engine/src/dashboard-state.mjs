@@ -8,6 +8,7 @@ import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } fro
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
 import { selectedAutoSkills } from './task-handoff-skill.mjs';
 import { appendAction, flushActionLog } from './action-log.mjs';
+import { redactText } from "./redact.mjs";
 import { redactDeep } from './redact.mjs';
 export { flushActionLog };
 
@@ -54,7 +55,8 @@ export class DashboardState {
     const codexOperation = this.live?.codexOperation ?? null;
     this.carryTask = true;
     this.live = {
-      task: { ...task, id: task.id, name: task.name ?? task.id, prompt: task.prompt },
+      // Known secret values never reach live.json (the dashboard, diagnostics) through a prompt.
+      task: { ...task, id: task.id, name: task.name ?? task.id, prompt: redactText(task.prompt, { assignments: false }) },
       workspace,
       stage: "waiting",
       clineStatus: "idle",

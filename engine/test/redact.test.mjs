@@ -51,3 +51,14 @@ test('Activity, the action log, notifications and prompts never carry a secret',
  const prompt=buildInitialPrompt({id:'T',prompt:`Use the key ${ANTHROPIC} to call the API`,allowedPaths:['a.js'],qaCommand:'npm test'});
  assert.ok(!prompt.includes(ANTHROPIC)&&prompt.includes('[redacted:anthropic-key]'));
 });
+
+// Retest (0.38.1): a registered secret under 8 characters was not redacted.
+test('secrets by name are hidden however short; live.json keeps no known secret in a prompt',async t=>{
+  t.after(()=>useSecretValues(secretValuesFromEnv()));
+  useSecretValues(secretValuesFromEnv({AGENT_DOCK_PROVIDER_KEY:'k7Qz9',MONKEY:'true'}));
+  assert.equal(redactText('key k7Qz9 and true'),'key [redacted:secret] and true');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'redact-live-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const state=new DashboardState({stateDir:dir});
+  await state.initialize({task:{id:'T',prompt:'use the key k7Qz9'},workspace:dir,maxAttempts:1});
+  assert.doesNotMatch(await readFile(path.join(dir,'live.json'),'utf8'),/k7Qz9/);
+});

@@ -80,11 +80,27 @@ export function safeClis(clis: CliConnection[]) {
   return clis.map((c) => ({ ...c, env: c.env.map((e) => (e.secret ? { ...e, value: e.value ? "[secret]" : "" } : e)) }));
 }
 
+/** Fields that hold prompts or other text written for a model: their length is kept, never their text. */
+const PROMPT_KEYS = new Set(["prompt", "objective", "instructions", "planText", "feedback", "ciNote", "notes", "correction", "correctionPrompt"]);
+
+/** A copy of value with every prompt field replaced by a note of its length. */
+export function withoutPrompts(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutPrompts);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, PROMPT_KEYS.has(key) && v !== null && v !== "" ? (typeof v === "string" ? `[left out: ${v.length} characters]` : "[left out]") : withoutPrompts(v)]));
+}
+
+/** JSON text without its prompt fields; text that is not JSON is kept as it is. */
+function promptFreeJson(text: string): string {
+  try { return `${JSON.stringify(withoutPrompts(JSON.parse(text)), null, 2)}\n`; } catch { return text; }
+}
+const promptFreeNdjson = (text: string) => text.split("\n").map((line) => { try { return line.trim() ? JSON.stringify(withoutPrompts(JSON.parse(line))) : line; } catch { return line; } }).join("\n");
+
 /** The archive's files. Each text passes through the engine redaction and the home-folder mask. */
 export async function collectDiagnostics(input: DiagnosticsInput): Promise<ZipEntry[]> {
   const mask = homeMasker();
   const clean = (text: string) => mask(input.redact(text));
-  const json = (value: unknown) => clean(JSON.stringify(value, null, 2)) + "\n";
+  const json = (value: unknown) => clean(JSON.stringify(withoutPrompts(value), null, 2)) + "\n";
   const entries: ZipEntry[] = [];
   const add = (name: string, text: string) => entries.push({ name, data: text });
   add("about.json", json(input.about));
@@ -101,16 +117,16 @@ export async function collectDiagnostics(input: DiagnosticsInput): Promise<ZipEn
     add(`${folder}/status.json`, json(input.statuses[project.id] ?? null));
     for (const name of STATE_FILES) {
       const text = await readFile(path.join(project.stateDir, name), "utf8").catch(() => null);
-      if (text !== null) add(`${folder}/state/${name}`, clean(text));
+      if (text !== null) add(`${folder}/state/${name}`, clean(name.endsWith(".json") ? promptFreeJson(text) : text));
     }
     const activity = await tailLines(path.join(project.stateDir, "activity.ndjson"), ACTIVITY_LINES);
-    if (activity) add(`${folder}/activity-tail.ndjson`, clean(activity));
+    if (activity) add(`${folder}/activity-tail.ndjson`, clean(promptFreeNdjson(activity)));
     const log = await tailBytes(path.join(project.stateDir, "app-engine.log"), LOG_BYTES);
     if (log) add(`${folder}/app-engine-tail.log`, clean(log));
     const runs = (await readdir(path.join(project.stateDir, "runs")).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).sort().slice(-RUNS);
     for (const name of runs) {
       const text = await readFile(path.join(project.stateDir, "runs", name), "utf8").catch(() => null);
-      if (text !== null) add(`${folder}/runs/${name}`, clean(text));
+      if (text !== null) add(`${folder}/runs/${name}`, clean(promptFreeJson(text)));
     }
     if (input.verifyActionLog) {
       const verified = await input.verifyActionLog(project.stateDir).catch((error: unknown) => ({ ok: false, reason: String((error as Error)?.message ?? error) }));
@@ -126,7 +142,7 @@ export async function collectDiagnostics(input: DiagnosticsInput): Promise<ZipEn
     "",
     "Versions, configuration, and for each project its engine state, the newest Activity and engine log, and recent run reports.",
     "Secrets were removed: stored API keys and tokens, notification addresses, secret environment values, and anything that looks like a credential.",
-    "Not included: project source code and diffs, model prompts, the action log itself (only whether it verifies).",
+    "Not included: project source code and diffs, model prompts (task prompts, objectives and role instructions show only their length), the action log itself (only whether it verifies).",
     "Your home folder is shown as ~. Look through the files before you share them.",
     "",
     ...index.map((p) => `${p.folder}: ${p.name}${p.archived ? " (archived)" : ""}`),
