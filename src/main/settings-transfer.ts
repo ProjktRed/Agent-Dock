@@ -1,5 +1,6 @@
 import type { Agent, CliConnection, Settings, WorkflowRole } from "@shared/types";
 import { normalizeAppearance } from "@shared/appearance";
+import { sanitizeSettings } from "./settings-validate";
 
 // Settings export and import (Settings › Advanced): carry agents, workflow roles, connections and
 // settings to another machine or share a setup. Never included: stored secrets (API keys, notification
@@ -52,7 +53,7 @@ export function parseSettingsFile(text: string): SettingsFile {
   if (value.version !== 1) throw new Error(`Settings export version ${String(value.version)} is not supported by this version of Agent Dock.`);
   if (!isObject(value.settings) || !Array.isArray(value.agents) || !Array.isArray(value.clis) || !Array.isArray(value.roles)) throw new Error("The settings export is incomplete.");
   for (const a of value.agents) if (!isObject(a) || typeof a.id !== "string" || typeof a.role !== "string" || typeof a.cliId !== "string") throw new Error("The settings export has an invalid agent.");
-  for (const c of value.clis) if (!isObject(c) || typeof c.id !== "string" || typeof c.kind !== "string" || !Array.isArray(c.env)) throw new Error("The settings export has an invalid connection.");
+  for (const c of value.clis) if (!isObject(c) || typeof c.id !== "string" || typeof c.kind !== "string" || !Array.isArray(c.env) || !c.env.every((e) => isObject(e) && typeof e.key === "string" && typeof e.value === "string" && typeof e.secret === "boolean")) throw new Error("The settings export has an invalid connection.");
   for (const r of value.roles) if (!isObject(r) || typeof r.id !== "string" || !/^[\w-]{1,64}$/.test(r.id) || typeof r.name !== "string" || typeof r.instructions !== "string") throw new Error("The settings export has an invalid workflow role.");
   return value as unknown as SettingsFile;
 }
@@ -82,7 +83,8 @@ const envShape = (env: CliConnection["env"]) => JSON.stringify(env.map((e) => [e
  * A file cannot turn the tool guard off, and its protected paths are added to this computer's.
  */
 export function mergeImport(current: { settings: Settings; agents: Agent[]; clis: CliConnection[] }, file: SettingsFile): ImportResult {
-  const incoming = file.settings;
+  // Fields of the wrong type (a null section, a string limit) keep this computer's value.
+  const incoming = sanitizeSettings(file.settings, current.settings);
   const local = current.settings;
   const general = { ...local.general, ...(incoming.general ?? {}), defaultProject: local.general.defaultProject };
   const settings: Settings = {

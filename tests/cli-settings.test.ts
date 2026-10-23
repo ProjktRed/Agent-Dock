@@ -44,10 +44,10 @@ describe("per-run CLI settings", () => {
     expect(cleanRunSettings("opencode", { steps: 4, variant: "high --auto" })).toEqual({});
     expect(clineRunOptions({})).toEqual({ retries: 6, compaction: "agentic" });
     expect(clineRunOptions({ retries: 2, compaction: "off" })).toEqual({ retries: 2, compaction: "off" });
-    expect(openCodeRunOptions({})).toEqual({ steps: null, variantArgs: [] });
-    expect(openCodeRunOptions({ steps: 80, variant: "max" })).toEqual({ steps: 80, variantArgs: ["--variant", "max"] });
+    expect(openCodeRunOptions({})).toEqual({ steps: null, variant: null });
+    expect(openCodeRunOptions({ steps: 80, variant: "max" })).toEqual({ steps: 80, variant: "max" });
     setCliRunSettings(JSON.stringify({ cline: { retries: 9 }, opencode: { variant: "low", steps: 1 } }));
-    expect([clineRunOptions(), openCodeRunOptions()]).toEqual([{ retries: 9, compaction: "agentic" }, { steps: null, variantArgs: ["--variant", "low"] }]);
+    expect([clineRunOptions(), openCodeRunOptions()]).toEqual([{ retries: 9, compaction: "agentic" }, { steps: null, variant: "low" }]);
     setCliRunSettings(undefined);
   });
 

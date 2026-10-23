@@ -4,7 +4,7 @@ import { runReportHtml, runReportMarkdown } from "./lib/run-export";
 import { sanitizeTaskBoardUpdate } from "./lib/task-board";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol, session, shell, Tray } from "electron";
 import { pathToFileURL } from "node:url";
@@ -49,6 +49,7 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
+import { sanitizeSettings, weakenings } from "./settings-validate";
 import { rememberContent, restoreWatchedFiles, watchFolder } from "./lib/json-file";
 import { engineFileProblems, MANIFEST_FILE } from "./lib/integrity";
 import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
@@ -769,6 +770,21 @@ async function writeStopLauncher() {
 }
 let stopAllPath = "";
 
+/** A native confirmation (the window cannot answer it) before a safety control is weakened. */
+async function confirmWeakening(labels: string[]): Promise<boolean> {
+  const options = {
+    type: "warning" as const,
+    buttons: ["Keep the current setting", "Apply"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Weaken Agent Dock's safety?",
+    message: "This change weakens a safety control or chooses a program Agent Dock runs:",
+    detail: `${labels.map((l) => `• ${l}`).join("\n")}\n\nApply it only if you made this change yourself.`,
+  };
+  const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return response === 1;
+}
+
 /**
  * Project checks run code agents can edit (npm test runs package.json scripts and tests). Unless the user
  * trusts them (Settings › Execution & safety), while any run is going the app puts back changes to its
@@ -911,10 +927,13 @@ function registerIpc() {
     });
 
   handle("snapshot", snapshot);
-  handle("settings:save", async (incoming: Settings) => {
+  handle("settings:save", async (incoming: unknown) => {
     const previous = store.data.settings.usage;
     const previousUpdates = store.data.settings.updates;
-    const settings: Settings = { ...incoming, general: { ...incoming.general, ...normalizeAppearance(incoming.general ?? {}) } };
+    // The window is not trusted with the shape of settings, nor with weakening a safety control on its own.
+    const settings = sanitizeSettings(incoming, store.data.settings);
+    const weaker = weakenings(store.data.settings, settings);
+    if (weaker.length && !(await confirmWeakening(weaker.map((w) => w.label)))) for (const w of weaker) w.revert(settings);
     store.data.settings = settings;
     await store.saveSettings();
     win?.setBackgroundColor(windowBackground(settings));
@@ -1240,15 +1259,24 @@ function registerIpc() {
       ...store.data.settings.skills.importedDirs,
       rolesDir,
     ];
-    let isDirectory = false;
+    // Resolved once, then only that real path is checked and opened. A folder is shown, never opened:
+    // between the check and the open it could be swapped for a program, which opening would run.
+    let real: string;
+    let isDirectory: boolean;
     try {
-      isDirectory = statSync(target).isDirectory();
+      real = realpathSync.native(String(target));
+      isDirectory = statSync(real).isDirectory();
     } catch {
-      // missing target: shell.openPath reports it
+      return "That file or folder no longer exists.";
     }
-    if (!canOpenPath(target, roots, isDirectory)) throw new Error("This path cannot be opened from Agent Dock.");
-    // "" when it opened; otherwise Windows' reason (missing file, no app for the file type).
-    return shell.openPath(target);
+    if (!canOpenPath(real, roots, isDirectory)) throw new Error("This path cannot be opened from Agent Dock.");
+    if (isDirectory) {
+      const first = readdirSync(real).sort()[0];
+      shell.showItemInFolder(first ? path.join(real, first) : real);
+      return "";
+    }
+    // "" when it opened; otherwise Windows' reason (no app for the file type).
+    return shell.openPath(real);
   });
   handle("window", (action: "minimize" | "maximize" | "close") => {
     if (action === "minimize") win?.minimize();

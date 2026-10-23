@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realPath, within } from "./real-path";
 
 // The window loads app://agent-dock/… instead of file://, so the GrantFileProtocolExtraPrivileges fuse
 // can be off (0.38): pages on file:// get extra privileges (fetching any local file, for one). The
@@ -18,5 +19,7 @@ export function resolveAppPath(root: string, url: string): string | null {
   if (rel.includes("\0")) return null;
   const base = path.resolve(root);
   const file = path.resolve(base, `.${rel === "/" ? "/index.html" : rel}`);
-  return file === base || !file.startsWith(base + path.sep) ? null : file;
+  if (file === base || !file.startsWith(base + path.sep)) return null;
+  // A link inside the renderer folder may point anywhere.
+  return within(realPath(base), realPath(file)) ? file : null;
 }

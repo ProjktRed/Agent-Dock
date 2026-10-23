@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AddProjectRequest, DirectoryInspection, EngineEvent, Project } from "@shared/types";
 import { isGitRepo, run } from "./lib/git";
+import { realPath, realWithin } from "./lib/real-path";
 import { parseImplementationPlan, PLAN_FILE, STARTER_PLAN } from "./lib/plan";
 
 export async function inspectDirectory(dir: string): Promise<DirectoryInspection> {
@@ -51,15 +52,21 @@ export async function addProject(request: AddProjectRequest, existing: Project[]
 
   if (request.mode === "local") {
     if (!existsSync(request.path)) throw new Error("That folder does not exist.");
+    if (!statSync(request.path).isDirectory()) throw new Error("That is a file, not a folder.");
     if (existing.some((p) => path.resolve(p.path) === path.resolve(request.path))) throw new Error("That folder is already registered.");
     const info = await inspectDirectory(request.path);
     return newProject({ name, path: request.path, repoUrl: info.remote, objective: request.objective }, stateRoot);
   }
 
+  // GitHub and new projects get a folder named after the project, inside the chosen parent folder.
+  const nameProblem = folderNameProblem(name);
+  if (nameProblem) throw new Error(nameProblem);
+  const target = path.join(request.parentDir, name);
+  if (!realWithin(request.parentDir, target) || path.resolve(target) === path.resolve(request.parentDir)) throw new Error("The project folder must be inside the chosen folder.");
+
   if (request.mode === "github") {
     const url = request.url.trim();
     if (!/^(https:\/\/|git@)/.test(url)) throw new Error("Enter an https:// or git@ repository URL.");
-    const target = path.join(request.parentDir, name);
     if (existsSync(target)) {
       if (!isGitRepo(target)) throw new Error(`${target} already exists and is not a Git repository.`);
     } else {
@@ -70,7 +77,6 @@ export async function addProject(request: AddProjectRequest, existing: Project[]
     return newProject({ name, path: target, repoUrl: url, objective: request.objective }, stateRoot);
   }
 
-  const target = path.join(request.parentDir, name);
   if (existsSync(target)) throw new Error(`${target} already exists. Choose “Local project” to register it.`);
   await mkdir(target, { recursive: true });
   if (request.starterPlan) await writeFile(path.join(target, PLAN_FILE), STARTER_PLAN);
@@ -101,7 +107,16 @@ export interface TaskHistoryEntry {
 export function managedProjectFolder(stateRoot: string, stateDir: string): string | null {
   const folder = path.dirname(path.resolve(stateDir));
   const relative = path.relative(path.resolve(stateRoot), folder);
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !relative.split(/[\\/]/).includes("..") ? folder : null;
+  // By real location too: a junction under stateRoot must not take the delete somewhere else.
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !relative.split(/[\\/]/).includes("..") && realWithin(stateRoot, folder) && realPath(folder) !== realPath(stateRoot) ? folder : null;
+}
+
+/** A project name that is also a folder name: no separators, no "." or "..", nothing Windows refuses. */
+export function folderNameProblem(name: string): string | null {
+  if (/[\\/:*?"<>|\0]/.test(name) || [".", ".."].includes(name)) return "A project name cannot contain \\ / : * ? \" < > | or be . or ..";
+  if (/[. ]$/.test(name)) return "A project name cannot end with a dot or a space.";
+  if (/^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(name)) return `“${name}” is a name Windows reserves for a device.`;
+  return null;
 }
 
 /** Task outcomes from the engine's append-only activity log, newest first. */
