@@ -36,7 +36,8 @@ test('read options cannot reach protected files, write, wait, run programs or se
     'findstr /d:secrets SECRET config.json','findstr /g:.env src/Example.ts','Select-String -Pattern x -Path .env','Select-String -Pattern x','Test-Path .env','Get-Content -Path:.env',
     'Get-ChildItem -Include x','cat - ','Get-Content -Raw README.md -Delimiter x',
     // Defensive review (0.39.0): with -Path named, the first positional word is the pattern, not a file.
-    'Select-String -Path .env README.md','Select-String -LiteralPath secrets/config.json x','Get-Content \u2013Path .env','Get-Content \u2014Stream x README.md'])assert.equal(ok(policy,command),false,command);
+    'Select-String -Path .env README.md','Select-String -LiteralPath secrets/config.json x','Get-Content \u2013Path .env','Get-Content \u2014Stream x README.md',
+    'Get-Content README.md,.env','Get-Content -Path README.md,.env','git show HEAD:README.md,.env','npx eslint src,.env','type README.md,secrets/config.json','Get-Content env:PATH','Get-Content variable:x','Get-ChildItem HKCU:Software','Test-Path env:X'])assert.equal(ok(policy,command),false,command);
 });
 
 // S-03: a check's --option=value can name a protected file, and check output options write files.

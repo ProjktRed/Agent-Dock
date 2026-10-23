@@ -135,7 +135,7 @@ const CHECK_REWRITE_OPTION=/^--?(?:write|fix[\w-]*|u|update[\w-]*)$/i;
 // Read-only commands and the options each may take. A value is a number, an encoding, a search
 // pattern or a path (checked like any other file). Anything else (wildcards, -Stream, -Wait, --pre,
 // pattern files, findstr /s) is refused. PowerShell long options are matched without case.
-const NUM=/^\d{1,7}$/,CONTEXT=/^\d{1,4}(?:,\d{1,4})?$/,ENCODING=/^[a-z0-9-]{1,20}$/i;
+const NUM=/^\d{1,7}$/,CONTEXT=/^\d{1,4}$/,ENCODING=/^[a-z0-9-]{1,20}$/i;
 const PS_PATH={'-path':'path','-literalpath':'path'};
 const GET_CONTENT={kind:'read',flags:['-raw','-force'],values:{...PS_PATH,'-totalcount':NUM,'-head':NUM,'-first':NUM,'-tail':NUM,'-last':NUM,'-readcount':NUM,'-encoding':ENCODING}};
 const PS_LIST={kind:'list',flags:['-force','-name','-file','-directory','-hidden'],recursive:['-recurse','-depth'],values:{...PS_PATH,'-depth':NUM}};
@@ -155,6 +155,8 @@ const READ_COMMANDS={
 function readCommandSafe(policy,command,words,cwd) {
   const spec=READ_COMMANDS[command];
   if(words.some(w=>w.startsWith('@')||w.includes('~')))return false;
+  // PowerShell reads a,b as two paths, and env:NAME, variable:x, HKLM:… as provider paths (pwsh on Linux too).
+  if(words.some(w=>w.includes(',')||(/^[A-Za-z][\w-]*:/.test(w)&&!/^[A-Za-z]:[\\/]/.test(w))))return false;
   // Values of -Path/-LiteralPath are files whatever their position; only a positional word can be the pattern.
   const files=[],named=[];let pattern=false,recursive=false;
   for(let i=0;i<words.length;i++) {
@@ -196,8 +198,9 @@ function commandSafe(policy,script,cwd) {
     if(parts.at(-1)==='')parts.pop();
     return parts.length>1&&parts.every(p=>p&&commandSafe(policy,p,cwd));
   }
-  // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter.
-  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?\u2013\u2014\u2015]/.test(script))return false;
+  // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter, and a,b as two
+  // arguments (a commit message's commas are masked above).
+  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?,\u2013\u2014\u2015]/.test(script))return false;
   if(process.platform!=='win32'&&script.includes('\\'))return false;
   if(script.includes('&&'))return script.split('&&').every(part=>commandSafe(policy,part,cwd));
   if(script.includes('&'))return false;
