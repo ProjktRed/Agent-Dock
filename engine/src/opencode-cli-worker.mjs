@@ -1,5 +1,6 @@
 import {spawn} from 'node:child_process';
-import {mkdir,open,readFile,rm} from 'node:fs/promises';
+import {mkdir} from 'node:fs/promises';
+import {lockHeld,withBusyLock} from './busy-lock.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {atomicWriteJson} from './dashboard-state.mjs';
@@ -164,19 +165,10 @@ export class OpenCodeCliWorker {
   this.stateDir=path.resolve(stateDir);this.workspace=path.resolve(workspace);this.lockPath=path.join(this.stateDir,'cline.busy.lock');
   this.options={command:opencodeCommand??command,workspace:this.workspace,providerDescriptor,model,timeoutSeconds,env,spawnProcess};this.steps=steps;this.toolGuard=toolGuard;this.launch=launch;
  }
- async isBusy(){
-  try{
-   const pid=Number((await readFile(this.lockPath,'utf8')).trim());
-   if(Number.isInteger(pid)&&pid>0){try{process.kill(pid,0);return true;}catch(error){if(error.code!=='ESRCH')return true;}}
-   await rm(this.lockPath,{force:true});
-  }catch(error){if(error.code!=='ENOENT')throw error;}
-  return false;
- }
+ async isBusy(){return lockHeld(this.lockPath);}
  async withExclusive(operation){
   await mkdir(this.stateDir,{recursive:true});
-  if(await this.isBusy())return null;
-  let lock;try{lock=await open(this.lockPath,'wx');}catch(error){if(error.code==='EEXIST')return null;throw error;}
-  try{await lock.writeFile(`${process.pid}\n`);return await operation();}finally{await lock.close();await rm(this.lockPath,{force:true});}
+  return withBusyLock(this.lockPath,operation);
  }
  async run(prompt,hooks={}){
   const onEvent=hooks.onEvent??(()=>{}),provider=this.options.providerDescriptor;

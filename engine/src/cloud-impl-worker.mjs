@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lockHeld, withBusyLock } from "./busy-lock.mjs";
 import path from "node:path";
 import { CLAUDE_SETTING_SOURCES, claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
 import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
@@ -89,31 +90,12 @@ export class CloudImplementationWorker {
   }
 
   async isBusy() {
-    try {
-      const pid = Number((await readFile(this.lockPath, "utf8")).trim());
-      if (Number.isInteger(pid) && pid > 0) {
-        try { process.kill(pid, 0); return true; } catch (error) { if (error.code !== "ESRCH") return true; }
-      }
-      await rm(this.lockPath, { force: true });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    return false;
+    return lockHeld(this.lockPath);
   }
 
   async withExclusive(operation) {
     await mkdir(this.stateDir, { recursive: true });
-    if (await this.isBusy()) return null;
-    let lock;
-    try { lock = await open(this.lockPath, "wx"); }
-    catch (error) { if (error.code === "EEXIST") return null; throw error; }
-    try {
-      await lock.writeFile(`${process.pid}\n`);
-      return await operation();
-    } finally {
-      await lock.close();
-      await rm(this.lockPath, { force: true });
-    }
+    return withBusyLock(this.lockPath, operation);
   }
 
   async run(prompt, hooks = {}) {

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import {clineSkillEnv} from './skill-isolation.mjs';
 import { constants } from "node:fs";
-import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { lockHeld, withBusyLock } from "./busy-lock.mjs";
 import os from "node:os";
 import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
@@ -573,23 +574,7 @@ export class ClineCliWorker {
   }
 
   async isBusy() {
-    try {
-      const contents = await readFile(this.lockPath, "utf8");
-      const pid = Number(contents.trim());
-      let alive = Number.isInteger(pid) && pid > 0;
-      if (alive) {
-        try {
-          process.kill(pid, 0);
-        } catch (error) {
-          alive = error.code !== "ESRCH";
-        }
-      }
-      if (alive) return true;
-      await rm(this.lockPath, { force: true });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    return this.checkExternalBusy();
+    return (await lockHeld(this.lockPath)) || this.checkExternalBusy();
   }
 
   async run(prompt, hooks = {}) {
@@ -718,22 +703,7 @@ export class ClineCliWorker {
 
   async withExclusive(operation) {
     await mkdir(this.stateDir, { recursive: true });
-    if (await this.isBusy()) return null;
-    let lock;
-    try {
-      lock = await open(this.lockPath, "wx");
-    } catch (error) {
-      if (error.code === "EEXIST") return null;
-      throw error;
-    }
-    try {
-      await lock.writeFile(`${process.pid}\n`);
-      if (await this.checkExternalBusy()) return null;
-      return await operation();
-    } finally {
-      await lock.close();
-      await rm(this.lockPath, { force: true });
-      defaultDiagnostic("BUSY_LOCK_RELEASED", { lockPath: this.lockPath });
-    }
+    if (await this.checkExternalBusy()) return null;
+    return withBusyLock(this.lockPath, operation, { beforeOperation: () => this.checkExternalBusy() });
   }
 }
