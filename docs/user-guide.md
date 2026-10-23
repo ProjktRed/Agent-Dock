@@ -97,6 +97,21 @@ mode for overnight work, and check the run report in the morning.
   the PC was off runs at the next sign-in (reported as missed when it is past the grace period). Wake to
   run is Windows only. Keep the AppImage where it is, or open the new copy once so the timers follow it.
 
+## Project checks and safety
+
+Checks such as `npm test` run the project's own scripts and tests, which agents can edit. Settings ›
+Execution & safety › **Project checks** decides how much Agent Dock trusts them:
+
+- **Off (the default)**: while a run is going, Agent Dock watches its own settings and engine files.
+  Anything else that changes them is put back (the changed copy is kept beside it, named
+  `<file>.changed-<time>`), and every run stops with a notice. Review the last task's changes before
+  you resume.
+- **On**: checks run as your own code and nothing is watched. Use it only for projects whose tests you
+  trust completely.
+
+Neither setting is a sandbox: a check can still read the project's files. Turning off the tool guard,
+trusting checks, unprotecting a path or changing a program Agent Dock runs asks you to confirm first.
+
 ## Spend and usage
 
 - Overview › Usage shows your Codex and Claude plan windows as reported by the CLIs themselves.
@@ -138,6 +153,12 @@ and after QA passes (a report). Templates include a second-opinion QA on the oth
   Agent Dock stops rather than guess. Check `git status`, then Resume or set the task aside.
 - **QA could not run its tools**: an environment problem, not the code. Fix the tool or permission,
   then press **Retry QA**.
+- **"Stopped every run: something other than Agent Dock changed its own files"**: a check or another
+  program changed Agent Dock's settings or engine during a run. The settings were put back; look at
+  the `.changed-` copy in the config folder and at the last task's diff before you resume. If Agent
+  Dock's engine files were changed, reinstall or update before running again.
+- **Remote approvals by email**: an email reply can only Stop or Dismiss. Resume, Elevate, Resolve and
+  Retry QA are answered in the app or with the Telegram buttons.
 - **EPERM on Windows**: antivirus or indexing locked a state file. Excluding the engine state
   folders from real-time scanning usually fixes it.
 - **An update failed**: nothing is installed unless every file matches the signed release. Try

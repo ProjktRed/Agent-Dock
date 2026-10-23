@@ -18,14 +18,40 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   content moved to a previously unprotected filename.
 - Assessment cannot choose an arbitrary QA shell program. QA commands are limited to project npm
   scripts, supported local check tools, and bounded Git inspection. Shell expressions, interpreters,
-  redirection, package installation and ambiguous path syntax are refused. Project scripts and their
-  dependencies still execute as trusted code: these guards are **not an OS sandbox**, and do not
-  defend against a malicious project script, a compromised CLI, concurrent filesystem races, or a
-  process already running as your user. CLI startup configuration/automatic context loading is also
-  outside tool-hook mediation.
-- API keys entered in Agent Dock are encrypted with your Windows account (DPAPI through Electron
-  `safeStorage`), never leave the main process except as environment variables for the process that
-  needs them, and are redacted from logs, prompts, notifications and the diagnostics export.
+  redirection, package installation and ambiguous path syntax are refused. Every check argument,
+  including the value in `--option=value`, is path-checked; options that write reports or build output
+  are refused, and options that rewrite files (`--write`, `--fix`, `-u`) need every target readable.
+  History reads (`git show`, `git log`) name commits only, and read commands take only their
+  read-only options.
+- **Project checks** (Settings › Execution & safety). A check such as `npm test` runs the project's
+  scripts and tests, which agents can edit. These guards are **not an OS sandbox**: a check runs as your
+  user and can read the project's files. Off (the default) means checks are untrusted: while any run is
+  going, the app compares its config files with what it last wrote, puts back anything else changed
+  (keeping the changed copy beside it as `<name>.changed-<time>`), and stops every run when those or its
+  engine files changed. Turning it on needs a native confirmation, and a settings import cannot turn it
+  on. The watch works while Agent Dock is open; changes made while it is closed are not seen.
+- Packaged builds carry a list of the engine's files and their SHA-256 hashes inside `app.asar`
+  (whose own integrity Electron checks). The app compares the installed engine and update script with
+  it before it loads or starts the engine, and refuses changed, missing or added files.
+- These guards do not defend against a compromised CLI, concurrent filesystem races, or a process
+  already running as your user. CLI startup configuration/automatic context loading is also outside
+  tool-hook mediation.
+- Saving settings from the window is checked in the main process: a malformed save keeps the current
+  values, and a change that weakens a safety control or chooses a program to run (tool guard off,
+  trusted checks, engine guardrails off, an unprotected path, remote approvals, the llama.cpp launcher,
+  the Node runtime, the update source) needs a native confirmation the window cannot answer.
+- API keys entered in Agent Dock, and connection environment variables marked secret, are encrypted
+  with your OS account (DPAPI on Windows, through Electron `safeStorage`), never leave the main process
+  except as environment variables for the process that needs them, and are redacted from logs, prompts,
+  notifications and the diagnostics export. Config files are written 0600 in a 0700 folder.
+- The diagnostics export leaves out task prompts, objectives and role instructions (only their length
+  is shown).
+- The action log's entries are hash-chained and signed (HMAC-SHA256) with a key the app keeps
+  encrypted; engines get the key, the processes they start do not. A rewritten entry fails verification
+  even when the chain is recomputed.
+- Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
+  reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
+- llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.
 - A Cline or OpenCode worker on a cloud provider gets that key in its environment, so a worker could
   read it. The control that bounds a leak is a spending limit on the key itself: use a key made only for
   Agent Dock, with a low limit set at the provider (for example an OpenRouter per-key credit limit). The
@@ -52,7 +78,7 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   guard off, and its protected paths are added to yours.
 - The standalone engine dashboard requires a fresh random bearer token for every API route. Its
   browser launch link carries the token in a fragment, which the page removes from history and saves
-  per tab. A server restart invalidates older tokens. Tokens are not written to engine logs. Host,
+  per tab. The link is handed to the browser through a private launch page, never on a command line. A server restart invalidates older tokens. Tokens are not written to engine logs. Host,
   origin and JSON request checks remain enforced.
 - Updates install only when the release's manifest carries a valid Ed25519 signature from the key
   built into the app, and the download's size and SHA-256 match that manifest.
