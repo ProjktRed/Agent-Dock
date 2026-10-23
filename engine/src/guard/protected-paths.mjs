@@ -28,7 +28,8 @@ export function configureProtection({workspace,stateDir,paths}) {
   process.env.AGENT_DOCK_PROTECTED_PATHS=JSON.stringify([...new Set([...values,engineRoot,path.resolve(stateDir)])]);
 }
 
-function canonical(file) {
+/** The real location of a path that may not exist yet: its closest existing parent resolved. */
+export function canonical(file) {
   let ancestor=file;
   for(;;) {
     try{return path.resolve(realpathSync.native(ancestor),path.relative(ancestor,file));}
@@ -109,8 +110,81 @@ function pathsIn(input,out=[]) {
 
 // A QA commit message is free text: it may span lines and contain <>()[]!?*;| inside its quotes,
 // but nothing a shell expands in quotes ($, backtick, %, ^, backslash). It becomes one opaque word.
+// cmd.exe does not read ' as a quote, so a single-quoted message must also be safe unquoted there:
+// no & | < > " ! and no line break.
 const COMMIT_MESSAGE='__AGENT_DOCK_COMMIT_MESSAGE__';
-const quotedMessages=script=>script.replace(/(\s-m\s+)(?:"([^"$`%^\\\0]*)"|'([^'$`%^\\\0]*)')(?=\s|$)/g,(_,flag,dq,sq)=>((dq??sq).trim()?flag+COMMIT_MESSAGE:_));
+const quotedMessages=script=>script.replace(/(\s-m\s+)(?:"([^"$`%^\\\0]*)"|'([^'$`%^\\\0&|<>"!\r\n]*)')(?=\s|$)/g,(_,flag,dq,sq)=>((dq??sq).trim()?flag+COMMIT_MESSAGE:_));
+
+// History may name commits only: git prints the contents of a blob given to show or log.
+const HEAD_REV=/^HEAD(?:~\d{1,4}|\^{1,4})?$/;
+function commitRevs(words,cwd) {
+  for(const word of words)for(const rev of word.split('..')) {
+    if(HEAD_REV.test(rev))continue;
+    try{if(execFileSync('git',['cat-file','-t',rev],{cwd,encoding:'utf8',windowsHide:true,timeout:5000,stdio:['ignore','pipe','ignore']}).trim()!=='commit')return false;}catch{return false;}
+  }
+  return true;
+}
+
+// Options a project check may not take: they write reports or build output somewhere, or load
+// configuration and plugins from a path.
+const CHECK_OUTPUT_OPTION=/^--?(?:o|out[\w.-]*|output[\w.-]*|cache-location|cache-file|declarationdir|tsbuildinfofile|generatetrace|plugin[\w-]*|rulesdir|resolve-plugins-relative-to|ignore-path)$/i;
+// Options that rewrite the files a check is given (formatting, fixes, snapshots): each of those files,
+// and everything under a folder, must be readable and outside protected paths.
+const CHECK_REWRITE_OPTION=/^--?(?:write|fix[\w-]*|u|update[\w-]*)$/i;
+
+// Read-only commands and the options each may take. A value is a number, an encoding, a search
+// pattern or a path (checked like any other file). Anything else (wildcards, -Stream, -Wait, --pre,
+// pattern files, findstr /s) is refused. PowerShell long options are matched without case.
+const NUM=/^\d{1,7}$/,CONTEXT=/^\d{1,4}(?:,\d{1,4})?$/,ENCODING=/^[a-z0-9-]{1,20}$/i;
+const PS_PATH={'-path':'path','-literalpath':'path'};
+const GET_CONTENT={kind:'read',flags:['-raw','-force'],values:{...PS_PATH,'-totalcount':NUM,'-head':NUM,'-first':NUM,'-tail':NUM,'-last':NUM,'-readcount':NUM,'-encoding':ENCODING}};
+const PS_LIST={kind:'list',flags:['-force','-name','-file','-directory','-hidden'],recursive:['-recurse','-depth'],values:{...PS_PATH,'-depth':NUM}};
+const UNIX_SEARCH={kind:'search',short:'nilcwFvHhsSEr',flags:['-R','--line-number','--ignore-case','--files-with-matches','--count','--word-regexp','--fixed-strings','--invert-match','--no-heading','--heading','--with-filename','--no-filename','--column','--smart-case','--case-sensitive','--color=never'],
+  values:{'-e':'pattern','--regexp':'pattern','-m':NUM,'--max-count':NUM,'-A':NUM,'-B':NUM,'-C':NUM,'--context':NUM}};
+const READ_COMMANDS={
+  cat:{...GET_CONTENT,short:'n'},type:GET_CONTENT,'get-content':GET_CONTENT,gc:GET_CONTENT,
+  head:{kind:'read',values:{'-n':NUM,'-c':NUM}},tail:{kind:'read',values:{'-n':NUM,'-c':NUM}},
+  wc:{kind:'read',short:'lwcm'},
+  ls:{...PS_LIST,short:'la1hR',recursive:['-recurse','-depth','-r','-R']},dir:PS_LIST,'get-childitem':PS_LIST,gci:PS_LIST,
+  'test-path':{kind:'exists',values:PS_PATH},'resolve-path':{kind:'exists',values:PS_PATH},
+  rg:{...UNIX_SEARCH,flags:[...UNIX_SEARCH.flags,'--files']},grep:UNIX_SEARCH,
+  findstr:{kind:'search',slash:['/i','/n','/l','/r','/v','/x','/b','/e','/m','/o']},
+  'select-string':{kind:'search',flags:['-simplematch','-casesensitive','-list','-notmatch','-allmatches','-quiet','-raw'],values:{...PS_PATH,'-pattern':'pattern','-context':CONTEXT,'-encoding':ENCODING}},
+};
+
+function readCommandSafe(policy,command,words,cwd) {
+  const spec=READ_COMMANDS[command];
+  if(words.some(w=>w.startsWith('@')||w.includes('~')))return false;
+  const files=[];let pattern=false,recursive=false;
+  for(let i=0;i<words.length;i++) {
+    const word=words[i];
+    if(command==='findstr'&&word.startsWith('/')) {
+      if(/^\/c:./i.test(word)){pattern=true;continue;}
+      if(!spec.slash.includes(word.toLowerCase()))return false;
+      continue;
+    }
+    if(!word.startsWith('-')||word==='-'){if(word==='-')return false;files.push(word);continue;}
+    const key=/^-[a-z]{2,}$/i.test(word)?word.toLowerCase():word;
+    if(spec.recursive?.includes(key)){recursive=true;if(key!=='-depth')continue;}
+    if(spec.flags?.includes(key)){if(key==='--files')pattern=true,recursive=true;continue;}
+    const kind=spec.values?.[key];
+    if(kind) {
+      const value=words[++i];if(value===undefined)return false;
+      if(kind==='path')files.push(value);
+      else if(kind==='pattern')pattern=true;
+      else if(!kind.test(value))return false;
+      continue;
+    }
+    // Short options may be combined: -rn, -la.
+    if(spec.short&&/^-[A-Za-z0-9]{2,}$/.test(word)&&[...word.slice(1)].every(c=>spec.short.includes(c))){if(command==='ls'&&/[rR]/.test(word))recursive=true;continue;}
+    if(spec.short&&/^-[A-Za-z0-9]$/.test(word)&&spec.short.includes(word[1]))continue;
+    return false;
+  }
+  if(spec.kind==='search'&&!pattern){if(!files.length)return false;files.shift();}
+  const targets=files.length?files:['.'];
+  if(spec.kind==='exists'||(spec.kind==='list'&&!recursive))return targets.every(file=>!/[*?\[\]{}]/.test(file)&&!isProtectedPath(policy,file,cwd));
+  return targets.every(file=>safeRead(policy,file,cwd));
+}
 
 function commandSafe(policy,script,cwd) {
   script=stripCheckOutputFilter(script);
@@ -138,10 +212,13 @@ function commandSafe(policy,script,cwd) {
     if(command.startsWith('npm')){const end=words[0]==='run'?2:1;if(words.length>end&&words[end]!=='--')return false;}
     if(command.startsWith('npx')&&!['tsc','eslint','prettier','vitest','playwright'].includes(words[0]))return false;
     if(words.some(w=>/^--(?:prefix|cwd|config|require|import|eval|package|call|yes|script-shell|node-options|userconfig|globalconfig)(?:=|$)/i.test(w)))return false;
+    if(words.some(w=>CHECK_OUTPUT_OPTION.test(w.split('=')[0])))return false;
+    const rewrites=words.some(w=>CHECK_REWRITE_OPTION.test(w.split('=')[0]));
     const normalized=script.trim().replace(/^(npm|npx)\.cmd\b/i,'$1').replace(/\s+/g,' ');
     const approved=[policy.qaCommand,...(policy.approvedCommands??[]),'npm test','npm run test','npm run lint','npm run typecheck','npm run build','npm run format:check'];
     if(!approved.includes(normalized))return false;
-    return words.every(w=>!w.includes('/')&&!w.includes('\\')&&!w.startsWith('.')||!isProtectedPath(policy,w,cwd));
+    // Every argument and every --option=value may name a file; none may be protected.
+    return words.slice(command.startsWith('npm')&&words[0]==='run'?2:1).flatMap(w=>{const value=w.match(/^-[^=]*=(.*)$/s);return value?[value[1]]:w.startsWith('-')?[]:[w];}).every(w=>!w||(rewrites?safeRead(policy,w,cwd):!isProtectedPath(policy,w,cwd)));
   }
   if(command==='git') {
     if(words.some(w=>w.startsWith(':')||w.startsWith(':/')))return false;
@@ -155,8 +232,8 @@ function commandSafe(policy,script,cwd) {
     // History without content: commit messages and file names, never a patch (it could show protected files).
     const REV=/^(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40})(?:\.\.(?:HEAD(?:~\d{1,4}|\^{1,4})?|[a-f0-9]{7,40}))?$/;
     const LIST=new Set(['--oneline','--stat','--name-only','--name-status','--no-color','--decorate','--no-decorate']);
-    if(words[0]==='log')return words.slice(1).every((w,i,all)=>LIST.has(w)||/^-\d{1,4}$/.test(w)||(w==='-n'&&/^\d{1,4}$/.test(all[i+1]??''))||(/^\d{1,4}$/.test(w)&&all[i-1]==='-n')||REV.test(w));
-    if(words[0]==='show'&&words.slice(1).some(w=>['--stat','--name-only','--name-status'].includes(w)))return words.slice(1).every(w=>LIST.has(w)||REV.test(w))&&words.slice(1).filter(w=>REV.test(w)).length<=1;
+    if(words[0]==='log')return words.slice(1).every((w,i,all)=>LIST.has(w)||/^-\d{1,4}$/.test(w)||(w==='-n'&&/^\d{1,4}$/.test(all[i+1]??''))||(/^\d{1,4}$/.test(w)&&all[i-1]==='-n')||REV.test(w))&&commitRevs(words.slice(1).filter(w=>REV.test(w)&&!/^\d{1,4}$/.test(w)),cwd);
+    if(words[0]==='show'&&words.slice(1).some(w=>['--stat','--name-only','--name-status'].includes(w)))return words.slice(1).every(w=>LIST.has(w)||REV.test(w))&&words.slice(1).filter(w=>REV.test(w)).length<=1&&commitRevs(words.slice(1).filter(w=>REV.test(w)),cwd);
     if(words[0]==='show'&&words.length===2&&/^(?:HEAD|[a-f0-9]{7,40}):/.test(words[1]))return safeRead(policy,words[1].slice(words[1].indexOf(':')+1),cwd);
     if(['add','commit'].includes(words[0])&&policy.allowGitCommit) {
       // QA commits only after engine scope verification; reject paths naming protected content.
@@ -178,10 +255,8 @@ function commandSafe(policy,script,cwd) {
   }
   // Conservative grammar: no wrappers, expansion, scripts, response files, or write-capable flags.
   if(['pwd','get-location'].includes(command))return words.length===0;
-  if(!['cat','type','get-content','head','tail','ls','dir','get-childitem','rg','grep','findstr','select-string','wc','test-path','resolve-path'].includes(command))return false;
-  if(words.some(w=>w.startsWith('-')||w.startsWith('@')||w.includes('~')))return false;
-  if(['rg','grep','findstr','select-string'].includes(command))words.shift();
-  return (words.length?words:['.']).every(file=>safeRead(policy,file,cwd));
+  if(!Object.hasOwn(READ_COMMANDS,command))return false;
+  return readCommandSafe(policy,command,words,cwd);
 }
 
 export function protectedActionReason(policy,action) {

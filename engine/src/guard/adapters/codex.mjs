@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { decide } from "../decide.mjs";
 import { parsePatchPaths } from "../action.mjs";
 import {stripCheckOutputFilter} from '../check-output-filter.mjs';
+import {canonical} from '../protected-paths.mjs';
 import {
   CODEX_EDIT_MUST_BE_PATCH,
   codexHookError,
@@ -21,7 +22,12 @@ const READ_ONLY = [
 ];
 const CHECKS = ["npm test", "npm run test", "npm run typecheck", "npm run lint", "npx tsc", "npx eslint", "npx prettier --check", "npx vitest run"];
 
-const norm = (p) => path.resolve(p).replaceAll("\\", "/").toLowerCase();
+// Real paths only (a link inside the workspace may point outside it); case folds only where the
+// file system does.
+const FOLDS_CASE = process.platform === "win32" || process.platform === "darwin";
+const key = (p) => { const s = p.replaceAll("\\", "/"); return FOLDS_CASE ? s.toLowerCase() : s; };
+const real = (base, file) => { try { return canonical(path.resolve(base, file)); } catch { return null; } };
+const inside = (root, file) => { const r = path.relative(root, file); return r === "" || (!r.startsWith(".." + path.sep) && r !== ".." && !path.isAbsolute(r)); };
 const HOOK_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "codex-scope-hook.mjs");
 
 /** Files a Codex patch adds, updates, deletes or moves to. Null means no patch input. */
@@ -113,11 +119,12 @@ export const adapter = {
   patchPaths: (input) => parsePatchPaths(input, { requireBegin: true, trimPaths: true }),
   shellScript,
   approvedPath(policy, file, cwd = policy.workspace) {
-    const allowed = new Set(policy.allowedPaths.map((p) => norm(path.resolve(policy.workspace, p))));
-    return allowed.has(norm(path.resolve(cwd || policy.workspace, file)));
+    const root = real(policy.workspace, "."), target = real(cwd || policy.workspace, file);
+    if (!root || !target || !inside(root, target)) return false;
+    return policy.allowedPaths.some((p) => { const scope = real(policy.workspace, p); return scope !== null && key(scope) === key(target); });
   },
   validatePolicy(policy) {
-    return new Set(policy.allowedPaths.map((p) => norm(path.resolve(policy.workspace, p))));
+    return new Set(policy.allowedPaths.map((p) => key(path.resolve(policy.workspace, p))));
   },
   approvedCommand(policy, script) {
     return !policy.toolGuard || shellAllowed(script, policy.qaCommand);

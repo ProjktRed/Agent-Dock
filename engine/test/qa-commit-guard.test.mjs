@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {execFileSync} from 'node:child_process';
 import {protectedActionReason} from '../src/guard/protected-paths.mjs';
 
 // Found in a live run (0.20.1): a Claude Code QA could never commit, because Claude writes
@@ -27,6 +28,9 @@ test('QA may commit with a free-text message, but nothing a shell would expand o
     'git commit -m "x" && rm -rf src', 'git commit -m "x"; rm -rf src', 'git commit -m ""', 'git commit -q', 'git commit',
     'git -c core.hooksPath=x commit -m "x"', 'git add .env && git commit -m "x"',
     'git add src/index.js; rm -rf src', 'git status;', 'npm test | tail -20; npm test', 'git add src/index.js;; git status',
+    // cmd.exe does not read ' as a quote: these would run `type .env`.
+    "git commit -m 'x & type .env & echo '", "git commit -m 'x | type .env'", "git commit -m 'x > out.txt'",
+    "git commit -m 'a \" & type .env & \"'", "git commit -m 'line\ntype .env'",
   ];
   for(const command of allowed)assert.equal(ok(command),true,`allowed: ${command}`);
   for(const command of denied)assert.equal(ok(command),false,`denied: ${command}`);
@@ -36,8 +40,16 @@ test('QA may commit with a free-text message, but nothing a shell would expand o
 // Found in a live run: the Resolver could not see that QA had already committed, because git log was refused.
 test('orchestrator roles may read history (messages and file names), never a patch',async t=>{
   const workspace=await mkdtemp(path.join(os.tmpdir(),'qa-log-'));t.after(()=>rm(workspace,{recursive:true,force:true}));
+  const git=(...args)=>execFileSync('git',args,{cwd:workspace,encoding:'utf8'}).trim();
+  git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+  await writeFile(path.join(workspace,'.env'),'SECRET=synthetic\n');await writeFile(path.join(workspace,'a.txt'),'a');
+  git('add','-f','.');git('commit','-qm','one');const first=git('rev-parse','--short','HEAD');
+  await writeFile(path.join(workspace,'a.txt'),'b');git('commit','-qam','two');const second=git('rev-parse','--short','HEAD');
+  const blob=git('rev-parse','HEAD:.env'),tree=git('rev-parse','HEAD^{tree}');
   const policy={workspace,protectedPaths:['.git/','.env*'],allowGitCommit:false};
   const ok=command=>protectedActionReason(policy,{kind:'command',tool:'Bash',commands:[command],cwd:workspace})===null;
-  for(const command of ['git log --oneline -5','git log --oneline -n 3','git log --stat 03dc596..HEAD','git show --stat HEAD','git show --name-only 3eafc11','git log --name-status HEAD~2..HEAD','git stash list','cat a.txt; git ls-files; git stash list'])assert.equal(ok(command),true,`allowed: ${command}`);
-  for(const command of ['git log -p','git log --patch','git show HEAD','git show 3eafc11','git log --format=x','git show --stat HEAD -- .env','git show --stat HEAD HEAD~1','git log --all','git log -n','git log --output=x','git stash show -p','git stash pop','git stash list --format=x'])assert.equal(ok(command),false,`denied: ${command}`);
+  for(const command of ['git log --oneline -5','git log --oneline -n 3',`git log --stat ${first}..HEAD`,'git show --stat HEAD',`git show --name-only ${second}`,'git log --name-status HEAD~1..HEAD','git stash list','cat a.txt; git ls-files; git stash list'])assert.equal(ok(command),true,`allowed: ${command}`);
+  for(const command of ['git log -p','git log --patch','git show HEAD',`git show ${second}`,'git log --format=x','git show --stat HEAD -- .env','git show --stat HEAD HEAD~1','git log --all','git log -n','git log --output=x','git stash show -p','git stash pop','git stash list --format=x','git show --stat 0123456'])assert.equal(ok(command),false,`denied: ${command}`);
+  // A blob ID (git ls-files --stage prints them) would print the protected file itself.
+  for(const object of [blob,blob.slice(0,10),tree])for(const command of [`git show --stat ${object}`,`git show --name-only ${object}`,`git log --stat ${object}`,`git log --oneline ${first}..${object}`])assert.equal(ok(command),false,`denied: ${command}`);
 });
