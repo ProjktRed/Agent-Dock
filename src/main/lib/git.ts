@@ -37,7 +37,26 @@ export function isGitRepo(dir: string): boolean {
   return existsSync(path.join(dir, ".git"));
 }
 
+/**
+ * At most this many workspaces are read at once (five git processes each): with many projects, the first
+ * poll after start would otherwise start hundreds of git processes together (test report F8).
+ */
+const GIT_INFO_AT_ONCE = 3;
+let reading = 0;
+const queued: (() => void)[] = [];
+
 export async function gitInfo(workspace: string): Promise<GitInfo> {
+  if (reading >= GIT_INFO_AT_ONCE) await new Promise<void>((resolve) => queued.push(resolve));
+  reading++;
+  try {
+    return await readGitInfo(workspace);
+  } finally {
+    reading--;
+    queued.shift()?.();
+  }
+}
+
+async function readGitInfo(workspace: string): Promise<GitInfo> {
   if (!existsSync(workspace)) return { isRepo: false, branch: null, head: null, remote: null, ahead: null, behind: null, changedFiles: [], error: "Folder not found" };
   if (!isGitRepo(workspace)) return { isRepo: false, branch: null, head: null, remote: null, ahead: null, behind: null, changedFiles: [] };
   const [status, branch, head, remote, counts] = await Promise.all([

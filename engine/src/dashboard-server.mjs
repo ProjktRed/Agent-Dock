@@ -111,6 +111,14 @@ export function requestRefusal(request, port) {
 export async function startDashboardServer({ stateDir, workspace, port = 4173, onControl = async () => {} }) {
   const token=randomBytes(32).toString('hex');
   const state = new DashboardState({ stateDir });
+  // One git snapshot per second at most, shared by every request meanwhile (many open dashboards, test report F9).
+  let git = { at: 0, value: null };
+  const recentGitSnapshot = () => {
+    if (Date.now() - git.at < 1000) return git.value;
+    git = { at: Date.now(), value: gitSnapshot(workspace) };
+    git.value.catch(() => { git = { at: 0, value: null }; });
+    return git.value;
+  };
   const server = createServer(async (request, response) => {
     try {
       response.setHeader('referrer-policy','no-referrer');
@@ -129,7 +137,7 @@ export async function startDashboardServer({ stateDir, workspace, port = 4173, o
           state.readLive(),
           state.readControl(),
           state.readEvents(40),
-          gitSnapshot(workspace),
+          recentGitSnapshot(),
         ]);
         const snapshot = live ?? {
             task: null,
