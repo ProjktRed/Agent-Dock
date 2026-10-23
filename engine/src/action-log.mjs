@@ -34,6 +34,8 @@ export function useActionLogKey(hex, since = null) {
   keySince = logKey && Number.isFinite(since) ? since : null;
 }
 useActionLogKey(process.env.AGENT_DOCK_LOG_KEY);
+/** The key as hex, for a task engine this engine starts. */
+export const actionLogKeyHex = () => logKey?.toString("hex") ?? null;
 const entryMac = (key, hash) => createHmac("sha256", key).update(hash).digest("hex");
 /** Entries written without the key on purpose: the terminal stop-all command (engine/src/stop-all.mjs). */
 const keylessStop = (entry) => entry.source === "cli" && (entry.type === "stopped" || entry.type === "control-stop");

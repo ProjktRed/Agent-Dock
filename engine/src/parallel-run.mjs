@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson, DashboardState } from "./dashboard-state.mjs";
+import { actionLogKeyHex } from "./action-log.mjs";
 import { mergeDeferred, objectiveWithDeferred } from "./defer-task.mjs";
 import { taskPrioritySection } from "./task-priority.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
@@ -108,9 +109,11 @@ export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, e
 }
 
 /** A task engine's environment: the parent's without AGENT_DOCK_NOTIFY, so only the parent sends notifications. */
-export function childEnv(env = process.env) {
+export function childEnv(env = process.env, logKey = actionLogKeyHex()) {
   const out = {};
   for (const [name, value] of Object.entries(env)) if (name.toUpperCase() !== "AGENT_DOCK_NOTIFY") out[name] = value;
+  // Task engines sign their action log entries too (the key is not in this engine's own environment).
+  if (logKey) out.AGENT_DOCK_LOG_KEY = logKey;
   return out;
 }
 

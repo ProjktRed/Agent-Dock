@@ -54,3 +54,14 @@ test('Windows: programs are resolved from PATH only, not from the current folder
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Defensive review (0.39.0): the action log key stays in the engine; task engines get it, workers never do.
+test("the action log key leaves the engine's environment but reaches task engines", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const script = `import "./src/startup-env.mjs"; import { actionLogKeyHex } from "./src/action-log.mjs"; import { childEnv } from "./src/parallel-run.mjs";
+console.log(JSON.stringify({ env: process.env.AGENT_DOCK_LOG_KEY ?? null, held: actionLogKeyHex(), child: childEnv(process.env).AGENT_DOCK_LOG_KEY ?? null }));`;
+  const key = "cd".repeat(32);
+  const out = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], { cwd: fileURLToPath(new URL("..", import.meta.url)), env: { ...process.env, AGENT_DOCK_LOG_KEY: key }, encoding: "utf8" }).trim().split("\n").at(-1));
+  assert.deepEqual(out, { env: null, held: key, child: key });
+});
