@@ -36,7 +36,7 @@ export function useActionLogKey(hex, since = null) {
 useActionLogKey(process.env.AGENT_DOCK_LOG_KEY);
 const entryMac = (key, hash) => createHmac("sha256", key).update(hash).digest("hex");
 /** Entries written without the key on purpose: the terminal stop-all command (engine/src/stop-all.mjs). */
-const keylessStop = (entry) => entry.source === "cli" && (entry.type === "stopped" || entry.type === "control");
+const keylessStop = (entry) => entry.source === "cli" && (entry.type === "stopped" || entry.type === "control-stop");
 
 /** Long texts (QA output, stack traces) are cut; the log records what happened, not every byte. */
 function compact(event) {

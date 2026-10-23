@@ -349,7 +349,8 @@ export class DashboardState {
   async readEvents(limit = 50) {
     try {
       const lines = (await readFile(this.activityPath, "utf8")).trim().split(/\r?\n/).filter(Boolean);
-      return lines.slice(-limit).map((line) => JSON.parse(line));
+      // A line still being written (or cut by a crash) is skipped, not an error for every reader.
+      return lines.slice(-limit).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw error;

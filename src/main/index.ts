@@ -1359,6 +1359,8 @@ app.whenReady().then(async () => {
     return file ? net.fetch(pathToFileURL(file).toString()) : new Response("Not found", { status: 404 });
   });
   hardenSession(session.defaultSession);
+  // On Linux Chromium downloads spellcheck dictionaries from Google (Windows and macOS use the OS's own): no requests the user did not ask for.
+  if (process.platform === "linux") session.defaultSession.setSpellCheckerEnabled(false);
   // Packaged builds have no application menu (and so no reload or developer-tools shortcuts); text
   // fields keep their own copy, paste and undo keys without it.
   if (app.isPackaged) Menu.setApplicationMenu(null);

@@ -186,3 +186,19 @@ test("a fresh run's events before its first task are not filed under the last ru
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+// AD-06: one half-written last line made the dashboard's status and logs answer 400.
+test("a half-written Activity line is skipped by every reader", async () => {
+  const { mkdtemp, rm, appendFile } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "state-torn-"));
+  try {
+    const state = new DashboardState({ stateDir: dir });
+    await state.record({ type: "assessment-started" });
+    await appendFile(path.join(dir, "activity.ndjson"), '{"type":"qa-pa');
+    assert.deepEqual((await state.readEvents(10)).map((e) => e.type), ["assessment-started"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

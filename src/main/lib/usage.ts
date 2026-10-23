@@ -31,6 +31,8 @@ export function parseInvocationUsage(events: string): { provider: string; input:
     } catch {
       continue;
     }
+    // A row such as null or 42 is not an event; it must not drop the rest of the invocation's usage.
+    if (!event || typeof event !== "object") continue;
     const usage = event.usage as Record<string, number> | undefined;
     if (!usage) continue;
     if (event.type === "turn.completed") {
