@@ -75,7 +75,7 @@ const dashboard = await startDashboardServer({
   },
 });
 console.log(`Dashboard: ${dashboard.url} (authenticated link opened in your browser)`);
-openDashboard(dashboard.launchUrl);
+openDashboard(dashboard.launchUrl, { launchDir: stateDir });
 
 let pending = null;
 try { pending = JSON.parse(await readFile(path.join(stateDir, "pending-codex.json"), "utf8")); }

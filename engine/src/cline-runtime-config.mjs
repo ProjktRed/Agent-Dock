@@ -49,12 +49,16 @@ export function findLlamaServer(env = process.env, platform = process.platform, 
   return null;
 }
 
+export const LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
+
 /**
  * Arguments for starting llama-server directly (no launcher script): router mode over the models folder,
  * on the connection's host and port, with metrics for token counts and the context the worker is told.
  */
 export function llamaServerArgs({ baseUrl, modelsDir, contextTokens = null, thinking = "none" }) {
   const url = new URL(baseUrl);
+  // A server Agent Dock starts has no API key, so it listens on this computer only.
+  if (!LOOPBACK_HOST.test(url.hostname)) throw new Error(`Agent Dock starts llama.cpp only on this computer (127.0.0.1), not on ${url.hostname}. Start a server for a network address yourself, with an API key.`);
   const args = ["--models-dir", modelsDir, "--host", url.hostname, "--port", url.port || "80", "--metrics"];
   if (contextTokens) args.push("--ctx-size", String(contextTokens));
   if (thinking && thinking !== "none") args.push("--reasoning", "on", "--reasoning-effort", thinking);

@@ -62,6 +62,8 @@ export async function collectOllama(base: string, timeoutMs = 8000): Promise<Col
 /** llama-server arguments for a listing-only start: router mode over the folder, on the connection's address. */
 export function llamaServerListArgs(conn: CliConnection): string[] {
   const url = new URL(conn.location);
+  // The server started here has no API key, so it listens on this computer only.
+  if (!/^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i.test(url.hostname)) throw new Error(`Agent Dock starts llama.cpp only on this computer (127.0.0.1), not on ${url.hostname}. Start a server for a network address yourself, with an API key.`);
   return ["--models-dir", conn.modelsDir ?? "", "--host", url.hostname, "--port", url.port || "80"];
 }
 
@@ -92,8 +94,12 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
   if (launcher.trim() && process.platform === "win32") {
     try { line = cmdLine(launcher, ["-ModelsDir", conn.modelsDir]); } catch (error) { return done([], (error as Error).message); }
   }
+  let listArgs: string[] = [];
+  if (!launcher.trim()) {
+    try { listArgs = llamaServerListArgs(conn); } catch (error) { return done([], (error as Error).message); }
+  }
   const child = !launcher.trim()
-    ? spawn(server!, llamaServerListArgs(conn), { cwd: path.dirname(server!), windowsHide: true, stdio: "ignore", detached: process.platform !== "win32" })
+    ? spawn(server!, listArgs, { cwd: path.dirname(server!), windowsHide: true, stdio: "ignore", detached: process.platform !== "win32" })
     : process.platform === "win32"
       ? spawn("cmd.exe", ["/d", "/s", "/c", `"${line}"`], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore", windowsVerbatimArguments: true })
       : spawn(launcher, ["-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), stdio: "ignore", detached: true });
