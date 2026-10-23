@@ -13,6 +13,12 @@ export const ACTION_LABELS: Record<ApprovalAction, string> = {
   "approve-plan": "Approve", "dismiss-plan": "Dismiss", resume: "Resume", elevate: "Elevate", resolve: "Resolve block", "retry-qa": "Retry QA", stop: "Stop",
 };
 const TTL_MS = 12 * 60 * 60_000;
+/**
+ * Email cannot prove who sent a reply (AgentMail reports no SPF/DKIM result, and a From: line is easy to
+ * forge), and its codes travel in plain text: email may only stop a run or dismiss a plan change, within an hour.
+ */
+export const EMAIL_ACTIONS: ReadonlySet<ApprovalAction> = new Set(["stop", "dismiss-plan"]);
+const EMAIL_TTL_MS = 60 * 60_000;
 const MAX_WRONG = 5;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -123,10 +129,15 @@ export class RemoteApprovals {
       } catch (error) { this.o.log?.(`Telegram approval request failed: ${(error as Error).message}`); }
     }
     if (email) {
-      const lines = r.actions.map((a) => `  ${emailToken(r, a, this.o.key)}    ${ACTION_LABELS[a]}`);
+      const lines = r.actions.filter((a) => EMAIL_ACTIONS.has(a)).map((a) => `  ${emailToken(r, a, this.o.key)}    ${ACTION_LABELS[a]}`);
+      const emailExpires = new Date(Math.min(r.expiresAt, r.createdAt + EMAIL_TTL_MS)).toLocaleString("en-US");
+      const others = r.actions.filter((a) => !EMAIL_ACTIONS.has(a)).map((a) => ACTION_LABELS[a]);
+      const decide = others.length ? `\n\n${others.join(", ")}: open Agent Dock${telegram && privateChat(telegram) ? " or use the Telegram buttons" : ""}. Email can only stop a run or dismiss a plan change.` : "";
+      const answer = lines.length
+        ? `\n\nTo answer, reply with exactly one of these lines as the first line of your reply:\n\n${lines.join("\n")}\n\nEach line is a signed code for that action only. It works once, until ${emailExpires}, and only from ${email.to.join(", ")}. Agent Dock re-checks the run before acting; if the situation changed, nothing happens.`
+        : "";
       try {
-        await this.mail(email, `Agent Dock approval: ${r.title} · ${r.projectName} [${r.id}]`,
-          `${r.message}\n\nTo answer, reply with exactly one of these lines as the first line of your reply:\n\n${lines.join("\n")}\n\nEach line is a signed code for that action only. It works once, until ${expires}, and only from ${email.to.join(", ")}. Agent Dock re-checks the run before acting; if the situation changed, nothing happens.`);
+        await this.mail(email, `Agent Dock approval: ${r.title} · ${r.projectName} [${r.id}]`, `${r.message}${answer}${decide}`);
         r.emailed = true;
       } catch (error) { this.o.log?.(`Email approval request failed: ${(error as Error).message}`); }
     }
@@ -142,6 +153,8 @@ export class RemoteApprovals {
     if (r.usedAt) return `Already answered: ${r.result ?? "done"}`;
     if (r.expiresAt <= this.now()) return "This approval has expired. Open Agent Dock to decide.";
     if (!r.actions.includes(action as ApprovalAction)) return "That is not one of the choices for this request.";
+    if (via === "email" && !EMAIL_ACTIONS.has(action as ApprovalAction)) return "Email can only stop a run or dismiss a plan change. Open Agent Dock to decide.";
+    if (via === "email" && this.now() > r.createdAt + EMAIL_TTL_MS) return "Email codes work for an hour; this one has expired. Open Agent Dock to decide.";
     const expected = Buffer.from(signApproval(this.o.key, r, action as ApprovalAction)), got = Buffer.from(String(code));
     if (expected.length !== got.length || !timingSafeEqual(expected, got)) {
       r.wrong = (r.wrong ?? 0) + 1;

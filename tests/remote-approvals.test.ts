@@ -62,7 +62,10 @@ describe("signed remote approvals", () => {
     expect(tg.body.reply_markup.inline_keyboard[0][0].callback_data).toBe(`${r.id}:resume:${signApproval(key, r, "resume")}`);
     const mail = calls.find((c) => c.url.endsWith("/messages/send"))!;
     expect(mail.body.to).toEqual(["me@example.com"]);
-    expect(mail.body.text).toContain(emailToken(r, "resume", key));
+    // Email cannot prove its sender: it carries a code for Stop only, and sends the rest to the app or Telegram.
+    expect(mail.body.text).toContain(emailToken(r, "stop", key));
+    expect(mail.body.text).not.toContain(emailToken(r, "resume", key));
+    expect(mail.body.text).toMatch(/Resume: open Agent Dock or use the Telegram buttons/);
     expect(r.telegramMessageId).toBe(77);
     expect(await approvals.request(ask)).toBeNull();
     const group = await setup({ chatId: "-100123", email: false });
@@ -79,6 +82,12 @@ describe("signed remote approvals", () => {
     expect(await approvals.answer(r.id, "resume", signApproval(key, r, "resume"), "telegram")).toBe("Resume: done");
     expect(await approvals.answer(r.id, "stop", signApproval(key, r, "stop"), "email")).toBe("Already answered: done");
     expect(executed).toEqual([[r.id, "resume", "telegram"]]);
+    // Email: only Stop or Dismiss, within an hour, however right the code.
+    const byMail = (await approvals.request({ ...ask, target: "state:blocked:T3:x" }))!;
+    expect(await approvals.answer(byMail.id, "resume", signApproval(key, byMail, "resume"), "email")).toMatch(/Email can only stop/);
+    tick(61 * 60_000);
+    expect(await approvals.answer(byMail.id, "stop", signApproval(key, byMail, "stop"), "email")).toMatch(/expired/);
+    expect(await approvals.answer(byMail.id, "stop", signApproval(key, byMail, "stop"), "telegram")).toBe("Stop: done");
     const second = (await approvals.request({ ...ask, target: "state:blocked:T2:x" }))!;
     tick(13 * 60 * 60_000);
     expect(await approvals.answer(second.id, "resume", signApproval(key, second, "resume"), "telegram")).toMatch(/expired/);
