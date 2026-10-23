@@ -73,6 +73,16 @@ describe("planner", () => {
     await expect(generatePlan(ws, "Goal", { ...run, model: null }, new AbortController().signal, fetchImpl as never)).rejects.toThrow(/local model/);
   });
 
+  // Retest (0.38.1): a planner cancelled before it started still ran and returned a plan.
+  it("starts nothing when planning was cancelled before it began", async () => {
+    const ws = await tmp();
+    const { fetchImpl, requests } = fakeModel("# Plan");
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(generatePlan(ws, "Goal", { connection: local(), model: "m", apiKey: null }, cancelled.signal, fetchImpl as never)).rejects.toThrow(/cancelled/);
+    expect(requests.length).toBe(0);
+  });
+
   it("saves the plan, commits only that file, and never overwrites an existing plan", async () => {
     const ws = await tmp();
     const git = (...args: string[]) => execFileSync("git", args, { cwd: ws, encoding: "utf8" });

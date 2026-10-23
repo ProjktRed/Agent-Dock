@@ -82,7 +82,7 @@ export function clineRunOptions(settings = SETTINGS.cline) {
   return { retries: settings.retries ?? 6, compaction: settings.compaction ?? "agentic" };
 }
 
-/** OpenCode: the agent's step limit (null keeps the worker's own) and the model variant flag. */
+/** OpenCode: the agent's step limit (null keeps the worker's own) and the model variant (OpenCode 2 has no --variant flag: it goes on the model as provider/model#variant). */
 export function openCodeRunOptions(settings = SETTINGS.opencode) {
-  return { steps: settings.steps ?? null, variantArgs: settings.variant ? ["--variant", settings.variant] : [] };
+  return { steps: settings.steps ?? null, variant: settings.variant ?? null };
 }

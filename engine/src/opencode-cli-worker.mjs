@@ -125,7 +125,7 @@ export async function preflightOpenCode({command='opencode',workspace,env=proces
 
 /** The guarded run: the agent-dock agent, with the variant from CLIs › OpenCode › Settings when one is set. */
 export function openCodeRunArgs(guard,prompt,runOptions=openCodeRunOptions()){
- return ['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}`,...runOptions.variantArgs,'--agent','agent-dock','--auto',prompt];
+ return ['run','--standalone','--format','json','-m',`${guard.providerID}/${guard.model}${runOptions.variant?`#${runOptions.variant}`:''}`,'--agent','agent-dock','--auto',prompt];
 }
 
 export async function launchOpenCode({command='opencode',opencodeCommand,workspace,providerDescriptor,prompt,timeoutSeconds=1800,guard,onStart,onEvent,env=process.env,spawnProcess=spawn}){

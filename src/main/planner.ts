@@ -196,6 +196,8 @@ export async function callPlanner(workspace: string, objective: string, planner:
 /** Generates a plan; one retry with the structural problem when the first answer does not parse. */
 export async function generatePlan(workspace: string, objective: string, planner: PlannerRun, signal: AbortSignal, fetchImpl?: Fetch): Promise<string> {
   if (!objective.trim()) throw new Error("Set an objective; the planner plans toward it.");
+  // Cancelled before it started: no planner CLI or request is started at all.
+  if (signal.aborted) throw new Error("Planning was cancelled.");
   let text = cleanPlanText(await callPlanner(workspace, objective, planner, signal, fetchImpl));
   const problem = planProblem(text);
   if (problem) {

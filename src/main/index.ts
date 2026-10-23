@@ -39,7 +39,7 @@ import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, run, sharedGitOwnerProblem } from "./lib/git";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
-import { interruptedWork } from "./lib/status";
+import { interruptedWork, skipPoll } from "./lib/status";
 import { STAGING, Updater } from "./updater";
 import { collectDiagnostics } from "./diagnostics";
 import { exportSettings, mergeImport, parseSettingsFile } from "./settings-transfer";
@@ -622,7 +622,7 @@ async function pollOnce() {
   const active = store.data.settings.activeProjectId;
   for (const p of store.data.projects) {
     if (p.archived) continue;
-    if (p.id !== active && !engine.isAlive(p.id) && lastStatus.has(p.id)) continue;
+    if (skipPoll({ active: p.id === active, alive: engine.isAlive(p.id), last: lastStatus.get(p.id) })) continue;
     try {
       const status = await engine.status(p);
       if (engine.isStoppingAfterTask(p.id) && status.processAlive) status.label = "Stopping after task";

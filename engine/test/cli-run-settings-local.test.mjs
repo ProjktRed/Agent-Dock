@@ -21,12 +21,13 @@ test("Cline gets the retries and compaction from CLIs › Settings, and Agent Do
   assert.ok(set.indexOf("--retries") < set.indexOf("--config"), "the guard's flags come after");
 });
 
-test("OpenCode gets the variant flag and the step limit from CLIs › Settings", async (t) => {
+// OpenCode 2.0.26 refuses --variant before the guard plugin loads (kadono, 0.38.1); the variant goes on the model.
+test("OpenCode gets the variant on its model and the step limit from CLIs › Settings", async (t) => {
   t.after(() => setCliRunSettings(undefined));
   const guard = { providerID: "local", model: "m" };
   assert.deepEqual(openCodeRunArgs(guard, "p"), ["run", "--standalone", "--format", "json", "-m", "local/m", "--agent", "agent-dock", "--auto", "p"]);
   setCliRunSettings(JSON.stringify({ opencode: { variant: "high", steps: 80 } }));
-  assert.deepEqual(openCodeRunArgs(guard, "p").slice(6, 8), ["--variant", "high"]);
+  assert.deepEqual(openCodeRunArgs(guard, "p"), ["run", "--standalone", "--format", "json", "-m", "local/m#high", "--agent", "agent-dock", "--auto", "p"]);
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-steps-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const providerDescriptor = { id: "ollama", model: "m", baseUrl: "http://127.0.0.1:11434/v1" };

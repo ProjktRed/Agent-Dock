@@ -25,7 +25,7 @@ import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./paralle
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
-import { localLanes } from "./local-parallel.mjs";
+import { implementationLanes } from "./local-parallel.mjs";
 
 installTopLevelDiagnostics();
 
@@ -156,7 +156,7 @@ const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf
 state.carryTask = Boolean(inProgress || pendingCodex || initialTask);
 // Unattended mode too: the run keeps one budget for all its tasks (their engines run without limits of their own).
 // A local model server answers only as many requests at once as it has slots (local-parallel.mjs).
-const capped = lanes > 1 && !singleTask ? await localLanes({ provider: options.provider, lanes, options, baseUrl: implementation.runtime?.baseUrl ?? null }) : { lanes, reason: null };
+const capped = lanes > 1 && !singleTask ? await implementationLanes({ implementation, lanes, options }) : { lanes, reason: null };
 if (capped.reason) {
   console.log(JSON.stringify({ parallel: { lanes: capped.lanes, reason: capped.reason } }));
   await state.record({ type: "parallel-capped", lanes: capped.lanes, message: `Parallel tasks: ${capped.reason}.` }).catch(() => {});

@@ -30,3 +30,12 @@ export async function localLanes({ provider, lanes, options, baseUrl = null, fet
   }
   return { lanes, reason: null };
 }
+
+/**
+ * The lanes for this run's Implementation agent. Only a Cline or OpenCode agent on a local server is
+ * capped; --provider defaults to llamacpp even when Codex or Claude Code implements, so it is not used.
+ */
+export function implementationLanes({ implementation, lanes, options, fetchImpl = globalThis.fetch }) {
+  const provider = implementation.runtime?.requestedProvider ?? implementation.provider;
+  return localLanes({ provider, lanes, options, baseUrl: implementation.runtime?.baseUrl ?? null, fetchImpl });
+}

@@ -30,9 +30,12 @@ const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]
 /** Every Claude Code session reads the user's own settings only, never the workspace's .claude/ settings (hooks, permissions). */
 export const CLAUDE_SETTING_SOURCES = ["--setting-sources", "user"];
 
+/** Where Claude Code keeps its settings and sign-in: the same folder the app's settings editor opens. */
+const CLAUDE_KEPT_ENV = new Set(["CLAUDE_CONFIG_DIR"]);
+
 /** Child sessions must not inherit the launching Claude session's host/session wiring. */
 export function claudeChildEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
+  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => CLAUDE_KEPT_ENV.has(key) || !/^CLAUDE(?:CODE$|_)/.test(key)));
 }
 
 export function extractClaudeResult(stdout) {

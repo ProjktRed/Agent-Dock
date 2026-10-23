@@ -197,3 +197,11 @@ export function interruptedWork(status: Pick<ProjectStatus, "processAlive" | "ru
   }
   return [...open.values()].pop() ?? null;
 }
+
+/**
+ * Projects other than the active one are polled only while something may still change: their engine runs,
+ * or their last status still shows it running (after Stop now, the poll that sees it gone).
+ */
+export function skipPoll(input: { active: boolean; alive: boolean; last: Pick<ProjectStatus, "processAlive"> | undefined }): boolean {
+  return !input.active && !input.alive && input.last !== undefined && !input.last.processAlive;
+}

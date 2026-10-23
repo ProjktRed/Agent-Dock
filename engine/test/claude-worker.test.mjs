@@ -90,6 +90,8 @@ test("usage limits become the loop's resumable usage-limit error", () => {
 
 test("helpers strip only Claude session variables", () => {
   assert.deepEqual(claudeChildEnv({ CLAUDECODE: "1", CLAUDE_PID: "2", CLAUDEX: "keep", PATH: "p" }), { CLAUDEX: "keep", PATH: "p" });
+  // The folder CLIs › Claude Code › Config edits; workers must use the same settings and sign-in.
+  assert.deepEqual(claudeChildEnv({ CLAUDE_CONFIG_DIR: "D:\claude", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_CODE_SSE_PORT: "1" }), { CLAUDE_CONFIG_DIR: "D:\claude" });
 });
 
 test("a task without its Task skill line goes back to Assessment once with the reason", async () => {

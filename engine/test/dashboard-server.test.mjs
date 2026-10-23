@@ -205,3 +205,19 @@ test("dashboard refuses cross-site, rebound-host and non-JSON write requests", a
     assert.equal(await send("POST", "/api/control", { ...json, origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" }, pause), 200);
   } finally { await dashboard.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+// OWASP retest (0.38.1): before the engine writes live.json, /api/status answered 400.
+test("status API answers before there is any live state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dashboard-empty-"));
+  const workspace = path.join(root, "workspace");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(workspace));
+  execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
+  const dashboard = await startDashboardServer({ stateDir: path.join(root, ".state"), workspace, port: 0 });
+  try {
+    const response = await dashboardFetch(dashboard, "/api/status");
+    assert.equal(response.status, 200);
+  } finally {
+    await dashboard.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
