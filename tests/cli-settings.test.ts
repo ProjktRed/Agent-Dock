@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -87,6 +87,12 @@ describe("CLI config files", () => {
       await expect(writeConfigFile("claude", "{", now.mtimeMs, file)).rejects.toThrow(/Not valid JSON/);
       await writeConfigFile("claude", '{"a":3}', now.mtimeMs, file);
       expect([await readFile(file, "utf8"), await readFile(`${file}.agent-dock.bak`, "utf8")]).toEqual(['{"a":3}', '{"edited":true}']);
+      // Rev F08: a 0600 config (and its backup) stays 0600 after a save. Windows has no such mode bits.
+      if (process.platform !== "win32") {
+        await chmod(file, 0o600);
+        await writeConfigFile("claude", '{"a":4}', (await readConfigFile("claude", file)).mtimeMs, file);
+        expect([(await stat(file)).mode & 0o777, (await stat(`${file}.agent-dock.bak`)).mode & 0o777]).toEqual([0o600, 0o600]);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

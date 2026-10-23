@@ -2,7 +2,7 @@
 // user settings.json, the only two this reads or writes. These change the CLI everywhere, also outside
 // Agent Dock. A save is checked first (TOML or a JSON object), refused if the file changed since it was
 // read, keeps the previous version next to it (.agent-dock.bak) and replaces the file in one step.
-import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -51,10 +51,16 @@ export async function writeConfigFile(kind: ConfigFileKind, text: string, expect
   if (problem) throw new Error(problem);
   const current = await readConfigFile(kind, file);
   if (current.mtimeMs !== expectedMtimeMs) throw new Error(`${path.basename(file)} changed since it was opened. Reload it and make your change again.`);
-  await mkdir(path.dirname(file), { recursive: true });
-  if (current.exists) await copyFile(file, `${file}.agent-dock.bak`);
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  // The file keeps its own permissions (a 0600 config stays 0600); a new one is private. So does the backup.
+  const mode = current.exists ? (await stat(file)).mode & 0o777 : 0o600;
+  if (current.exists) {
+    await copyFile(file, `${file}.agent-dock.bak`);
+    await chmod(`${file}.agent-dock.bak`, mode);
+  }
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, text, "utf8");
+  await writeFile(temporary, text, { encoding: "utf8", mode });
+  await chmod(temporary, mode);
   await rename(temporary, file);
   return readConfigFile(kind, file);
 }
