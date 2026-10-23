@@ -20,8 +20,6 @@ function runCommand(command, cwd, { timeoutMs = 0 } = {}) {
       cwd,
       env: { ...withoutSecrets(), CODEX_QA: "1" },
       windowsHide: true,
-      // Its own process group, so a timeout can end the whole tree.
-      detached: process.platform !== "win32" && timeoutMs > 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "", timedOut = false;

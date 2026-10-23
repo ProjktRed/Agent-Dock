@@ -155,7 +155,8 @@ const READ_COMMANDS={
 function readCommandSafe(policy,command,words,cwd) {
   const spec=READ_COMMANDS[command];
   if(words.some(w=>w.startsWith('@')||w.includes('~')))return false;
-  const files=[];let pattern=false,recursive=false;
+  // Values of -Path/-LiteralPath are files whatever their position; only a positional word can be the pattern.
+  const files=[],named=[];let pattern=false,recursive=false;
   for(let i=0;i<words.length;i++) {
     const word=words[i];
     if(command==='findstr'&&word.startsWith('/')) {
@@ -170,7 +171,7 @@ function readCommandSafe(policy,command,words,cwd) {
     const kind=spec.values?.[key];
     if(kind) {
       const value=words[++i];if(value===undefined)return false;
-      if(kind==='path')files.push(value);
+      if(kind==='path')named.push(value);
       else if(kind==='pattern')pattern=true;
       else if(!kind.test(value))return false;
       continue;
@@ -181,7 +182,7 @@ function readCommandSafe(policy,command,words,cwd) {
     return false;
   }
   if(spec.kind==='search'&&!pattern){if(!files.length)return false;files.shift();}
-  const targets=files.length?files:['.'];
+  const targets=[...named,...files].length?[...named,...files]:['.'];
   if(spec.kind==='exists'||(spec.kind==='list'&&!recursive))return targets.every(file=>!/[*?\[\]{}]/.test(file)&&!isProtectedPath(policy,file,cwd));
   return targets.every(file=>safeRead(policy,file,cwd));
 }
@@ -195,7 +196,8 @@ function commandSafe(policy,script,cwd) {
     if(parts.at(-1)==='')parts.pop();
     return parts.length>1&&parts.every(p=>p&&commandSafe(policy,p,cwd));
   }
-  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?]/.test(script))return false;
+  // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter.
+  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?\u2013\u2014\u2015]/.test(script))return false;
   if(process.platform!=='win32'&&script.includes('\\'))return false;
   if(script.includes('&&'))return script.split('&&').every(part=>commandSafe(policy,part,cwd));
   if(script.includes('&'))return false;

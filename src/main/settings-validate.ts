@@ -36,6 +36,8 @@ function merge(base: Plain, incoming: Plain, defaults: Plain): Plain {
 export function sanitizeSettings(incoming: unknown, current: Settings): Settings {
   const merged = merge(current as unknown as Plain, isPlain(incoming) ? incoming : {}, DEFAULT_SETTINGS as unknown as Plain) as unknown as Settings;
   merged.safety.protectedPaths = [...new Set(merged.safety.protectedPaths.filter((p): p is string => typeof p === "string" && p.trim() !== "").map((p) => p.trim()))];
+  // Skill folders are added only through the main process's import (they also widen what Open folder may open); the window may remove them.
+  merged.skills.importedDirs = merged.skills.importedDirs.filter((dir) => current.skills.importedDirs.includes(dir));
   return { ...merged, general: { ...merged.general, ...normalizeAppearance(merged.general) } };
 }
 

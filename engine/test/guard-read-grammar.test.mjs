@@ -34,7 +34,9 @@ test('read options cannot reach protected files, write, wait, run programs or se
     'Get-Content -TotalCount x README.md','Get-Content -Encoding','cat -A README.md','tail -f README.md','ls .git','ls secrets','Get-ChildItem -Path .git','Get-ChildItem -Recurse',
     'Get-ChildItem -Path secrets -Recurse','ls -R','rg --files','rg --pre sh x src','rg -f .env src','grep -f .env src','rg x .','grep -r x .','findstr /s SECRET config.json',
     'findstr /d:secrets SECRET config.json','findstr /g:.env src/Example.ts','Select-String -Pattern x -Path .env','Select-String -Pattern x','Test-Path .env','Get-Content -Path:.env',
-    'Get-ChildItem -Include x','cat - ','Get-Content -Raw README.md -Delimiter x'])assert.equal(ok(policy,command),false,command);
+    'Get-ChildItem -Include x','cat - ','Get-Content -Raw README.md -Delimiter x',
+    // Defensive review (0.39.0): with -Path named, the first positional word is the pattern, not a file.
+    'Select-String -Path .env README.md','Select-String -LiteralPath secrets/config.json x','Get-Content \u2013Path .env','Get-Content \u2014Stream x README.md'])assert.equal(ok(policy,command),false,command);
 });
 
 // S-03: a check's --option=value can name a protected file, and check output options write files.

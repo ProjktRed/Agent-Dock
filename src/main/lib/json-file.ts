@@ -23,11 +23,12 @@ export function rememberContent(file: string, text: string | null): void {
 export async function readJson<T>(file: string, fallback: T): Promise<T> {
   try {
     const text = await readFile(file, "utf8");
-    rememberContent(file, text);
+    // Only what the app had no record of yet: a later read must not accept someone else's change.
+    if (!known.has(path.resolve(file))) rememberContent(file, text);
     return JSON.parse(text) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      rememberContent(file, null);
+      if (!known.has(path.resolve(file))) rememberContent(file, null);
       return fallback;
     }
     throw error;
