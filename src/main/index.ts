@@ -297,7 +297,21 @@ function implProvider(p: Project): CliConnection | undefined {
 function providerEnv(p: Project): NodeJS.ProcessEnv {
   const provider = implProvider(p);
   const secret = provider ? store.getSecret(provider.id) : null;
-  return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}) };
+  return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}), ...(logKey ? { AGENT_DOCK_LOG_KEY: logKey } : {}) };
+}
+
+/** Signs action log entries (engine/src/action-log.mjs); kept encrypted, null where the OS has no credential store. */
+let logKey: string | null = null;
+async function loadLogKey() {
+  // Stored as <key>:<when it was made>; entries written after that must carry its signature.
+  let saved = store.getSecret("actionlog:key");
+  if (!saved) {
+    const created = `${randomBytes(32).toString("hex")}:${Date.now()}`;
+    saved = await store.setSecret("actionlog:key", created).then(() => created, () => null);
+  }
+  const [key, since] = saved ? saved.split(":") : [null, null];
+  logKey = key;
+  await engine.useLogKey(key, since ? Number(since) : null).catch((error) => console.error("Action log key not set", error));
 }
 
 /** Before a start: a warning when the provider reports that the key has no spending limit (asked at most hourly per key). */
@@ -1351,6 +1365,7 @@ app.whenReady().then(async () => {
   await store.load();
   await roles.load();
   engineInfo = await engine.info();
+  await loadLogKey();
   const resolveOrchestrator = async (kind: "codex" | "claude") => {
     const conn = store.data.clis.find((c) => c.kind === kind);
     return conn ? pickRunnable(await whereAll(conn.location)) : null;

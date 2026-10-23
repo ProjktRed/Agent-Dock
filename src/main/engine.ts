@@ -230,6 +230,11 @@ export class EngineManager {
   }
 
   /** The project's tamper-evident action log, checked entry by entry (engine/src/action-log.mjs). */
+  /** The action log key: entries the app writes are signed with it, and verification checks signatures. */
+  async useLogKey(hex: string | null, since: number | null = null): Promise<void> {
+    (await this.load("action-log.mjs")).useActionLogKey(hex, since);
+  }
+
   async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string }> {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }

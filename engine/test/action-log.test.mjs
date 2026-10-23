@@ -67,3 +67,28 @@ test('stop-all asks running engines to stop, kills them with --now, and skips th
  assert.deepEqual(parseStopArgs(['--config','x','--now']),{config:'x',now:true,project:null});
  assert.throws(()=>parseStopArgs(['--force']),/Unknown option/);
 });
+
+// OWASP L02 (0.38.1): rewriting an entry and recomputing the chain passed verification.
+test('with the log key, a rewritten and re-chained entry fails verification; a terminal stop may be unsigned',async t=>{
+  const {mkdtemp,rm,readFile,writeFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');const {createHash}=await import('node:crypto');
+  const {canonical,useActionLogKey}=await import('../src/action-log.mjs');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-key-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const key='ab'.repeat(32);useActionLogKey(key);t.after(()=>useActionLogKey(null));
+  await appendAction(dir,{type:'qa-pass',taskId:'T1'});await appendAction(dir,{type:'stopped',reason:'stop-now',source:'cli'});
+  useActionLogKey(null);await appendAction(dir,{type:'stopped',reason:'stop-now',source:'cli'});useActionLogKey(key);
+  await appendAction(dir,{type:'qa-fail',taskId:'T2'});await flushActionLog();
+  assert.deepEqual(await verifyActionLog(dir).then(r=>[r.ok,r.signed]),[true,3]);
+  // The writer without the key rewrites entry 1 and recomputes every hash after it.
+  const lines=(await readFile(path.join(dir,ACTION_LOG),'utf8')).trim().split('\n').map(l=>JSON.parse(l));
+  let prev=GENESIS;
+  for(const entry of lines){delete entry.mac;delete entry.hash;if(entry.seq===1)entry.type='qa-fail';entry.prev=prev;entry.hash=createHash('sha256').update(canonical(entry)).digest('hex');prev=entry.hash;}
+  await writeFile(path.join(dir,ACTION_LOG),lines.map(l=>JSON.stringify(l)).join('\n')+'\n');
+  assert.equal((await verifyActionLog(dir,{key:null})).ok,true,'without the key the rewrite is invisible');
+  const keyed=await verifyActionLog(dir,{key:Buffer.from(key,'hex'),since:Date.parse(lines[0].at)});
+  assert.equal(keyed.ok,false);
+  assert.match(keyed.reason,/without Agent Dock's key/);
+  // Keeping the old signatures does not help: they sign the old hashes.
+  const forged=lines.map((l,i)=>({...l}));forged[0].mac='00'.repeat(32);
+  await writeFile(path.join(dir,ACTION_LOG),forged.map(l=>JSON.stringify(l)).join('\n')+'\n');
+  assert.match((await verifyActionLog(dir,{key:Buffer.from(key,'hex')})).reason,/signature/);
+});

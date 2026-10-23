@@ -2,7 +2,7 @@
 // worker shells). Each orchestrator CLI keeps only its own sign-in variables.
 const PROVIDER_KEYS = ["AGENT_DOCK_PROVIDER_KEY", "OPENROUTER_API_KEY"];
 // Agent Dock's own secrets: notification channels (webhook URLs, bot token, mail API key) and the Supervisor reviewer key.
-const ENGINE_KEYS = ["AGENT_DOCK_NOTIFY", "AGENT_DOCK_SUPERVISOR_KEY"];
+const ENGINE_KEYS = ["AGENT_DOCK_NOTIFY", "AGENT_DOCK_SUPERVISOR_KEY", "AGENT_DOCK_LOG_KEY"];
 export const CODEX_AUTH_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 export const CLAUDE_AUTH_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 const extra = new Set();
