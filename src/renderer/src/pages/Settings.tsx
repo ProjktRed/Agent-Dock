@@ -523,6 +523,7 @@ function Safety() {
   const patch = useSettingsPatch();
   const [draft, setDraft] = useState("");
   const paths = snap.settings.safety.protectedPaths;
+  const checksTrusted = snap.settings.safety.checksTrusted === true;
   return (
     <div className="stack" style={{ gap: 20 }}>
       {!w.toolGuard && (
@@ -532,6 +533,14 @@ function Safety() {
         <h2 className="h2" style={{ marginBottom: 4 }}>Worker tool guard</h2>
         <SetRow title="Restrict the implementation worker" desc="Native edits only inside the task's approved paths; shell limited to the task's QA command, lint/typecheck, exact-file Prettier and read-only Git; interpreters and redirection stop the attempt" support="engine">
           <Toggle on={w.toolGuard} onChange={(v) => patch("workflow", { toolGuard: v })} label="Tool guard" danger={!w.toolGuard} />
+        </SetRow>
+      </section>
+      <section className="card pad">
+        <h2 className="h2" style={{ marginBottom: 4 }}>Project checks</h2>
+        <SetRow title="Trust project check scripts" desc={checksTrusted
+          ? "On: checks such as npm test run as your own code. Nothing watches what they do, and an agent that edits package.json or a test can make a check change Agent Dock's settings or engine."
+          : "Off (recommended): agents can edit the code checks run, so while a run is going Agent Dock puts back any change to its own settings files and stops every run when those or its engine files change. Checks still run without a sandbox and can read the project's files."} support="app">
+          <Toggle on={checksTrusted} onChange={(v) => patch("safety", { checksTrusted: v })} label="Trust project check scripts" danger={checksTrusted} />
         </SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
@@ -582,7 +591,7 @@ function Safety() {
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="engine" /></div>
-        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. Project check scripts still run as trusted code.</span>
+        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. These rules cover agent tools; project checks are covered under Project checks above.</span>
         <div className="row wrap" style={{ gap: 8 }}>
           {paths.map((p) => <span className="chip raised mono" key={p}>{p}<button className="x" aria-label={`Remove ${p}`} onClick={() => patch("safety", { protectedPaths: paths.filter((x) => x !== p) })}><Icon name="close" size="sm" /></button></span>)}
         </div>

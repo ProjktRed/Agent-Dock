@@ -48,10 +48,21 @@ export class EngineManager {
   constructor(
     readonly engineDir: string,
     private resolveNode: () => Promise<{ command: string; env: NodeJS.ProcessEnv }>,
+    /** Installed engine files that differ from the build's list (packaged builds); none = safe to load. */
+    readonly fileProblems: () => string[] = () => [],
   ) {}
 
+  /** Engine code is never loaded or started once its installed files were changed. */
+  private assertIntact() {
+    const problems = this.fileProblems();
+    if (problems.length) throw new Error(`Agent Dock's engine files were changed outside Agent Dock (${problems.slice(0, 3).join("; ")}${problems.length > 3 ? "; …" : ""}). Reinstall or update Agent Dock before running automation.`);
+  }
+
   private load(file: string) {
-    if (!this.modules.has(file)) this.modules.set(file, nativeImport(pathToFileURL(path.join(this.engineDir, "src", file)).href));
+    if (!this.modules.has(file)) {
+      try { this.assertIntact(); } catch (error) { return Promise.reject(error); }
+      this.modules.set(file, nativeImport(pathToFileURL(path.join(this.engineDir, "src", file)).href));
+    }
     return this.modules.get(file)!;
   }
 
@@ -114,6 +125,7 @@ export class EngineManager {
   }
 
   private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<ProcessRecord> {
+    this.assertIntact();
     mkdirSync(project.stateDir, { recursive: true });
     // WSL isolation: wsl.exe runs the engine (and every CLI it starts) inside the distro.
     const inWsl = process.platform === "win32" && project.wsl?.enabled && project.wsl.distro.trim();
@@ -160,6 +172,9 @@ export class EngineManager {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     if (!(await this.pidAlive(record.pid))) {
       this.alive.delete(project.id);
+      // A run with nothing to do can finish this fast: its result receipt is not a startup failure.
+      const finished = await stat(path.join(project.stateDir, "loop-result.json")).then((s) => s.mtimeMs >= Date.parse(record.startedAt) - 1000, () => false);
+      if (finished) return;
       const output = (await this.engineLog(project, 10_000_000)).slice(logBefore);
       throw new Error(`The engine exited during startup. ${lastError(output)}`);
     }

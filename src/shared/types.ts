@@ -281,6 +281,12 @@ export interface Settings {
     protectedPaths: string[];
     /** TOOL_CONFIG_PATHS were added to these settings once (a path removed later stays removed). */
     toolConfigPathsAdded?: boolean;
+    /**
+     * Project checks (npm test and the code it runs) are the user's own trusted code. Off (the default):
+     * agents can edit that code, so while a run is going the app undoes changes to its own settings and
+     * engine files and stops the run.
+     */
+    checksTrusted?: boolean;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];

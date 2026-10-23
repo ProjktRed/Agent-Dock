@@ -49,6 +49,8 @@ import { ModelsService } from "./models";
 import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext } from "./local-models";
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
+import { rememberContent, restoreWatchedFiles, watchFolder } from "./lib/json-file";
+import { engineFileProblems, MANIFEST_FILE } from "./lib/integrity";
 import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
 import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
 
@@ -101,6 +103,7 @@ try {
 
 const engineDir = app.isPackaged ? path.join(process.resourcesPath, "engine") : path.join(app.getAppPath(), "engine");
 const store = new AppStore(app.getPath("userData"));
+watchFolder(store.dir);
 const stateRoot = path.join(app.getPath("userData"), "projects");
 const rolesDir = path.join(app.getPath("userData"), "roles");
 const roles = new RolesService(rolesDir);
@@ -121,7 +124,8 @@ async function resolveNode(): Promise<{ command: string; env: NodeJS.ProcessEnv 
   return { command: process.execPath, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } };
 }
 
-const engine = new EngineManager(engineDir, resolveNode);
+// Packaged builds compare the engine with the file list the build put in app.asar (src/main/lib/integrity.ts).
+const engine = new EngineManager(engineDir, resolveNode, () => (app.isPackaged ? engineFileProblems(process.resourcesPath, path.join(__dirname, MANIFEST_FILE)) : []));
 let updater: Updater;
 let limits: LimitsService;
 let models: ModelsService;
@@ -759,10 +763,37 @@ async function confirmStopAllNow() {
 /** Keeps the terminal stop-all launcher in the config folder current with this install. */
 async function writeStopLauncher() {
   const launcher = stopLauncher({ platform: process.platform, execPath: process.execPath, script: path.join(engineDir, "src", "stop-all.mjs"), configDir: store.dir });
-  await writeFile(launcher.file, launcher.content, { mode: 0o755 });
+  await writeFile(launcher.file, launcher.content, { mode: 0o700 });
+  rememberContent(launcher.file, launcher.content);
   return launcher.file;
 }
 let stopAllPath = "";
+
+/**
+ * Project checks run code agents can edit (npm test runs package.json scripts and tests). Unless the user
+ * trusts them (Settings › Execution & safety), while any run is going the app puts back changes to its
+ * own config files and stops every run when those or its engine files were changed by something else.
+ */
+let integrityBusy = false;
+async function checkIntegrity(): Promise<void> {
+  if (integrityBusy || store.data.settings.safety.checksTrusted === true) return;
+  const running = store.data.projects.filter((p) => engine.isAlive(p.id));
+  if (!running.length) return;
+  integrityBusy = true;
+  try {
+    const restored = await restoreWatchedFiles();
+    const engineChanges = engine.fileProblems();
+    if (!restored.length && !engineChanges.length) return;
+    for (const p of running) await engine.control(p, "stop-now", [], {}, "integrity").catch(() => undefined);
+    const files = [...restored.map((f) => `${path.basename(f)} (put back; the changed copy is beside it)`), ...engineChanges.map((c) => `engine: ${c}`)];
+    for (const p of running) await engine.recordEvent(p, { type: "integrity-stop", files }).catch(() => undefined);
+    const message = `Stopped every run: something other than Agent Dock changed its own files while a run was going (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""}). Project checks run code agents can edit; review the last task's changes before you resume.`;
+    notice({ kind: "error", message });
+    osNotify("Agent Dock stopped every run", message);
+  } finally {
+    integrityBusy = false;
+  }
+}
 
 /** The user guide and How it works, bundled with the app (extraResources) so Settings › Help works offline. */
 const docsDir = app.isPackaged ? path.join(process.resourcesPath, "docs") : path.join(app.getAppPath(), "docs");
@@ -1325,6 +1356,7 @@ app.whenReady().then(async () => {
   setTimeout(() => void checkForUpdatesOnLaunch(), 4000);
   setTimeout(() => limits.schedule(store.data.settings), 3000);
   setInterval(() => void runSchedules().catch(() => {}), 60_000);
+  setInterval(() => void checkIntegrity().catch((error) => console.error("Integrity check failed", error)), 3_000);
   // Launched by Task Scheduler: start what is due once the app is ready, then keep checking as usual.
   if (process.argv.includes(SCHEDULED_RUN_FLAG)) setTimeout(() => void runSchedules().catch(() => {}), 5000);
   if (store.data.projects.some((p) => p.schedule?.whenClosed)) setTimeout(() => void syncWindowsSchedules().catch(() => {}), 8000);

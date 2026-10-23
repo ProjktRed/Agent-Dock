@@ -108,7 +108,8 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
   }
   const paths = (incoming.safety as { protectedPaths?: unknown } | undefined)?.protectedPaths;
   const added = Array.isArray(paths) ? paths.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [];
-  settings.safety = { ...settings.safety, protectedPaths: [...new Set([...local.safety.protectedPaths, ...added])] };
+  if (settings.safety.checksTrusted === true && local.safety.checksTrusted !== true) skipped.push("Project checks trusted");
+  settings.safety = { ...settings.safety, protectedPaths: [...new Set([...local.safety.protectedPaths, ...added])], checksTrusted: local.safety.checksTrusted === true };
   const agents = [...current.agents];
   for (const agent of file.agents) {
     const at = agents.findIndex((a) => a.id === agent.id);
