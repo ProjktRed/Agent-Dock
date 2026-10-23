@@ -19,6 +19,9 @@ import {configureProtection} from './guard/protected-paths.mjs';
 import { writeEnginePid } from "./engine-pid.mjs";
 
 installTopLevelDiagnostics();
+// Git reads by the engine and every process it starts skip optional locks (a status refresh of the index),
+// so they never hold index.lock while QA commits.
+process.env.GIT_OPTIONAL_LOCKS = "0";
 const exec = promisify(execFile);
 const options = parseLoopOptions(process.argv.slice(2));
 setCliRunSettings(options["cli-settings"]);

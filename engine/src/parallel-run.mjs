@@ -428,6 +428,8 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
     const stamp = Date.now().toString(36);
     const taken = new Set();
     const allowance = shareElevations(elevations(), batch.length);
+    // git worktree add, one at a time: concurrent adds race on the repository's worktree files.
+    let creating = Promise.resolve();
     const settled = await Promise.allSettled(batch.map(async (task, index) => {
       const id = String(task.id).replace(/[^\w.-]+/g, "_");
       const worktree = freeWorktree(workspace, `${id}-${stamp}`, taken);
@@ -437,8 +439,16 @@ export async function runParallel({ workspace, stateDir, objective, lanes, asses
       // One DashboardState per task engine for the round, so control writes to it queue one after another.
       children.push({ taskId: task.id, dir: childState, state: new DashboardState({ stateDir: childState }), waiting: false });
       // A task that cannot start stops the ones that did; the round reports once they have all ended.
-      try { await git(workspace, ["worktree", "add", "-b", branch, worktree, head]); }
-      catch (error) { await stopAll(); throw error; }
+      const created = creating.then(() => git(workspace, ["worktree", "add", "-b", branch, worktree, head]));
+      creating = created.catch(() => {});
+      try { await created; }
+      catch (error) {
+        // No orphan branch is left behind by a worktree that was not made.
+        await git(workspace, ["worktree", "prune"]).catch(() => {});
+        await git(workspace, ["branch", "-D", branch]).catch(() => {});
+        await stopAll();
+        throw error;
+      }
       // Ignored dependencies are not in a new worktree; link the project's node_modules so checks can run.
       const modules = path.join(workspace, "node_modules");
       if (existsSync(modules) && !existsSync(path.join(worktree, "node_modules"))) { try { symlinkSync(modules, path.join(worktree, "node_modules"), "junction"); } catch {} }
