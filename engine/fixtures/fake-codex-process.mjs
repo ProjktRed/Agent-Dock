@@ -25,5 +25,7 @@ if (process.env.FAKE_CODEX_TOOL) {
   console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "ls", status: "completed" } }));
   if (process.env.FAKE_CODEX_TOOL === "hooked") writeFileSync(output.replace(/result\.json$/, "scope-hook.ndjson"), JSON.stringify({ tool: "Bash", allowed: true, reason: null }) + "\n");
 }
+// A call that never ends (process-bounds.mjs ends it).
+if (process.env.FAKE_CODEX_HANG) await new Promise(() => setInterval(() => {}, 1000));
 // Producing task JSON is not enough: the manager must wait for actual exit.
 await new Promise((resolve) => setTimeout(resolve, 150));

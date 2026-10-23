@@ -1,17 +1,12 @@
 import { spawn } from "node:child_process";
 import { withoutSecrets } from "./secret-env.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
+import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree as killTree } from "./process-bounds.mjs";
 
 /** Runs the task's check command, without secrets in the environment. Every caller gets the same command check. */
-export async function runCheckCommand(command, cwd, { stateDir, timeoutMs = 0 } = {}) {
+export async function runCheckCommand(command, cwd, { stateDir, timeoutMs = CHECK_TIMEOUT_MS } = {}) {
   assertSafeQaCommand({ workspace: cwd, stateDir, command });
   return runCommand(command, cwd, { timeoutMs });
-}
-
-/** Ends the command and everything it started (a test runner's workers too). */
-function killTree(child) {
-  if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
-  else { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } }
 }
 
 /** timeoutMs > 0: a command still running then is ended, and fails with timedOut set. */
@@ -33,8 +28,8 @@ function runCommand(command, cwd, { timeoutMs = 0 } = {}) {
     const timer = timeoutMs > 0 ? setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs) : null;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => (output += chunk));
-    child.stderr.on("data", (chunk) => (output += chunk));
+    child.stdout.on("data", (chunk) => (output = appendBounded(output, chunk)));
+    child.stderr.on("data", (chunk) => (output = appendBounded(output, chunk)));
     child.on("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
     child.on("close", (exitCode) => {
       if (timer) clearTimeout(timer);

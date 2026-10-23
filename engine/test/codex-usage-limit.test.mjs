@@ -320,3 +320,30 @@ test("legacy usage-limit manual review is recovered as exact pending QA inputs",
     assert.equal(live.task.id, task.id);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+// Rev F14: unattended runs retried implementation limits by themselves, but stayed paused in Assessment, QA, Resolver and Elevation.
+test("an unattended run retries an orchestration usage limit by itself after the retry interval", async (t) => {
+  const { useRunLimits } = await import("../src/run-budget.mjs");
+  useRunLimits({ unattended: true, limitRetryMinutes: 0.001 });
+  t.after(() => useRunLimits({}));
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-limit-retry-"));
+  const stateDir = path.join(root, ".state");
+  const state = new DashboardState({ stateDir });
+  await state.initialize({ task: { id: "assessment", name: "Assessing", prompt: "bounded" }, workspace: root, maxAttempts: 2 });
+  let assessments = 0;
+  const loop = startTestLoop({
+    prepareQa,
+    workspace: root, stateDir, objective: "bounded", codex: { activeCount: 0 }, maxAttempts: 2,
+    worker: { withExclusive: async (fn) => fn(), run: async () => ({ exitCode: 0, output: "done" }) },
+    baseline: async () => ({ head: "base" }), verify: async () => {}, pollMs: 10,
+    readControl: () => state.readControl(), onEvent: (event) => state.record(event),
+    onTask: (next) => state.initialize({ task: next, workspace: root, maxAttempts: 2 }),
+    assess: async () => { assessments++; if (assessments === 1) throw limitError(); return { status: "done" }; },
+    review: async () => ({ status: "pass", output: "pass", commit: "fake" }),
+  });
+  try {
+    assert.equal((await loop).status, "done", "no Resume was pressed");
+    assert.equal(assessments, 2);
+    assert.ok((await state.readEvents(100)).some((e) => e.type === "orchestration-limit-resumed" && e.automatic === true));
+  } finally { await loop.stop(); await rm(root, { recursive: true, force: true }); }
+});

@@ -13,6 +13,7 @@ import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
 import { codexRunArgs } from "./cli-run-settings.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
+import { appendBounded, CODEX_CALL_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
 
 /** Codex used a tool (patch, shell, MCP) according to its --json events. */
 export function codexUsedTools(stdout) {
@@ -210,7 +211,7 @@ export function buildQaPrompt(qaPacket) {
 export class CodexWorker {
   constructor({
     workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox, roleOverrides = {},
-    spawnProcess = spawn, env = process.env,
+    spawnProcess = spawn, env = process.env, callTimeoutMs = CODEX_CALL_TIMEOUT_MS,
     writeProcessState = atomicWriteJson,
     clearProcessState = (file) => rm(file, { force: true }),
     isProcessAlive = async (pid) => {
@@ -233,6 +234,7 @@ export class CodexWorker {
     this.writeProcessState = writeProcessState;
     this.clearProcessState = clearProcessState;
     this.isProcessAlive = isProcessAlive;
+    this.callTimeoutMs = callTimeoutMs;
   }
 
   async assertIdle() {
@@ -288,14 +290,23 @@ export class CodexWorker {
         let closeCode = 1;
         let registrationError = null;
         let finished = false;
-        child.stdout.on("data", (chunk) => { stdoutOutput += chunk; });
-        child.stderr.on("data", (chunk) => { stderrOutput += chunk; });
+        // A call that never ends (a hung CLI, a check that never exits) is ended with its process tree.
+        let timedOut = false;
+        const deadline = setTimeout(() => { timedOut = true; killProcessTree(child); }, this.callTimeoutMs);
+        child.stdout.on("data", (chunk) => { stdoutOutput = appendBounded(stdoutOutput, chunk); });
+        child.stderr.on("data", (chunk) => { stderrOutput = appendBounded(stderrOutput, chunk); });
         child.stdin.on("error", () => {}); // Early CLI exit is reported by close.
         child.on("error", reject);
         const finishClosed = async () => {
           if (finished || !closed || (!registered && !registrationError)) return;
           finished = true;
+          clearTimeout(deadline);
           try {
+            if (timedOut) {
+              if (registered) await this.clearProcessState(this.pidFile);
+              reject(new Error(`Codex did not finish within ${Math.round(this.callTimeoutMs / 60_000) || "<1"} minutes and was ended.`));
+              return;
+            }
             if (registered) await this.clearProcessState(this.pidFile);
             if (registrationError) {
               reject(new Error(`Failed to register Codex process: ${registrationError.message}`));

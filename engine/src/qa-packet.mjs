@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
+import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
 import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
 
 const exec = promisify(execFile);
@@ -72,7 +73,8 @@ export async function runDeterministicCommand(command, cwd) {
   return { exitCode, stdout, stderr, steps, durationMs: Date.now() - started };
 }
 
-function runShellCommand(command, cwd) {
+/** One check step: ended with its whole process tree after CHECK_TIMEOUT_MS, output kept to its newest part. */
+export function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const executable = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
@@ -83,14 +85,19 @@ function runShellCommand(command, cwd) {
     });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; killProcessTree(child); }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", (exitCode) => resolve({
-      exitCode: exitCode ?? 1, stdout, stderr, durationMs: Date.now() - started,
-    }));
+    child.stdout.on("data", (chunk) => { stdout = appendBounded(stdout, chunk); });
+    child.stderr.on("data", (chunk) => { stderr = appendBounded(stderr, chunk); });
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (exitCode) => {
+      clearTimeout(timer);
+      resolve(timedOut
+        ? { exitCode: 1, timedOut: true, stdout, stderr: `${stderr}\nThe check was ended after ${Math.round(timeoutMs / 60_000) || "<1"} minutes without finishing.`, durationMs: Date.now() - started }
+        : { exitCode: exitCode ?? 1, stdout, stderr, durationMs: Date.now() - started });
+    });
   });
 }
 
