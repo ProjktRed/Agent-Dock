@@ -43,12 +43,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - API keys entered in Agent Dock, and connection environment variables marked secret, are encrypted
   with your OS account (DPAPI on Windows, through Electron `safeStorage`), never leave the main process
   except as environment variables for the process that needs them, and are redacted from logs, prompts,
-  notifications and the diagnostics export. Config files are written 0600 in a 0700 folder.
+  notifications and the diagnostics export. Where the OS has no credential store (for example Linux
+  without an unlocked keyring) they are not saved at all. Config files are written 0600 in a 0700 folder.
 - The diagnostics export leaves out task prompts, objectives and role instructions (only their length
   is shown).
 - The action log's entries are hash-chained and signed (HMAC-SHA256) with a key the app keeps
   encrypted; engines get the key, the processes they start do not. A rewritten entry fails verification
-  even when the chain is recomputed.
+  even when the chain is recomputed. Entries written before the key existed verify only up to where
+  each log ended when the key was made (recorded once, signed).
 - Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
   reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
 - llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.

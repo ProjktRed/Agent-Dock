@@ -86,9 +86,17 @@ export class AppStore {
   saveAgents() {
     return writeJson(this.file("agents"), this.data.agents);
   }
-  /** clis.json never holds a secret environment value: those go encrypted into secrets.json (in plain text only where the OS has no credential store). */
+  /**
+   * Refuses a secret environment value that could not be stored encrypted (no credential store), before
+   * the connection is changed: such a value would otherwise last only until the app closes.
+   */
+  assertSecretEnvStorable(cli: CliConnection) {
+    if (!safeStorage.isEncryptionAvailable() && (cli.env ?? []).some((e) => e.secret && e.value)) throw new Error(ENCRYPTION_UNAVAILABLE[process.platform] ?? ENCRYPTION_UNAVAILABLE.default);
+  }
+
+  /** clis.json never holds a secret environment value: those go encrypted into secrets.json, and without a credential store nowhere. */
   async saveClis() {
-    if (!safeStorage.isEncryptionAvailable()) return writeJson(this.file("clis"), this.data.clis);
+    if (!safeStorage.isEncryptionAvailable()) return writeJson(this.file("clis"), this.data.clis.map((c) => ({ ...c, env: (c.env ?? []).map((e) => (e.secret ? { ...e, value: "" } : e)) })));
     const kept = new Set<string>();
     const persisted = this.data.clis.map((c) => ({
       ...c,

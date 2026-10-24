@@ -52,4 +52,26 @@ describe("secret environment values (S-15)", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Defensive review (0.39.0): without a credential store, saveClis wrote secret values to clis.json as they were.
+  it("never writes a secret environment value in plain text when there is no credential store", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "dock-store-"));
+    try {
+      mkdirSync(path.join(root, "config"));
+      const env = [{ key: "MY_TOKEN", value: "tok-123456", secret: true }, { key: "REGION", value: "eu", secret: false }];
+      writeFileSync(path.join(root, "config", "clis.json"), JSON.stringify([{ id: "c1", kind: "codex", name: "Codex", location: "codex", env }]));
+      keyring.available = false;
+      const store = new AppStore(root);
+      await store.load();
+      await store.saveClis();
+      const onDisk = readFileSync(path.join(root, "config", "clis.json"), "utf8");
+      expect(onDisk).not.toContain("tok-123456");
+      expect(JSON.parse(onDisk)[0].env).toEqual([{ key: "MY_TOKEN", value: "", secret: true }, { key: "REGION", value: "eu", secret: false }]);
+      expect(() => store.assertSecretEnvStorable({ ...store.data.clis[0], env })).toThrow(/not saved/);
+      expect(() => store.assertSecretEnvStorable({ ...store.data.clis[0], env: [env[1]] })).not.toThrow();
+    } finally {
+      keyring.available = true;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

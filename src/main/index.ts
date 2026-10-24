@@ -303,15 +303,18 @@ function providerEnv(p: Project): NodeJS.ProcessEnv {
 /** Signs action log entries (engine/src/action-log.mjs); kept encrypted, null where the OS has no credential store. */
 let logKey: string | null = null;
 async function loadLogKey() {
-  // Stored as <key>:<when it was made>; entries written after that must carry its signature.
-  let saved = store.getSecret("actionlog:key");
+  // Stored as <key>:<when it was made>.
+  let saved = store.getSecret("actionlog:key"), created = false;
   if (!saved) {
-    const created = `${randomBytes(32).toString("hex")}:${Date.now()}`;
-    saved = await store.setSecret("actionlog:key", created).then(() => created, () => null);
+    const made = `${randomBytes(32).toString("hex")}:${Date.now()}`;
+    saved = await store.setSecret("actionlog:key", made).then(() => made, () => null);
+    created = Boolean(saved);
   }
-  const [key, since] = saved ? saved.split(":") : [null, null];
+  const key = saved ? saved.split(":")[0] : null;
   logKey = key;
-  await engine.useLogKey(key, since ? Number(since) : null).catch((error) => console.error("Action log key not set", error));
+  await engine.useLogKey(key).catch((error) => console.error("Action log key not set", error));
+  // Logs written before the key existed: their unsigned entries verify up to where they end now, and no further.
+  if (created) await engine.checkpointLegacyLogs(store.data.projects.map((p) => p.stateDir));
 }
 
 /** Before a start: a warning when the provider reports that the key has no spending limit (asked at most hourly per key). */
@@ -972,6 +975,7 @@ function registerIpc() {
     // Per-run settings only for Codex, Claude Code, Cline and OpenCode, and only listed, valid ones.
     if (isRunSettingKind(cli.kind)) cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
     else delete cli.runSettings;
+    store.assertSecretEnvStorable(cli);
     const i = store.data.clis.findIndex((c) => c.id === cli.id);
     store.data.clis = i >= 0 ? store.data.clis.map((c) => (c.id === cli.id ? cli : c)) : [...store.data.clis, cli];
     if (secret !== undefined) await store.setSecret(cli.id, secret);

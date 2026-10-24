@@ -84,11 +84,53 @@ test('with the log key, a rewritten and re-chained entry fails verification; a t
   for(const entry of lines){delete entry.mac;delete entry.hash;if(entry.seq===1)entry.type='qa-fail';entry.prev=prev;entry.hash=createHash('sha256').update(canonical(entry)).digest('hex');prev=entry.hash;}
   await writeFile(path.join(dir,ACTION_LOG),lines.map(l=>JSON.stringify(l)).join('\n')+'\n');
   assert.equal((await verifyActionLog(dir,{key:null})).ok,true,'without the key the rewrite is invisible');
-  const keyed=await verifyActionLog(dir,{key:Buffer.from(key,'hex'),since:Date.parse(lines[0].at)});
+  const keyed=await verifyActionLog(dir,{key:Buffer.from(key,'hex')});
   assert.equal(keyed.ok,false);
   assert.match(keyed.reason,/without Agent Dock's key/);
   // Keeping the old signatures does not help: they sign the old hashes.
   const forged=lines.map((l,i)=>({...l}));forged[0].mac='00'.repeat(32);
   await writeFile(path.join(dir,ACTION_LOG),forged.map(l=>JSON.stringify(l)).join('\n')+'\n');
   assert.match((await verifyActionLog(dir,{key:Buffer.from(key,'hex')})).reason,/signature/);
+});
+
+// Defensive review (0.39.0): which entries predate the key came from their own times, so a rewrite with
+// every signature removed and every time moved before the key passed.
+const rechain=(lines,change)=>{let prev=GENESIS;return lines.map((l,i)=>{const e={...l};delete e.mac;delete e.hash;change(e,i);e.prev=prev;e.hash=createHashSync(e);prev=e.hash;return e;});};
+let createHashSync;
+test('a rewrite with signatures removed and times moved before the key does not verify',async t=>{
+  const {mkdtemp,rm,readFile,writeFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');const {createHash}=await import('node:crypto');
+  const {canonical,useActionLogKey}=await import('../src/action-log.mjs');createHashSync=e=>createHash('sha256').update(canonical(e)).digest('hex');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-backdate-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const key='cd'.repeat(32);useActionLogKey(key);t.after(()=>useActionLogKey(null));
+  await appendAction(dir,{type:'qa-pass',taskId:'T1'});await flushActionLog();
+  assert.equal((await verifyActionLog(dir)).ok,true);
+  const lines=(await readFile(path.join(dir,ACTION_LOG),'utf8')).trim().split('\n').map(l=>JSON.parse(l));
+  await writeFile(path.join(dir,ACTION_LOG),rechain(lines,e=>{e.type='qa-fail';e.at='2001-01-01T00:00:00.000Z';}).map(l=>JSON.stringify(l)).join('\n')+'\n');
+  const result=await verifyActionLog(dir);
+  assert.equal(result.ok,false);assert.match(result.reason,/without Agent Dock's key/);
+});
+
+test('entries written before the key verify up to the signed checkpoint and no further',async t=>{
+  const {mkdtemp,rm,readFile,writeFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');const {createHash}=await import('node:crypto');
+  const {canonical,useActionLogKey,checkpointLegacyLog,LEGACY_CHECKPOINT}=await import('../src/action-log.mjs');createHashSync=e=>createHash('sha256').update(canonical(e)).digest('hex');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-legacy-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const key='ef'.repeat(32);t.after(()=>useActionLogKey(null));
+  useActionLogKey(null);await appendAction(dir,{type:'qa-pass',taskId:'T1'});await appendAction(dir,{type:'qa-pass',taskId:'T2'});await flushActionLog();
+  useActionLogKey(key);
+  assert.equal((await verifyActionLog(dir)).ok,false,'without a checkpoint, unsigned entries do not verify');
+  assert.equal(await checkpointLegacyLog(dir),true);
+  assert.equal(await checkpointLegacyLog(dir),false,'recorded once');
+  await appendAction(dir,{type:'qa-fail',taskId:'T3'});await flushActionLog();
+  assert.deepEqual(await verifyActionLog(dir).then(r=>[r.ok,r.signed]),[true,1]);
+  const file=path.join(dir,ACTION_LOG),original=await readFile(file,'utf8'),lines=original.trim().split('\n').map(l=>JSON.parse(l));
+  // Rewriting an entry before the checkpoint, stripping the signed one after it, or cutting entries off all fail.
+  for(const forged of [rechain(lines,(e,i)=>{if(i===0)e.type='qa-fail';}),rechain(lines,()=>{}),rechain(lines.slice(0,1),()=>{})]){
+    await writeFile(file,forged.map(l=>JSON.stringify(l)).join('\n')+'\n');
+    assert.equal((await verifyActionLog(dir)).ok,false,JSON.stringify(forged.map(e=>e.type)));
+  }
+  await writeFile(file,original);
+  // A checkpoint written without the key, or moved past the real one, is ignored.
+  const saved=JSON.parse(await readFile(path.join(dir,LEGACY_CHECKPOINT),'utf8'));
+  await writeFile(path.join(dir,LEGACY_CHECKPOINT),JSON.stringify({...saved,seq:3}));
+  assert.equal((await verifyActionLog(dir)).ok,false);
 });
