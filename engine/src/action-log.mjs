@@ -40,13 +40,25 @@ const keylessStop = (entry) => entry.source === "cli" && (entry.type === "stoppe
 // log itself (its times and order are as writable as the rest), so when the app makes the key it records
 // each existing log's last entry here, signed: unsigned entries are accepted up to that one and no further.
 export const LEGACY_CHECKPOINT = "action-log-legacy.json";
-const checkpointMac = (key, seq, head) => createHmac("sha256", key).update(`legacy:${seq}:${head}`).digest("hex");
-async function legacyCheckpoint(dir, key) {
+const checkpointMac = (key, seq, head, label = "legacy") => createHmac("sha256", key).update(`${label}:${seq}:${head}`).digest("hex");
+async function signedRecord(file, key, label) {
   let saved;
-  try { saved = JSON.parse(await readFile(path.join(dir, LEGACY_CHECKPOINT), "utf8")); } catch { return null; }
+  try { saved = JSON.parse(await readFile(file, "utf8")); } catch { return null; }
   if (!Number.isInteger(saved?.seq) || typeof saved.head !== "string" || typeof saved.mac !== "string") return null;
-  const expected = Buffer.from(checkpointMac(key, saved.seq, saved.head)), got = Buffer.from(saved.mac);
+  const expected = Buffer.from(checkpointMac(key, saved.seq, saved.head, label)), got = Buffer.from(saved.mac);
   return expected.length === got.length && timingSafeEqual(expected, got) ? { seq: saved.seq, head: saved.head } : null;
+}
+const legacyCheckpoint = (dir, key) => signedRecord(path.join(dir, LEGACY_CHECKPOINT), key, "legacy");
+
+// Removing the newest entries (or all of them) leaves a chain that still links. Every signed append also
+// records the newest signed entry here, signed, so a log that ends before it or differs at it fails.
+// Restoring an older copy of both files together is not detected.
+export const HEAD_RECORD = "action-log-head.json";
+const headRecord = (dir, key) => signedRecord(path.join(dir, HEAD_RECORD), key, "head");
+async function writeHeadRecord(file, entry) {
+  const target = path.join(path.dirname(file), HEAD_RECORD), temp = `${target}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify({ seq: entry.seq, head: entry.hash, mac: checkpointMac(logKey, entry.seq, entry.hash, "head") }));
+  await rename(temp, target);
 }
 
 /**
@@ -138,6 +150,7 @@ export function appendAction(stateDir, event) {
       entry.hash = entryHash(entry);
       if (logKey) entry.mac = entryMac(logKey, entry.hash);
       await appendFile(file, `${JSON.stringify(entry)}\n`);
+      if (logKey) await writeHeadRecord(file, entry);
       return entry;
     });
   });
@@ -190,8 +203,9 @@ export async function verifyActionLog(stateDir, { key = logKey } = {}) {
   try { parts.push(await readFile(path.join(dir, ACTION_LOG), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   const lines = parts.join("\n").split("\n").filter((line) => line.trim());
-  if (!lines.length) return { ok: true, entries: 0, head: GENESIS, lastAt: null };
-  let prev = GENESIS, seq = 0, lastAt = null, pruned = 0, signed = 0, macs = 0;
+  const anchor = key ? await headRecord(dir, key) : null;
+  if (!lines.length) return anchor ? { ok: false, entries: 0, head: GENESIS, lastAt: null, brokenAt: 0, reason: `the log is empty, but it had ${anchor.seq} entries` } : { ok: true, entries: 0, head: GENESIS, lastAt: null };
+  let prev = GENESIS, seq = 0, lastAt = null, pruned = 0, signed = 0, macs = 0, unsigned = 0;
   const legacy = key ? await legacyCheckpoint(dir, key) : null;
   // Older archives were deleted by retention: the chain may start where a pruned record says it does.
   try {
@@ -216,11 +230,16 @@ export async function verifyActionLog(stateDir, { key = logKey } = {}) {
       if (expected.length !== got.length || !timingSafeEqual(expected, got)) return fail("its signature does not match Agent Dock's key");
       signed++;
     } else if (key && !keylessStop(entry) && !(legacy && !signed && entry.seq <= legacy.seq)) return fail("written without Agent Dock's key");
+    else if (key) unsigned++;
     if (legacy && entry.seq === legacy.seq && hash !== legacy.head) return fail("differs from the log recorded when Agent Dock's key was made");
+    if (anchor && entry.seq === anchor.seq && hash !== anchor.head) return fail("differs from the newest signed entry Agent Dock recorded");
     prev = hash; seq = entry.seq; lastAt = entry.at;
   }
-  if (legacy && seq < legacy.seq) return { ok: false, entries: lines.length, head: prev, lastAt, brokenAt: lines.length, reason: "entries recorded when Agent Dock's key was made are missing" };
-  return { ok: true, entries: lines.length, head: prev, lastAt, lastSeq: seq, ...(key ? { signed } : { macs }), ...(pruned ? { pruned } : {}) };
+  const short = (reason) => ({ ok: false, entries: lines.length, head: prev, lastAt, brokenAt: lines.length, reason });
+  if (legacy && seq < legacy.seq) return short("entries recorded when Agent Dock's key was made are missing");
+  if (anchor && seq < anchor.seq) return short(`the newest entries are missing (the log ends at ${seq}, it had ${anchor.seq})`);
+  if (key && signed && !anchor) return short("the record of its newest signed entry is missing");
+  return { ok: true, entries: lines.length, head: prev, lastAt, lastSeq: seq, ...(key ? { signed, unsigned } : { macs }), ...(pruned ? { pruned } : {}) };
 }
 
 // node engine/src/action-log.mjs <state folder>: verify one project's log from a terminal.

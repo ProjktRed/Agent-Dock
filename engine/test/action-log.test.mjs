@@ -134,3 +134,26 @@ test('entries written before the key verify up to the signed checkpoint and no f
   await writeFile(path.join(dir,LEGACY_CHECKPOINT),JSON.stringify({...saved,seq:3}));
   assert.equal((await verifyActionLog(dir)).ok,false);
 });
+
+// Second defensive review (0.39.0): unsigned terminal stops could replace signed entries, and removing
+// the newest entries (or all of them) left a chain that still verified.
+test('removing the newest entries, emptying the log or swapping signed entries for unsigned stops does not verify',async t=>{
+  const {mkdtemp,rm,readFile,writeFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');const {createHash}=await import('node:crypto');
+  const {canonical,useActionLogKey,HEAD_RECORD}=await import('../src/action-log.mjs');createHashSync=e=>createHash('sha256').update(canonical(e)).digest('hex');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-head-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const key='12'.repeat(32);useActionLogKey(key);t.after(()=>useActionLogKey(null));
+  await appendAction(dir,{type:'qa-pass',taskId:'T1'});await appendAction(dir,{type:'qa-pass',taskId:'T2'});await flushActionLog();
+  // A legitimate terminal stop (no key) after the last signed entry still verifies, counted as unsigned.
+  useActionLogKey(null);await appendAction(dir,{type:'stopped',reason:'stop-now',source:'cli'});await flushActionLog();useActionLogKey(key);
+  assert.deepEqual(await verifyActionLog(dir).then(r=>[r.ok,r.signed,r.unsigned]),[true,2,1]);
+  const file=path.join(dir,ACTION_LOG),original=await readFile(file,'utf8'),lines=original.trim().split(/\r?\n/).map(l=>JSON.parse(l));
+  const write=entries=>writeFile(file,entries.length?entries.map(l=>JSON.stringify(l)).join('\n')+'\n':'');
+  await write(rechain(lines,e=>{e.type='stopped';e.reason='stop-now';e.source='cli';delete e.taskId;}));
+  assert.match((await verifyActionLog(dir)).reason,/newest signed entry/);
+  await write(lines.slice(0,1));
+  assert.match((await verifyActionLog(dir)).reason,/newest entries are missing/);
+  await write([]);
+  assert.match((await verifyActionLog(dir)).reason,/empty/);
+  await writeFile(file,original);await rm(path.join(dir,HEAD_RECORD));
+  assert.match((await verifyActionLog(dir)).reason,/record of its newest signed entry is missing/);
+});

@@ -1,6 +1,7 @@
 import type { Agent, CliConnection, Settings, WorkflowRole } from "@shared/types";
 import { normalizeAppearance } from "@shared/appearance";
 import { sanitizeSettings } from "./settings-validate";
+import { isCliKind, isConnectionId } from "@shared/defaults";
 
 // Settings export and import (Settings › Advanced): carry agents, workflow roles, connections and
 // settings to another machine or share a setup. Never included: stored secrets (API keys, notification
@@ -53,7 +54,7 @@ export function parseSettingsFile(text: string): SettingsFile {
   if (value.version !== 1) throw new Error(`Settings export version ${String(value.version)} is not supported by this version of Agent Dock.`);
   if (!isObject(value.settings) || !Array.isArray(value.agents) || !Array.isArray(value.clis) || !Array.isArray(value.roles)) throw new Error("The settings export is incomplete.");
   for (const a of value.agents) if (!isObject(a) || typeof a.id !== "string" || typeof a.role !== "string" || typeof a.cliId !== "string") throw new Error("The settings export has an invalid agent.");
-  for (const c of value.clis) if (!isObject(c) || typeof c.id !== "string" || typeof c.kind !== "string" || !Array.isArray(c.env) || !c.env.every((e) => isObject(e) && typeof e.key === "string" && typeof e.value === "string" && typeof e.secret === "boolean")) throw new Error("The settings export has an invalid connection.");
+  for (const c of value.clis) if (!isObject(c) || !isConnectionId(c.id) || !isCliKind(c.kind) || typeof c.location !== "string" || !Array.isArray(c.env) || !c.env.every((e) => isObject(e) && typeof e.key === "string" && typeof e.value === "string" && typeof e.secret === "boolean")) throw new Error("The settings export has an invalid connection.");
   for (const r of value.roles) if (!isObject(r) || typeof r.id !== "string" || !/^[\w-]{1,64}$/.test(r.id) || typeof r.name !== "string" || typeof r.instructions !== "string") throw new Error("The settings export has an invalid workflow role.");
   return value as unknown as SettingsFile;
 }
@@ -130,6 +131,8 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
     }
     const mine = clis[at];
     if (cli.location !== mine.location) skipped.push(`${mine.name || mine.id} location`);
+    // A file never changes what a connection is: its saved key and location belong to that kind.
+    if (cli.kind !== mine.kind) { skipped.push(`${mine.name || mine.id} (a different kind of connection)`); continue; }
     if (envShape(cli.env) !== envShape(mine.env)) skipped.push(`${mine.name || mine.id} environment variables`);
     clis[at] = {
       ...cli,

@@ -818,7 +818,7 @@ function StopAllCard() {
       {logs && (
         <ul className="list">
           {logs.length ? logs.map((l) => (
-            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${plural(l.entries, "entry", "entries")}${l.lastAt ? `, last ${dateTime(l.lastAt)}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
+            <li key={l.project}><St kind={!l.ok ? "blocked" : l.signed === null || l.unsigned ? "part" : "done"} /><span>{l.project}: {!l.ok ? `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}` : !l.entries ? "no entries" : l.signed === null || l.signed === undefined ? `chain intact, ${plural(l.entries, "entry", "entries")}, not signed (no credential store on this computer)` : `${l.unsigned ? `chain intact; ${l.signed} of ${l.entries} entries signed (${plural(l.unsigned, "terminal stop or older entry", "terminal stops or older entries")} cannot be signed)` : `verified and signed, ${plural(l.entries, "entry", "entries")}`}${l.lastAt ? `, last ${dateTime(l.lastAt)}` : ""}`}</span></li>
           )) : <li><span>No projects.</span></li>}
         </ul>
       )}

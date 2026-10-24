@@ -63,10 +63,12 @@ function queued(file: string, task: () => Promise<void>): Promise<void> {
 
 /**
  * Puts back every watched file that differs from what the app last read or wrote. The changed copy is
- * kept beside it as <name>.changed-<time> for inspection. Returns the files put back.
+ * kept beside it as <name>.changed-<time> for inspection. Returns the files put back, and those that
+ * could not be read or put back (a folder in a file's place, no permission): each file on its own, so
+ * one bad file never hides another.
  */
-export async function restoreWatchedFiles(): Promise<string[]> {
-  const restored: string[] = [];
+export async function restoreWatchedFiles(): Promise<{ restored: string[]; failed: { file: string; error: string }[] }> {
+  const restored: string[] = [], failed: { file: string; error: string }[] = [];
   await Promise.all([...known.keys()].map((file) => queued(file, async () => {
     const expected = known.get(file) ?? null;
     const actual = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
@@ -74,8 +76,8 @@ export async function restoreWatchedFiles(): Promise<string[]> {
     if (actual !== null) await renameWithRetry(file, `${file}.changed-${Date.now()}`);
     if (expected !== null) await replaceText(file, expected);
     restored.push(file);
-  })));
-  return restored.sort();
+  }).catch((error: NodeJS.ErrnoException) => { failed.push({ file, error: error?.code ?? String(error?.message ?? error) }); })));
+  return { restored: restored.sort(), failed: failed.sort((a, b) => a.file.localeCompare(b.file)) };
 }
 
 /**

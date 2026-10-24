@@ -39,6 +39,9 @@ const ENCRYPTION_UNAVAILABLE: Record<string, string> = {
   default: "This system has no credential store Agent Dock can use; the key was not saved.",
 };
 
+// Each connection's API key is stored as cli:<id>, apart from the app's own secrets (actionlog:key,
+// approvals:key, notify:<channel>, env:<id>:<name>): a connection's id can never name one of those.
+const CLI_SECRET_PREFIX = "cli:";
 const ENV_SECRET_PREFIX = "env:";
 const envSecretId = (cliId: string, key: string) => `${ENV_SECRET_PREFIX}${cliId}:${key}`;
 
@@ -75,6 +78,10 @@ export class AppStore {
     const savedClis = clis ?? (agents === null ? [] : legacy());
     this.data = { projects, agents, clis: savedClis, settings: mergeSettings(settings) };
     this.secrets = secrets;
+    // Keys saved before 0.39.0 were stored under the bare connection id.
+    let moved = false;
+    for (const c of this.data.clis) if (this.secrets[c.id] && !this.secrets[CLI_SECRET_PREFIX + c.id] && !/:/.test(c.id)) { this.secrets[CLI_SECRET_PREFIX + c.id] = this.secrets[c.id]; delete this.secrets[c.id]; moved = true; }
+    if (moved) await writeJson(this.file("secrets"), this.secrets);
     // Secret environment values are kept encrypted beside the other secrets; older files had them in clis.json.
     this.data.clis = this.data.clis.map((c) => ({ ...c, env: (c.env ?? []).map((e) => (e.secret && !e.value ? { ...e, value: this.getSecret(envSecretId(c.id, e.key)) ?? "" } : e)) }));
     if (clis?.some((c) => c.env?.some((e) => e.secret && e.value))) await this.saveClis();
@@ -143,5 +150,16 @@ export class AppStore {
 
   hasSecret(id: string): boolean {
     return Boolean(this.secrets[id]);
+  }
+
+  /** A connection's API key (never one of the app's own secrets, whatever the connection's id). */
+  getCliSecret(cliId: string): string | null {
+    return this.getSecret(CLI_SECRET_PREFIX + cliId);
+  }
+  setCliSecret(cliId: string, value: string | null): Promise<void> {
+    return this.setSecret(CLI_SECRET_PREFIX + cliId, value);
+  }
+  hasCliSecret(cliId: string): boolean {
+    return this.hasSecret(CLI_SECRET_PREFIX + cliId);
   }
 }

@@ -111,9 +111,9 @@ function pathsIn(input,out=[]) {
 // A QA commit message is free text: it may span lines and contain <>()[]!?*;| inside its quotes,
 // but nothing a shell expands in quotes ($, backtick, %, ^, backslash). It becomes one opaque word.
 // cmd.exe does not read ' as a quote, so a single-quoted message must also be safe unquoted there:
-// no & | < > " ! and no line break.
+// no & | < > " ! and no line break. PowerShell also ends a quote at a curly one (U+2018-U+201F).
 const COMMIT_MESSAGE='__AGENT_DOCK_COMMIT_MESSAGE__';
-const quotedMessages=script=>script.replace(/(\s-m\s+)(?:"([^"$`%^\\\0]*)"|'([^'$`%^\\\0&|<>"!\r\n]*)')(?=\s|$)/g,(_,flag,dq,sq)=>((dq??sq).trim()?flag+COMMIT_MESSAGE:_));
+const quotedMessages=script=>script.replace(/(\s-m\s+)(?:"([^"$`%^\\\0‘-‟]*)"|'([^'$`%^\\\0&|<>"!\r\n‘-‟]*)')(?=\s|$)/g,(_,flag,dq,sq)=>((dq??sq).trim()?flag+COMMIT_MESSAGE:_));
 
 // History may name commits only: git prints the contents of a blob given to show or log.
 const HEAD_REV=/^HEAD(?:~\d{1,4}|\^{1,4})?$/;
@@ -198,9 +198,9 @@ function commandSafe(policy,script,cwd) {
     if(parts.at(-1)==='')parts.pop();
     return parts.length>1&&parts.every(p=>p&&commandSafe(policy,p,cwd));
   }
-  // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter, and a,b as two
-  // arguments (a commit message's commas are masked above).
-  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?,\u2013\u2014\u2015]/.test(script))return false;
+  // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter, curly quotes
+  // (U+2018-U+201F) as quotes, and a,b as two arguments (a commit message's commas are masked above).
+  if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?,\u2013\u2014\u2015\u2018-\u201f]/.test(script))return false;
   if(process.platform!=='win32'&&script.includes('\\'))return false;
   if(script.includes('&&'))return script.split('&&').every(part=>commandSafe(policy,part,cwd));
   if(script.includes('&'))return false;

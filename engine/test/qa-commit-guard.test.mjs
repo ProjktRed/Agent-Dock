@@ -31,6 +31,8 @@ test('QA may commit with a free-text message, but nothing a shell would expand o
     // cmd.exe does not read ' as a quote: these would run `type .env`.
     "git commit -m 'x & type .env & echo '", "git commit -m 'x | type .env'", "git commit -m 'x > out.txt'",
     "git commit -m 'a \" & type .env & \"'", "git commit -m 'line\ntype .env'",
+    // PowerShell ends a quote at a curly one: these would run Get-Content .env.
+    "git commit -m 'a’ ; Get-Content .env ; ‘'", 'git commit -m "a” ; Get-Content .env ; “"', "git commit -m 'it’s fixed'",
   ];
   for(const command of allowed)assert.equal(ok(command),true,`allowed: ${command}`);
   for(const command of denied)assert.equal(ok(command),false,`denied: ${command}`);

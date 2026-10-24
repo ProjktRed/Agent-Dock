@@ -29,6 +29,7 @@ import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
 import { taskModeOf } from "@shared/task-mode";
 import { cleanRunSettings, isRunSettingKind } from "@shared/cli-settings";
+import { isCliKind, isConnectionId } from "@shared/defaults";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
 import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
@@ -217,7 +218,7 @@ function osNotify(title: string, body: string) {
 }
 
 function launchCheck(p: Project): LaunchCheck {
-  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis, settings: store.data.settings, roles: roles.roles, protectedRoots: [store.dir, engineDir, ...(app.isPackaged ? [path.dirname(process.execPath)] : [])] });
+  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasCliSecret(c.id) })), settings: store.data.settings, roles: roles.roles, protectedRoots: [store.dir, engineDir, ...(app.isPackaged ? [path.dirname(process.execPath)] : [])] });
 }
 
 /** Engine arguments for a start; writes the workflow roles the engine reads (--roles-file) into the project's state folder. */
@@ -296,7 +297,7 @@ function implProvider(p: Project): CliConnection | undefined {
 
 function providerEnv(p: Project): NodeJS.ProcessEnv {
   const provider = implProvider(p);
-  const secret = provider ? store.getSecret(provider.id) : null;
+  const secret = provider ? store.getCliSecret(provider.id) : null;
   return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}), ...(logKey ? { AGENT_DOCK_LOG_KEY: logKey } : {}) };
 }
 
@@ -322,7 +323,7 @@ const keyLimitChecked = new Map<string, number>();
 async function warnUncappedKey(p: Project) {
   const provider = implProvider(p);
   if (!provider || !isOpenRouter(provider.location)) return;
-  const secret = store.getSecret(provider.id);
+  const secret = store.getCliSecret(provider.id);
   if (!secret || Date.now() - (keyLimitChecked.get(provider.id) ?? 0) < 60 * 60_000) return;
   keyLimitChecked.set(provider.id, Date.now());
   if ((await openRouterKeyLimit(secret)) === "uncapped") notice({ kind: "warning", message: `The OpenRouter key in ${provider.name} has no credit limit. Set a low limit for it on openrouter.ai (Settings › Keys), so a leaked key can cost at most that.` });
@@ -671,7 +672,7 @@ function startPolling() {
 async function checkAllClis() {
   await Promise.all(
     store.data.clis.map(async (c) => {
-      const result = await checkCli(c, store.getSecret(c.id));
+      const result = await checkCli(c, store.getCliSecret(c.id));
       health.set(c.id, result);
       send("health", result);
     }),
@@ -788,6 +789,21 @@ async function writeStopLauncher() {
 let stopAllPath = "";
 
 /** A native confirmation (the window cannot answer it) before a safety control is weakened. */
+/** A connection's address changed: send its saved key there, or remove the key. */
+async function confirmKeyMove(name: string, location: string): Promise<boolean> {
+  const options = {
+    type: "warning" as const,
+    buttons: ["Remove the saved key", "Use it at the new address"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Send the saved key to a new address?",
+    message: `${name} now points to ${location.slice(0, 200)}.`,
+    detail: "Its saved API key would be sent there. Keep it only if you changed the address yourself and trust it.",
+  };
+  const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return response === 1;
+}
+
 async function confirmWeakening(labels: string[]): Promise<boolean> {
   const options = {
     type: "warning" as const,
@@ -814,11 +830,13 @@ async function checkIntegrity(): Promise<void> {
   if (!running.length) return;
   integrityBusy = true;
   try {
-    const restored = await restoreWatchedFiles();
-    const engineChanges = engine.fileProblems();
-    if (!restored.length && !engineChanges.length) return;
+    // Anything that cannot be checked counts as changed: a failure here stops runs, it never skips the check.
+    const { restored, failed } = await restoreWatchedFiles().catch((error: Error) => ({ restored: [] as string[], failed: [{ file: "config", error: error.message }] }));
+    let engineChanges: string[];
+    try { engineChanges = engine.fileProblems(); } catch (error) { engineChanges = [`could not be checked (${(error as Error).message})`]; }
+    if (!restored.length && !failed.length && !engineChanges.length) return;
     for (const p of running) await engine.control(p, "stop-now", [], {}, "integrity").catch(() => undefined);
-    const files = [...restored.map((f) => `${path.basename(f)} (put back; the changed copy is beside it)`), ...engineChanges.map((c) => `engine: ${c}`)];
+    const files = [...restored.map((f) => `${path.basename(f)} (put back; the changed copy is beside it)`), ...failed.map((f) => `${path.basename(f.file)} (could not be checked or put back: ${f.error})`), ...engineChanges.map((c) => `engine: ${c}`)];
     for (const p of running) await engine.recordEvent(p, { type: "integrity-stop", files }).catch(() => undefined);
     const message = `Stopped every run: something other than Agent Dock changed its own files while a run was going (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""}). Project checks run code agents can edit; review the last task's changes before you resume.`;
     notice({ kind: "error", message });
@@ -838,7 +856,7 @@ const localDocs = () => (bundledDocs ??= Object.fromEntries(BUNDLED_DOCS.map((f)
 // ---------- IPC ----------
 
 function snapshot() {
-  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath, docs: localDocs() }, notifyChannels: Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, store.hasSecret(`notify:${k}`)])) as Record<NotifyChannel, boolean>, notifyDetails: notifyDetails(), version: app.getVersion() };
+  return { projects: store.data.projects, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasCliSecret(c.id) })), settings: store.data.settings, engine: engineInfo, roles: roles.roles, paths: { config: store.dir, projectState: stateRoot, stopAll: stopAllPath, docs: localDocs() }, notifyChannels: Object.fromEntries(NOTIFY_CHANNELS.map((k) => [k, store.hasSecret(`notify:${k}`)])) as Record<NotifyChannel, boolean>, notifyDetails: notifyDetails(), version: app.getVersion() };
 }
 
 /** Activity-derived usage per project, reused while activity.ndjson is unchanged. */
@@ -975,10 +993,15 @@ function registerIpc() {
     // Per-run settings only for Codex, Claude Code, Cline and OpenCode, and only listed, valid ones.
     if (isRunSettingKind(cli.kind)) cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
     else delete cli.runSettings;
+    if (!isConnectionId(cli?.id) || !isCliKind(cli.kind) || typeof cli.location !== "string") throw new Error("Invalid connection");
     store.assertSecretEnvStorable(cli);
     const i = store.data.clis.findIndex((c) => c.id === cli.id);
+    const before = i >= 0 ? store.data.clis[i] : undefined;
+    if (before && before.kind !== cli.kind) throw new Error("A connection's kind cannot change; add a new connection instead.");
+    // The saved key goes to a new address only when the user says so.
+    if (secret === undefined && before && before.location !== cli.location && store.hasCliSecret(cli.id) && !(await confirmKeyMove(cli.name || cli.id, cli.location))) secret = null;
     store.data.clis = i >= 0 ? store.data.clis.map((c) => (c.id === cli.id ? cli : c)) : [...store.data.clis, cli];
-    if (secret !== undefined) await store.setSecret(cli.id, secret);
+    if (secret !== undefined) await store.setCliSecret(cli.id, secret);
     await store.saveClis();
     return snapshot().clis;
   });
@@ -1014,20 +1037,26 @@ function registerIpc() {
   handle("cli:detectModelsDir", () => detectLlamaModelsDir(store.data.settings.advanced.llamaCppLauncher));
   handle("cli:delete", async (id: string) => {
     store.data.clis = store.data.clis.filter((c) => c.id !== id);
-    await store.setSecret(id, null);
+    await store.setCliSecret(id, null);
     await store.saveClis();
     return snapshot().clis;
   });
   handle("cli:check", async (id: string) => {
     const conn = store.data.clis.find((c) => c.id === id);
     if (!conn) throw new Error("Connection not found");
-    const result = await checkCli(conn, store.getSecret(id));
+    const result = await checkCli(conn, store.getCliSecret(id));
     health.set(id, result);
     send("health", result);
     return result;
   });
   handle("cli:healths", () => [...health.values()]);
-  handle("cli:test", (cli: CliConnection, secret?: string | null) => checkCli(cli, secret ?? store.getSecret(cli.id)));
+  // A test from the window may use the saved key only for that saved connection at its saved address.
+  handle("cli:test", (cli: CliConnection, secret?: string | null) => {
+    if (!isCliKind(cli?.kind)) throw new Error("Unknown kind of connection");
+    const saved = store.data.clis.find((c) => c.id === cli.id);
+    const savedKey = saved && saved.kind === cli.kind && saved.location === cli.location ? store.getCliSecret(saved.id) : null;
+    return checkCli(cli, secret ?? savedKey);
+  });
   handle("cli:detect", (command: string) => detectOnPath(command));
   handle("cli:discover", async () => {
     const found = await discoverClis(store.data.clis, systemProbes(whereAll));
@@ -1065,7 +1094,7 @@ function registerIpc() {
     const controller = new AbortController();
     planners.set(projectId, controller);
     try {
-      return await generatePlan(p.path, p.objective, { connection, model: model?.trim() || null, apiKey: connection.kind === "openai" ? store.getSecret(connection.id) : null }, controller.signal);
+      return await generatePlan(p.path, p.objective, { connection, model: model?.trim() || null, apiKey: connection.kind === "openai" ? store.getCliSecret(connection.id) : null }, controller.signal);
     } finally {
       if (planners.get(projectId) === controller) planners.delete(projectId);
     }
@@ -1074,6 +1103,19 @@ function registerIpc() {
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
     const before = store.data.projects.find((x) => x.id === p.id);
+    // A project's own workflow settings override the global ones, so weakening a safety control there
+    // (tool guard off for this project) needs the same native confirmation as in Settings.
+    if (before) {
+      const overrides = p.workflowOverrides && typeof p.workflowOverrides === "object" && !Array.isArray(p.workflowOverrides) ? p.workflowOverrides : {};
+      if (overrides.toolGuard !== undefined && typeof overrides.toolGuard !== "boolean") delete overrides.toolGuard;
+      const withOverrides = (o: Project["workflowOverrides"]): Settings => ({ ...store.data.settings, workflow: { ...store.data.settings.workflow, ...o } });
+      const weaker = weakenings(withOverrides(before.workflowOverrides ?? {}), withOverrides(overrides));
+      if (weaker.length && !(await confirmWeakening(weaker.map((w) => `${w.label} for ${before.name}`)))) {
+        if (before.workflowOverrides?.toolGuard === undefined) delete overrides.toolGuard;
+        else overrides.toolGuard = before.workflowOverrides.toolGuard;
+      }
+      p = { ...p, workflowOverrides: overrides };
+    }
     // The scheduler owns lastScheduledStart; a window's older copy never resets it. A changed schedule
     // counts its slots already past as handled, so they are never reported as missed starts.
     const passed = JSON.stringify(before?.schedule) !== JSON.stringify(p.schedule) ? lastPassedSlot(p.schedule, new Date()) : null;
@@ -1217,7 +1259,7 @@ function registerIpc() {
   });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
-    try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason }; }
+    try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));

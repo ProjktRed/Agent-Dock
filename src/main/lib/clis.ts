@@ -114,6 +114,8 @@ function blank(conn: CliConnection): CliHealth {
   };
 }
 
+const PROGRAM_KINDS = new Set<string>(["codex", "cline", "claude", "opencode"]);
+
 async function checkExecutable(conn: CliConnection, health: CliHealth): Promise<CliHealth> {
   const timeout = conn.startupTimeoutSeconds * 1000;
   const paths = await whereAll(conn.location);
@@ -256,6 +258,8 @@ export async function checkCli(conn: CliConnection, secret: string | null): Prom
   try {
     if (conn.kind === "ollama") return await checkOllama(conn, health);
     if (conn.kind === "llamacpp" || conn.kind === "openai") return await checkOpenAiCompatible(conn, health, secret);
+    // Only the known CLIs are programs to run; an unknown kind (an older or edited file) never starts one.
+    if (!PROGRAM_KINDS.has(conn.kind)) return { ...health, state: "disconnected", detail: `Unknown kind of connection: ${String(conn.kind).slice(0, 40)}` };
     return await checkExecutable(conn, health);
   } catch (error) {
     return { ...health, state: "disconnected", detail: (error as Error).message };

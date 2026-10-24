@@ -145,7 +145,8 @@ export interface DesktopApi {
   taskBoard(projectId: string): Promise<TaskBoard>;
   /** Saves the priority order, a reset to plan order or the grouping; a reorder on a stale revision returns ok: false with the current board. */
   setTaskBoard(projectId: string, update: TaskBoardUpdate): Promise<TaskBoardWriteResult>;
-  verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string }[]>;
+  /** signed: entries carrying Agent Dock's signature (null: no key on this computer, so only the chain was checked); unsigned: terminal stops and entries from before the key. */
+  verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number | null; unsigned?: number }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;

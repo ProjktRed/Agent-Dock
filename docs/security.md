@@ -31,18 +31,22 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   engine files changed. Turning it on needs a native confirmation, and a settings import cannot turn it
   on. The watch works while Agent Dock is open; changes made while it is closed are not seen.
 - Packaged builds carry a list of the engine's files and their SHA-256 hashes inside `app.asar`
-  (whose own integrity Electron checks). The app compares the installed engine and update script with
-  it before it loads or starts the engine, and refuses changed, missing or added files.
+  (whose own integrity Electron checks on Windows and macOS; Electron has no ASAR integrity check on
+  Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with
+  it before it loads or starts the engine, and refuses changed, missing or added files. A file the
+  watch cannot read or put back counts as changed.
 - These guards do not defend against a compromised CLI, concurrent filesystem races, or a process
   already running as your user. CLI startup configuration/automatic context loading is also outside
   tool-hook mediation.
 - Saving settings from the window is checked in the main process: a malformed save keeps the current
   values, and a change that weakens a safety control or chooses a program to run (tool guard off,
   trusted checks, engine guardrails off, an unprotected path, remote approvals, the llama.cpp launcher,
-  the Node runtime, the update source) needs a native confirmation the window cannot answer.
+  the Node runtime, the update source) needs a native confirmation the window cannot answer; so does
+  turning the tool guard off for one project. Imported connections must be a known kind with a plain id.
 - API keys entered in Agent Dock, and connection environment variables marked secret, are encrypted
   with your OS account (DPAPI on Windows, through Electron `safeStorage`), never leave the main process
-  except as environment variables for the process that needs them, and are redacted from logs, prompts,
+  except as environment variables for the process that needs them, are stored apart from the app's own
+  keys, go to a connection's new address only after you confirm, and are redacted from logs, prompts,
   notifications and the diagnostics export. Where the OS has no credential store (for example Linux
   without an unlocked keyring) they are not saved at all. Config files are written 0600 in a 0700 folder.
 - The diagnostics export leaves out task prompts, objectives and role instructions (only their length
@@ -50,7 +54,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - The action log's entries are hash-chained and signed (HMAC-SHA256) with a key the app keeps
   encrypted; engines get the key, the processes they start do not. A rewritten entry fails verification
   even when the chain is recomputed. Entries written before the key existed verify only up to where
-  each log ended when the key was made (recorded once, signed).
+  each log ended when the key was made (recorded once, signed). Each signed entry also records itself as
+  the log's newest, signed, so removing the newest entries or emptying the log fails verification;
+  restoring an older copy of the whole log together with that record is not detected. Stops from the
+  terminal command cannot be signed; Verify logs counts them separately and they cannot stand in for
+  signed entries.
 - Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
   reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
 - llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.

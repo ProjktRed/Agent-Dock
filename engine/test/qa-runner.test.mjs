@@ -143,3 +143,11 @@ test("QA rechecks paths after the test command runs", async () => {
   assert.match(result.output, /surprise\.txt/);
   await rm(workspace, { recursive: true, force: true });
 });
+
+// Second defensive review (0.39.0): under Windows' default execution policy PowerShell refuses npm.ps1.
+test('Windows checks call npm and npx through their .cmd shims',async()=>{
+  const {windowsShims}=await import('../src/qa-runner.mjs');
+  assert.equal(windowsShims('npm test'),'npm.cmd test');
+  assert.equal(windowsShims('npx vitest run; npm run lint'),'npx.cmd vitest run; npm.cmd run lint');
+  for(const command of ['npm.cmd test','git status','npmx','my-npm test'])assert.equal(windowsShims(command),command);
+});

@@ -241,7 +241,7 @@ export class EngineManager {
     for (const stateDir of stateDirs) await actionLog.checkpointLegacyLog(stateDir).catch((error: unknown) => console.error("Action log checkpoint failed", stateDir, error));
   }
 
-  async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string }> {
+  async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number; unsigned?: number }> {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
   }
 

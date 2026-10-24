@@ -9,12 +9,20 @@ export async function runCheckCommand(command, cwd, { stateDir, timeoutMs = CHEC
   return runCommand(command, cwd, { timeoutMs });
 }
 
+/**
+ * PowerShell finds npm.ps1 before npm.cmd, and Windows' default execution policy (Restricted) refuses to
+ * run it: a check would fail before it starts. npm.cmd and npx.cmd are the same commands without a script.
+ */
+export function windowsShims(command) {
+  return command.replace(/(^|[;&|]\s*)(npm|npx)(?=\s|$)/gi, (_, before, name) => `${before}${name.toLowerCase()}.cmd`);
+}
+
 /** timeoutMs > 0: a command still running then is ended, and fails with timedOut set. */
 function runCommand(command, cwd, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";
     const args = process.platform === "win32"
-      ? ["-NoProfile", "-NonInteractive", "-Command", command]
+      ? ["-NoProfile", "-NonInteractive", "-Command", windowsShims(command)]
       : ["-c", command];
     const child = spawn(shell, args, {
       cwd,

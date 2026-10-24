@@ -1,5 +1,11 @@
 import type { Agent, CliConnection, Settings } from "@shared/types";
 
+/** Every connection kind Agent Dock knows; anything else (from a file or a window) is refused. */
+export const CLI_KINDS: readonly CliConnection["kind"][] = ["codex", "cline", "claude", "opencode", "ollama", "llamacpp", "openai"];
+export const isCliKind = (kind: unknown): kind is CliConnection["kind"] => typeof kind === "string" && (CLI_KINDS as readonly string[]).includes(kind);
+/** Connection ids are short words (built-in names, or kind-random from the Add dialog). */
+export const isConnectionId = (id: unknown): id is string => typeof id === "string" && /^[\w.-]{1,64}$/.test(id);
+
 // Mirrors engine/src/loop-options.mjs defaults. Local models have none: each agent names its own.
 export const ENGINE_DEFAULTS = {
   contextTokens: 98_304,
