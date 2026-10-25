@@ -539,10 +539,11 @@ function Safety() {
         <h2 className="h2" style={{ marginBottom: 4 }}>Project checks</h2>
         <SetRow title="Trust project check scripts" desc={checksTrusted
           ? "On: checks such as npm test run as your own code. Nothing watches what they do, and an agent that edits package.json or a test can make a check change Agent Dock's settings or engine."
-          : "Off (recommended): agents can edit the code checks run, so while a run is going Agent Dock puts back any change to its own settings files and stops every run when those or its engine files change. Checks still run without a sandbox and can read the project's files."} support="app">
+          : "Off (recommended): agents can edit the code checks run, so while a run is going Agent Dock puts back any change to its own settings files and stops every run when those or its engine files change. Unless the experimental sandbox below is on, checks run as you and can read your files."} support="app">
           <Toggle on={checksTrusted} onChange={(v) => patch("safety", { checksTrusted: v })} label="Trust project check scripts" danger={checksTrusted} />
         </SetRow>
       </section>
+      <SandboxChecksCard />
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>Unattended mode</h2>
         <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder. Token budgets count new input and output; input read from a prompt cache (about a tenth of the price) is reported but not counted." support="engine">
@@ -781,6 +782,45 @@ function SupervisorCard() {
 }
 
 /** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
+/** Experimental: checks in Anthropic's sandbox runtime. The main process sets it up, self-tests it and owns the setting. */
+function SandboxChecksCard() {
+  const { snap, toast, refresh } = useApp();
+  const on = snap.settings.safety.sandboxChecks === true;
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof window.api.sandboxStatus>> | null>(null);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof window.api.setSandboxChecks>> | null>(null);
+  useEffect(() => { void window.api.sandboxStatus().then(setStatus).catch(() => setStatus(null)); }, [on]);
+  const change = async (value: boolean) => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await window.api.setSandboxChecks(value);
+      setResult(r);
+      if (r.ok && !r.problem) toast("success", value ? "Self-test passed: checks run in the sandbox from the next run." : "Checks run as you again from the next run.");
+      else if (r.problem) toast(r.ok ? "info" : "error", r.problem);
+      await refresh();
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const windows = navigator.userAgent.includes("Windows");
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Experimental</h2>
+      <SetRow title="Run project checks in a sandbox" desc={<span>Checks such as npm test run inside Anthropic's sandbox runtime: no network, writes only inside the project (never its .git folder), nothing else of yours to read. A check that cannot start in the sandbox fails; it never runs outside. {windows
+        ? "Checks run as a separate local Windows account (srt-sandbox) that cannot open your profile, so it cannot read or decrypt saved keys or CLI sign-ins; turning this on sets that account up (one administrator prompt)."
+        : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."} Agents' own commands are not sandboxed by this.</span>} support="app">
+        <Toggle on={on} onChange={(v) => void change(v)} label="Run project checks in a sandbox" disabled={busy} />
+      </SetRow>
+      <span className="hint">{busy ? "Working… setup and the self-test can take a minute." : on ? (status?.ready === false ? `On, but not ready: ${status.problem}. Runs will refuse to start.` : "On: checks run in the sandbox.") : status?.ready ? "Off. The sandbox is ready on this computer." : status?.problem ? `Off. ${status.problem}` : "Off."}</span>
+      {result?.results?.length ? (
+        <ul className="list">
+          {result.results.map((r) => <li key={r.name}><Icon name={r.ok ? "check" : "warn"} size="sm" className={r.ok ? "ok" : "err"} /> {r.name}: <span className="mono">{r.detail}</span></li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function StopAllCard() {
   const { snap, toast } = useApp();
   const patch = useSettingsPatch();

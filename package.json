@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:engine": "npm --prefix engine test",
+    "postinstall": "npm --prefix engine ci --ignore-scripts --no-audit --no-fund",
     "package": "electron-vite build && electron-builder --win --dir --publish never",
     "package:installer": "electron-vite build && electron-builder --win nsis --publish never",
     "package:linux": "electron-vite build && electron-builder --linux --dir",
@@ -62,6 +63,17 @@
           "skills/**",
           "ui/**",
           "package.json"
+        ]
+      },
+      {
+        "from": "engine/node_modules",
+        "to": "engine/node_modules",
+        "filter": [
+          "**/*",
+          "!**/*.map",
+          "!**/*.d.ts",
+          "!**/*.d.mts",
+          "!**/*.d.cts"
         ]
       },
       {

@@ -10,7 +10,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol,
 import { pathToFileURL } from "node:url";
 import { APP_SCHEME, appUrl, resolveAppPath } from "./lib/app-protocol";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
-import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
+import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, SandboxResult, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
 import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
@@ -52,7 +52,7 @@ import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
 import { sanitizeSettings, weakenings } from "./settings-validate";
 import { readJson, rememberContent, restoreWatchedFiles, watchFolder, writeJson } from "./lib/json-file";
-import { engineFileProblems, MANIFEST_FILE } from "./lib/integrity";
+import { engineFileProblems, MANIFEST_FILE, WATCH_ROOTS } from "./lib/integrity";
 import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
 import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
 
@@ -866,6 +866,52 @@ async function confirmWeakening(labels: string[]): Promise<boolean> {
   return response === 1;
 }
 
+async function ask(options: Electron.MessageBoxOptions): Promise<number> {
+  const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return response;
+}
+
+/**
+ * Settings › Experimental › Run project checks in a sandbox. On: Windows sets up the sandbox account first (the
+ * user confirms here, then approves Windows' administrator prompt), and the setting changes only after a self-test
+ * inside the sandbox passes. Off is a weakening, so it needs a native confirmation. Runs pick it up at their next start.
+ */
+async function setSandboxChecks(on: boolean): Promise<SandboxResult> {
+  const save = async (value: boolean) => {
+    store.data.settings = { ...store.data.settings, safety: { ...store.data.settings.safety, sandboxChecks: value } };
+    await store.saveSettings();
+  };
+  if (!on) {
+    if (store.data.settings.safety.sandboxChecks !== true) return { ok: true };
+    if (!(await confirmWeakening(["Run project checks as you again, outside the sandbox"]))) return { ok: false, cancelled: true };
+    await save(false);
+    if (process.platform === "win32" && (await ask({ type: "question", buttons: ["Keep it", "Remove it"], defaultId: 0, cancelId: 0, title: "Remove the sandbox account?", message: "Remove the srt-sandbox account and its network filter from Windows?", detail: "Keep it if you may turn the sandbox on again. Removing it needs one administrator prompt." })) === 1) {
+      const removed = await engine.sandbox("uninstall");
+      if (!removed.ok) return { ok: true, problem: removed.cancelled ? "The sandbox account was kept (the administrator prompt was cancelled)." : `The sandbox account could not be removed: ${removed.problem}` };
+    }
+    return { ok: true };
+  }
+  let status = await engine.sandbox("status");
+  if (!status.ready && process.platform === "win32" && /not set up/.test(status.problem ?? "")) {
+    const go = await ask({
+      type: "question", buttons: ["Cancel", "Set up the sandbox"], defaultId: 0, cancelId: 0,
+      title: "Set up the Windows sandbox?",
+      message: "Checks will run as a separate Windows account that cannot open your files.",
+      detail: "Agent Dock will create a hidden local account (srt-sandbox) and a Windows network filter that blocks it from the internet, using Anthropic's sandbox runtime. Your own network is not affected. Windows asks for administrator approval once.\n\nWhile a check runs, the account gets access to that project's folder only, and it is taken away afterwards.",
+    });
+    if (go !== 1) return { ok: false, cancelled: true };
+    const installed = await engine.sandbox("install");
+    if (!installed.ok) return { ok: false, cancelled: installed.cancelled, problem: installed.cancelled ? "The administrator prompt was cancelled, so nothing was set up." : installed.problem };
+    status = await engine.sandbox("status");
+  }
+  if (!status.ready) return { ok: false, problem: status.problem };
+  const secrets = [path.join(store.dir, "secrets.json"), path.join(os.homedir(), ".codex", "auth.json"), path.join(os.homedir(), ".claude", ".credentials.json")];
+  const test = await engine.sandbox("self-test", ["--canary-dir", store.dir, ...secrets.flatMap((file) => ["--secret", file])]);
+  if (!test.ok) return { ...test, ok: false, problem: test.problem ?? "The sandbox self-test failed, so checks keep running as before." };
+  await save(true);
+  return test;
+}
+
 /**
  * Project checks run code agents can edit (npm test runs package.json scripts and tests). Unless the user
  * trusts them (Settings › Execution & safety), while any run is going the app puts back changes to its
@@ -881,7 +927,7 @@ async function checkIntegrity(): Promise<void> {
     // Anything that cannot be checked counts as changed: a failure here stops runs, it never skips the check.
     const { restored, failed } = await restoreWatchedFiles().catch((error: Error) => ({ restored: [] as string[], failed: [{ file: "config", error: error.message }] }));
     let engineChanges: string[];
-    try { engineChanges = engine.fileProblems(); } catch (error) { engineChanges = [`could not be checked (${(error as Error).message})`]; }
+    try { engineChanges = app.isPackaged ? engineFileProblems(process.resourcesPath, path.join(__dirname, MANIFEST_FILE), WATCH_ROOTS) : []; } catch (error) { engineChanges = [`could not be checked (${(error as Error).message})`]; }
     if (!restored.length && !failed.length && !engineChanges.length) return;
     for (const p of running) await engine.control(p, "stop-now", [], {}, "integrity").catch(() => undefined);
     const files = [...restored.map((f) => `${path.basename(f)} (put back; the changed copy is beside it)`), ...failed.map((f) => `${path.basename(f.file)} (could not be checked or put back: ${f.error})`), ...engineChanges.map((c) => `engine: ${c}`)];
@@ -1312,6 +1358,8 @@ function registerIpc() {
     await (await engine.notifyModule()).sendChannel(kind, value, { type: "test", title: "Agent Dock test", message: "Notifications from Agent Dock will arrive here." }, fetch);
   });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
+  handle("sandbox:status", () => engine.sandbox("status"));
+  handle("sandbox:set", async (on: unknown) => setSandboxChecks(on === true));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
     try { const r = await verifyLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }

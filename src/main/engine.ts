@@ -4,7 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, GitInfo, ParallelRound, PlanProposal, Project, ProjectStatus, RunReport, TaskBoard, TaskBoardUpdate, TaskBoardWriteResult } from "@shared/types";
+import type { EngineInfo, GitInfo, ParallelRound, PlanProposal, Project, ProjectStatus, RunReport, SandboxResult, TaskBoard, TaskBoardUpdate, TaskBoardWriteResult } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
@@ -239,6 +239,28 @@ export class EngineManager {
   async checkpointLegacyLogs(stateDirs: string[]): Promise<void> {
     const actionLog = await this.load("action-log.mjs");
     for (const stateDir of stateDirs) await actionLog.checkpointLegacyLog(stateDir).catch((error: unknown) => console.error("Action log checkpoint failed", stateDir, error));
+  }
+
+  /**
+   * Settings › Experimental sandbox for checks: engine/src/sandbox-cli.mjs in its own process (the sandbox runtime
+   * never loads into the app), its one JSON line back. install can wait on an administrator prompt.
+   */
+  async sandbox(command: "status" | "install" | "uninstall" | "self-test", args: string[] = []): Promise<SandboxResult> {
+    this.assertIntact();
+    const { command: node, env } = await this.resolveNode();
+    return new Promise((resolve) => {
+      const child = spawn(node, [path.join(this.engineDir, "src", "sandbox-cli.mjs"), command, ...args], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      let out = "", err = "";
+      const timer = setTimeout(() => child.kill(), 10 * 60_000);
+      child.stdout.setEncoding("utf8").on("data", (c: string) => (out += c));
+      child.stderr.setEncoding("utf8").on("data", (c: string) => (err = (err + c).slice(-2000)));
+      child.on("error", (error) => { clearTimeout(timer); resolve({ ok: false, problem: error.message }); });
+      child.on("close", () => {
+        clearTimeout(timer);
+        const line = out.trim().split(/\r?\n/).pop() ?? "";
+        try { resolve(JSON.parse(line) as SandboxResult); } catch { resolve({ ok: false, problem: (err || out || "the sandbox helper gave no answer").trim().slice(-600) }); }
+      });
+    });
   }
 
   /** expect: the newest entry the app recorded earlier (kept outside the state folder); the log must still contain it unchanged. */

@@ -120,6 +120,8 @@ export function parseLoopOptions(argv) {
     autoContinue: booleanOption(options["auto-continue"], "auto-continue", true),
     // false: Cline runs with its normal tools; Node scope/HEAD checks and QA still gate every change.
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
+    // Settings › Experimental: project checks run in the sandbox (sandbox.mjs).
+    sandboxChecks: booleanOption(options["sandbox-checks"], "sandbox-checks", false),
     roleOverrides: parseRoleOverrides(options),
     roleBackups: parseRoleBackups(options),
     clineThinking: clineThinking(options["cline-thinking"]),

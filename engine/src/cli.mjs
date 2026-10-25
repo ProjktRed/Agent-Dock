@@ -15,6 +15,7 @@ import { setCliRunSettings } from "./cli-run-settings.mjs";
 import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
+import { sandboxProblem, useSandboxedChecks } from "./sandbox.mjs";
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
@@ -42,6 +43,12 @@ if (!options.workspace || !options.objective) {
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
+useSandboxedChecks(options.sandboxChecks);
+if (options.sandboxChecks) {
+  // Fail closed: a run set to sandbox its checks never starts with checks that would run as you.
+  const problem = await sandboxProblem();
+  if (problem) throw new Error(`Project checks are set to run in a sandbox (Settings › Experimental), but it is not ready: ${problem}`);
+}
 writeEnginePid(stateDir);
 const maxAttempts = null;
 const pollMs = Number(options["poll-seconds"] ?? 2) * 1000;

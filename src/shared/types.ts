@@ -287,6 +287,12 @@ export interface Settings {
      * engine files and stops the run.
      */
     checksTrusted?: boolean;
+    /**
+     * Experimental: project checks run in Anthropic's sandbox runtime (no network, write only the worktree, your
+     * home folder and saved keys out of reach). Set only by the main process after a passing self-test; a settings
+     * save from the window or an import never changes it.
+     */
+    sandboxChecks?: boolean;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
@@ -765,4 +771,13 @@ export interface DirectoryInspection {
 export interface PathDetection {
   command: string;
   found: { path: string; version: string | null }[];
+}
+
+/** Settings › Experimental sandbox for checks: the helper's answer (status, setup, self-test). */
+export interface SandboxResult {
+  ok?: boolean;
+  ready?: boolean;
+  cancelled?: boolean;
+  problem?: string | null;
+  results?: { name: string; ok: boolean; detail: string }[];
 }

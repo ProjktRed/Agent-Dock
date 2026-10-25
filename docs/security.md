@@ -33,6 +33,24 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   (keeping the changed copy beside it as `<name>.changed-<time>`), and stops every run when those or its
   engine files changed. Turning it on needs a native confirmation, and a settings import cannot turn it
   on. The watch works while Agent Dock is open; changes made while it is closed are not seen.
+- **Sandboxed checks (experimental, off by default)**, Settings › Execution & safety › Experimental. Checks
+  run inside Anthropic's sandbox runtime (`@anthropic-ai/sandbox-runtime` 0.0.79, bundled with the engine and
+  on the engine file list): no network, writes only inside the project or worktree (never its `.git`), and
+  nothing else of yours to read. On Windows a check runs as a separate local account (`srt-sandbox`, with a
+  Windows Filtering Platform rule that blocks its network); that account has no rights on your profile, so it
+  cannot read Agent Dock's config or decrypt saved keys (DPAPI ties them to your account), nor read CLI
+  sign-ins. While a check runs, the account is granted the project folder only, and the grant is removed
+  afterwards. Setting it up creates that account and rule (one administrator prompt); turning the setting off
+  offers to remove them. On Linux, bubblewrap hides your home folder except the project and the Node/Git
+  installed there; it needs `bubblewrap`, `socat` and `ripgrep`. The setting turns on only after a self-test
+  passes inside the sandbox (it must fail to read a file in the config folder, `secrets.json` and CLI
+  sign-ins, to write outside the project, to open a network connection and, on Windows, to decrypt data you
+  protected with DPAPI). A window save or a settings import cannot change it, and turning it off needs a
+  native confirmation. A run set to sandbox its checks does not start when the sandbox is not ready, and a
+  check that cannot start in the sandbox fails; it never runs outside. Limits: the account can read what any
+  local account can (system folders and, on many computers, folders on other drives); checks see the
+  environment of the sandbox account rather than yours on Windows; agents' own commands are not sandboxed
+  by this setting.
 - Packaged builds carry a list of the engine's files and their SHA-256 hashes inside `app.asar`
   (whose own integrity Electron checks on Windows and macOS; Electron has no ASAR integrity check on
   Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with

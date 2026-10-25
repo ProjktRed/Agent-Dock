@@ -38,6 +38,8 @@ export function sanitizeSettings(incoming: unknown, current: Settings): Settings
   merged.safety.protectedPaths = [...new Set(merged.safety.protectedPaths.filter((p): p is string => typeof p === "string" && p.trim() !== "").map((p) => p.trim()))];
   // Skill folders are added only through the main process's import (they also widen what Open folder may open); the window may remove them.
   merged.skills.importedDirs = merged.skills.importedDirs.filter((dir) => current.skills.importedDirs.includes(dir));
+  // The sandbox for checks is turned on only after its setup and self-test pass (sandbox:set), and off only there.
+  merged.safety.sandboxChecks = current.safety.sandboxChecks === true;
   return { ...merged, general: { ...merged.general, ...normalizeAppearance(merged.general) } };
 }
 

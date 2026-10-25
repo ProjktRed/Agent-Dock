@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { engineFileProblems, hashFiles, manifestProblems } from "../src/main/lib/integrity";
+import { engineFileProblems, hashFiles, manifestProblems, WATCH_ROOTS } from "../src/main/lib/integrity";
 import { readJson, rememberContent, restoreWatchedFiles, watchFolder, writeJson } from "../src/main/lib/json-file";
 import { mergeImport } from "../src/main/settings-transfer";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
@@ -27,6 +27,29 @@ describe("engine file list (S-02)", () => {
       writeFileSync(join(root, "engine", "src", "extra.mjs"), "x");
       expect(manifestProblems(manifest, hashFiles(root))).toEqual(["engine/src/guard/decide.mjs was changed", "scripts/swap.mjs is missing", "engine/src/extra.mjs was added"]);
       expect(engineFileProblems(root, join(root, "no-such-file.json"))).toEqual(["the engine file list is missing from this build"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("engine dependencies (sandbox runtime)", () => {
+  it("are on the list without source maps or type declarations; the watch during runs skips them, the start check does not", () => {
+    const root = temp();
+    try {
+      const pkg = join(root, "engine", "node_modules", "@anthropic-ai", "sandbox-runtime", "dist");
+      mkdirSync(pkg, { recursive: true });
+      mkdirSync(join(root, "engine", "src"), { recursive: true });
+      writeFileSync(join(root, "engine", "src", "cli.mjs"), "a");
+      writeFileSync(join(pkg, "index.js"), "b");
+      writeFileSync(join(pkg, "index.js.map"), "{}");
+      writeFileSync(join(pkg, "index.d.ts"), "export {}");
+      const manifest = hashFiles(root);
+      expect(Object.keys(manifest)).toEqual(["engine/src/cli.mjs", "engine/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js"]);
+      writeFileSync(join(root, "manifest.json"), JSON.stringify(manifest));
+      writeFileSync(join(pkg, "index.js"), "changed");
+      expect(engineFileProblems(root, join(root, "manifest.json"), WATCH_ROOTS)).toEqual([]);
+      expect(engineFileProblems(root, join(root, "manifest.json"))).toEqual(["engine/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js was changed"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

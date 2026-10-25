@@ -10,6 +10,7 @@ import { withoutSecrets } from "./secret-env.mjs";
 import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
 import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
 import { noInstall } from "./qa-runner.mjs";
+import { checksSandboxed, sandboxedSpawn } from "./sandbox.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
@@ -75,15 +76,17 @@ export async function runDeterministicCommand(command, cwd) {
 }
 
 /** One check step: ended with its whole process tree after CHECK_TIMEOUT_MS, output kept to its newest part. */
-export function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } = {}) {
+export async function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } = {}) {
+  const windows = process.platform === "win32";
+  const launch = checksSandboxed()
+    ? await sandboxedSpawn(noInstall(command), cwd, { windowsShell: "cmd", env: { CODEX_QA: "1" } })
+    : { file: windows ? "cmd.exe" : "/bin/sh", args: windows ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)], env: { ...withoutSecrets(), CODEX_QA: "1" }, release() {} };
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const executable = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-    const args = process.platform === "win32" ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)];
-    const child = spawn(executable, args, {
-      cwd, env: { ...withoutSecrets(), CODEX_QA: "1" }, windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(launch.file, launch.args, { cwd, env: launch.env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) { launch.release(); reject(error); return; }
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -92,9 +95,10 @@ export function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } =
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => { stdout = appendBounded(stdout, chunk); });
     child.stderr.on("data", (chunk) => { stderr = appendBounded(stderr, chunk); });
-    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("error", (error) => { clearTimeout(timer); launch.release(); reject(error); });
     child.on("close", (exitCode) => {
       clearTimeout(timer);
+      launch.release();
       resolve(timedOut
         ? { exitCode: 1, timedOut: true, stdout, stderr: `${stderr}\nThe check was ended after ${Math.round(timeoutMs / 60_000) || "<1"} minutes without finishing.`, durationMs: Date.now() - started }
         : { exitCode: exitCode ?? 1, stdout, stderr, durationMs: Date.now() - started });
@@ -274,6 +278,7 @@ export async function prepareQaPacket({
         durationMs: commandResult.durationMs,
         summary: summary.text,
         truncated: summary.truncated,
+        ...(checksSandboxed() ? { sandboxed: true } : {}),
       },
       categories,
       ...(reusable ? (previous.steps ? { steps: previous.steps } : {}) : (commandResult.steps ? { steps: commandResult.steps } : {})),

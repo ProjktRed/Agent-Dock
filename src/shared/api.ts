@@ -23,6 +23,7 @@ import type {
   NotifyChannel,
   PlanProposal,
   RunReport,
+  SandboxResult,
   WorkflowRole,
 } from "./types";
 import type { EstimateRecord } from "./estimate";
@@ -146,6 +147,10 @@ export interface DesktopApi {
   /** Saves the priority order, a reset to plan order or the grouping; a reorder on a stale revision returns ok: false with the current board. */
   setTaskBoard(projectId: string, update: TaskBoardUpdate): Promise<TaskBoardWriteResult>;
   /** signed: entries carrying Agent Dock's signature (null: no key on this computer, so only the chain was checked); unsigned: terminal stops and entries from before the key. */
+  /** Settings › Experimental: is the sandbox for checks ready on this computer. */
+  sandboxStatus(): Promise<SandboxResult>;
+  /** Turns the sandbox for checks on (setup when needed, then a self-test that must pass) or off; native confirmations. */
+  setSandboxChecks(on: boolean): Promise<SandboxResult>;
   verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number | null; unsigned?: number }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */

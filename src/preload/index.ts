@@ -43,6 +43,8 @@ const api: DesktopApi = {
   setNotifyChannel: invoke("notify:setChannel") as DesktopApi["setNotifyChannel"],
   testNotifyChannel: invoke("notify:test") as DesktopApi["testNotifyChannel"],
   verifyActionLogs: invoke("engine:verifyLogs") as DesktopApi["verifyActionLogs"],
+  sandboxStatus: invoke("sandbox:status") as DesktopApi["sandboxStatus"],
+  setSandboxChecks: invoke("sandbox:set") as DesktopApi["setSandboxChecks"],
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],

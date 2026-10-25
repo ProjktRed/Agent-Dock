@@ -359,6 +359,7 @@ ${project.objective}` : project.objective;
   const retentionDays = input.settings.general.retentionDays ?? DEFAULT_SETTINGS.general.retentionDays ?? 30;
   args.push("--retention-days", String(Number.isFinite(retentionDays) && retentionDays >= 0 ? retentionDays : 30));
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
+  if (settings.safety?.sandboxChecks === true) args.push("--sandbox-checks", "true");
   const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...workflow.supervisor };
   const count = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
   args.push("--supervisor", ["off", "alert", "pause", "stop"].includes(sv.mode) ? sv.mode : "alert");
