@@ -45,6 +45,7 @@ const api: DesktopApi = {
   verifyActionLogs: invoke("engine:verifyLogs") as DesktopApi["verifyActionLogs"],
   sandboxStatus: invoke("sandbox:status") as DesktopApi["sandboxStatus"],
   setSandboxChecks: invoke("sandbox:set") as DesktopApi["setSandboxChecks"],
+  setSandboxAgents: invoke("sandbox:setAgents") as DesktopApi["setSandboxAgents"],
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],

@@ -293,6 +293,8 @@ export interface Settings {
      * save from the window or an import never changes it.
      */
     sandboxChecks?: boolean;
+    /** Experimental: Codex's and Claude Code's own shell commands run sandboxed. Set like sandboxChecks. */
+    sandboxAgents?: boolean;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];

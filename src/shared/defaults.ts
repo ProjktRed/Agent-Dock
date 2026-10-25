@@ -116,7 +116,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },
-  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true, checksTrusted: false, sandboxChecks: false },
+  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true, checksTrusted: false, sandboxChecks: false, sandboxAgents: false },
   usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },

@@ -122,6 +122,7 @@ export function parseLoopOptions(argv) {
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
     // Settings › Experimental: project checks run in the sandbox (sandbox.mjs).
     sandboxChecks: booleanOption(options["sandbox-checks"], "sandbox-checks", false),
+    sandboxAgents: booleanOption(options["sandbox-agents"], "sandbox-agents", false),
     roleOverrides: parseRoleOverrides(options),
     roleBackups: parseRoleBackups(options),
     clineThinking: clineThinking(options["cline-thinking"]),

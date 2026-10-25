@@ -15,7 +15,7 @@ import { setCliRunSettings } from "./cli-run-settings.mjs";
 import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
-import { sandboxProblem, useSandboxedChecks } from "./sandbox.mjs";
+import { sandboxProblem, useSandboxedAgents, useSandboxedChecks } from "./sandbox.mjs";
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
@@ -44,10 +44,11 @@ const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
 useSandboxedChecks(options.sandboxChecks);
-if (options.sandboxChecks) {
-  // Fail closed: a run set to sandbox its checks never starts with checks that would run as you.
+useSandboxedAgents(options.sandboxAgents);
+if (options.sandboxChecks || options.sandboxAgents) {
+  // Fail closed: a run set to sandbox checks or agents' commands never starts with them running as you.
   const problem = await sandboxProblem();
-  if (problem) throw new Error(`Project checks are set to run in a sandbox (Settings › Experimental), but it is not ready: ${problem}`);
+  if (problem) throw new Error(`Agent Dock is set to sandbox ${options.sandboxChecks ? "project checks" : "agents' commands"} (Settings › Experimental), but the sandbox is not ready: ${problem}`);
 }
 writeEnginePid(stateDir);
 const maxAttempts = null;

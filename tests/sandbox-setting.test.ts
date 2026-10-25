@@ -29,3 +29,16 @@ describe("sandbox for checks (Settings › Experimental)", () => {
     expect(mergeImport({ settings: withSandbox(true), agents: [], clis: [] }, file(withSandbox(false))).settings.safety.sandboxChecks).toBe(true);
   });
 });
+
+describe("sandbox for agents' commands (Settings › Experimental)", () => {
+  const agentsOn = (on: boolean): Settings => { const s = structuredClone(DEFAULT_SETTINGS); s.safety = { ...s.safety, sandboxAgents: on }; return s; };
+  it("is off by default, reaches the engine only when on, and neither a window save nor an import changes it", () => {
+    expect(DEFAULT_SETTINGS.safety.sandboxAgents).toBe(false);
+    const args = buildEngineArgs({ project, agents: agents(), clis: structuredClone(DEFAULT_CLIS), settings: agentsOn(true) }).args;
+    expect(args[args.indexOf("--sandbox-agents") + 1]).toBe("true");
+    expect(buildEngineArgs({ project, agents: agents(), clis: structuredClone(DEFAULT_CLIS), settings: agentsOn(false) }).args).not.toContain("--sandbox-agents");
+    expect(sanitizeSettings(agentsOn(true), agentsOn(false)).safety.sandboxAgents).toBe(false);
+    const file = { format: "agent-dock-settings", version: 1, exportedAt: "", appVersion: "", settings: agentsOn(true), agents: [], clis: [], roles: [] } as never;
+    expect(mergeImport({ settings: agentsOn(false), agents: [], clis: [] }, file).settings.safety.sandboxAgents).toBe(false);
+  });
+});

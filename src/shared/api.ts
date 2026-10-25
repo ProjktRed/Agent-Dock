@@ -151,6 +151,8 @@ export interface DesktopApi {
   sandboxStatus(): Promise<SandboxResult>;
   /** Turns the sandbox for checks on (setup when needed, then a self-test that must pass) or off; native confirmations. */
   setSandboxChecks(on: boolean): Promise<SandboxResult>;
+  /** The same for agents' own commands (Codex, Claude Code); Windows also needs Codex's elevated sandbox set up. */
+  setSandboxAgents(on: boolean): Promise<SandboxResult>;
   verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number | null; unsigned?: number }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */

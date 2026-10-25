@@ -16,6 +16,14 @@ let enabled = false;
 export function useSandboxedChecks(value) { enabled = value === true; }
 export const checksSandboxed = () => enabled;
 
+/**
+ * Experimental too (--sandbox-agents true): Codex's and Claude Code's own shell commands run sandboxed
+ * (install-protection.mjs adds it to every call). Claude Code uses the same sandbox runtime as checks.
+ */
+let agents = false;
+export function useSandboxedAgents(value) { agents = value === true; }
+export const agentsSandboxed = () => agents;
+
 // Sign-ins and keys under your home folder. Linux hides the whole home folder already; these stay hidden
 // even when the worktree or a toolchain folder beneath home is let back in. (Windows needs no list: the
 // sandbox account cannot open your profile at all.)

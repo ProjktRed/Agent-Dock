@@ -16,6 +16,7 @@ import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
+import { sandboxProblem, useSandboxedAgents } from "./sandbox.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
 
 installTopLevelDiagnostics();
@@ -28,6 +29,12 @@ setCliRunSettings(options["cli-settings"]);
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
+// Manual Elevation starts Codex or Claude Code like a run does: the same sandbox for their commands, failing closed.
+useSandboxedAgents(options.sandboxAgents);
+if (options.sandboxAgents) {
+  const problem = await sandboxProblem();
+  if (problem) throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental), but the sandbox is not ready: ${problem}`);
+}
 writeEnginePid(stateDir);
 const state = new DashboardState({ stateDir });
 let launchReady = false;

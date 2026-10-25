@@ -782,21 +782,23 @@ function SupervisorCard() {
 }
 
 /** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
-/** Experimental: checks in Anthropic's sandbox runtime. The main process sets it up, self-tests it and owns the setting. */
+/** Experimental: checks and agents' commands in Anthropic's sandbox runtime. The main process sets it up, self-tests it and owns the settings. */
 function SandboxChecksCard() {
   const { snap, toast, refresh } = useApp();
   const on = snap.settings.safety.sandboxChecks === true;
+  const agentsOn = snap.settings.safety.sandboxAgents === true;
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Awaited<ReturnType<typeof window.api.sandboxStatus>> | null>(null);
   const [result, setResult] = useState<Awaited<ReturnType<typeof window.api.setSandboxChecks>> | null>(null);
-  useEffect(() => { void window.api.sandboxStatus().then(setStatus).catch(() => setStatus(null)); }, [on]);
-  const change = async (value: boolean) => {
+  useEffect(() => { void window.api.sandboxStatus().then(setStatus).catch(() => setStatus(null)); }, [on, agentsOn]);
+  const change = async (kind: "checks" | "agents", value: boolean) => {
+    const what = kind === "checks" ? "checks" : "agents' commands";
     setBusy(true);
     setResult(null);
     try {
-      const r = await window.api.setSandboxChecks(value);
+      const r = await (kind === "checks" ? window.api.setSandboxChecks(value) : window.api.setSandboxAgents(value));
       setResult(r);
-      if (r.ok && !r.problem) toast("success", value ? "Self-test passed: checks run in the sandbox from the next run." : "Checks run as you again from the next run.");
+      if (r.ok && !r.problem) toast("success", value ? `Self-test passed: ${what} run in the sandbox from the next run.` : `${what[0].toUpperCase()}${what.slice(1)} run as you again from the next run.`);
       else if (r.problem) toast(r.ok ? "info" : "error", r.problem);
       await refresh();
     } catch (error) { toast("error", (error as Error).message); }
@@ -808,10 +810,15 @@ function SandboxChecksCard() {
       <h2 className="h2" style={{ marginBottom: 4 }}>Experimental</h2>
       <SetRow title="Run project checks in a sandbox" desc={<span>Checks such as npm test run inside Anthropic's sandbox runtime: no network, writes only inside the project (never its .git folder), nothing else of yours to read. A check that cannot start in the sandbox fails; it never runs outside. {windows
         ? "Checks run as a separate local Windows account (srt-sandbox) that cannot open your profile, so it cannot read or decrypt saved keys or CLI sign-ins; turning this on sets that account up (one administrator prompt)."
-        : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."} Agents' own commands are not sandboxed by this.</span>} support="app">
-        <Toggle on={on} onChange={(v) => void change(v)} label="Run project checks in a sandbox" disabled={busy} />
+        : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."}</span>} support="app">
+        <Toggle on={on} onChange={(v) => void change("checks", v)} label="Run project checks in a sandbox" disabled={busy} />
       </SetRow>
-      <span className="hint">{busy ? "Working… setup and the self-test can take a minute." : on ? (status?.ready === false ? `On, but not ready: ${status.problem}. Runs will refuse to start.` : "On: checks run in the sandbox.") : status?.ready ? "Off. The sandbox is ready on this computer." : status?.problem ? `Off. ${status.problem}` : "Off."}</span>
+      <SetRow title="Run agents' commands in a sandbox" desc={<span>The shell commands Codex and Claude Code run (tests included) get the same limits: no network, writes only inside the project. Claude Code uses the sandbox runtime above; {windows
+        ? "Codex uses its own elevated Windows sandbox, which must already be set up (start Codex once with windows.sandbox = \"elevated\")."
+        : "Codex already sandboxes its commands on Linux."} A command that cannot run in the sandbox fails. Cline and OpenCode are not covered yet (they never hold the provider key).</span>} support="engine">
+        <Toggle on={agentsOn} onChange={(v) => void change("agents", v)} label="Run agents' commands in a sandbox" disabled={busy} />
+      </SetRow>
+      <span className="hint">{busy ? "Working… setup and the self-test can take a minute." : (on || agentsOn) ? (status?.ready === false ? `On, but not ready: ${status.problem}. Runs will refuse to start.` : `On: ${[on && "checks", agentsOn && "agents' commands"].filter(Boolean).join(" and ")} run in the sandbox.`) : status?.ready ? "Off. The sandbox is ready on this computer." : status?.problem ? `Off. ${status.problem}` : "Off."}</span>
       {result?.results?.length ? (
         <ul className="list">
           {result.results.map((r) => <li key={r.name}><Icon name={r.ok ? "check" : "warn"} size="sm" className={r.ok ? "ok" : "err"} /> {r.name}: <span className="mono">{r.detail}</span></li>)}

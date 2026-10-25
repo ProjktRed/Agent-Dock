@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { agentsSandboxed } from "./sandbox.mjs";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
@@ -126,7 +127,42 @@ export async function resolveCodexCommand({
   throw resolutionError({ attempted, platform, env, npmBins });
 }
 
-export function preflightCodex(launcher) {
+/**
+ * Windows, agents' commands sandboxed (Settings › Experimental): Codex's elevated sandbox must already be set up.
+ * `codex doctor` with the setting Agent Dock passes reports it; a run never waits on Codex's own administrator
+ * prompt, nor runs Codex with less. Checked once per Codex program.
+ */
+const sandboxChecks = new Map();
+export function codexSandboxProblem(launcher) {
+  const key = launcher.displayCommand ?? launcher.command;
+  if (!sandboxChecks.has(key)) sandboxChecks.set(key, new Promise((resolve) => {
+    const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "-c", 'windows.sandbox="elevated"', "doctor"]);
+    const child = spawn(launch.command, launch.args, { ...launch.options, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    const timer = setTimeout(() => child.kill(), 120_000);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (output += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (output += chunk));
+    child.on("error", (error) => { clearTimeout(timer); resolve(`codex doctor could not run (${error.message})`); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const backend = output.match(/sandbox backend\s+(\S+)/)?.[1], provisioning = output.match(/sandbox provisioning\s+(\S+)/)?.[1];
+      resolve(backend === "elevated" && provisioning === "complete" ? null
+        : `Codex's elevated Windows sandbox is not set up (backend ${backend ?? "unknown"}, provisioning ${provisioning ?? "unknown"}). Start Codex once in a terminal with windows.sandbox = "elevated" in its config.toml and approve its setup.`);
+    });
+  }));
+  return sandboxChecks.get(key);
+}
+
+export async function preflightCodex(launcher) {
+  const result = await preflightCodexVersion(launcher);
+  if (agentsSandboxed() && process.platform === "win32") {
+    const problem = await codexSandboxProblem(launcher);
+    if (problem) throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental): ${problem}`);
+  }
+  return result;
+}
+
+function preflightCodexVersion(launcher) {
   return new Promise((resolve, reject) => {
     const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "--version"]);
     const child = spawn(launch.command, launch.args, {

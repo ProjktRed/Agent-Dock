@@ -245,7 +245,7 @@ export class EngineManager {
    * Settings › Experimental sandbox for checks: engine/src/sandbox-cli.mjs in its own process (the sandbox runtime
    * never loads into the app), its one JSON line back. install can wait on an administrator prompt.
    */
-  async sandbox(command: "status" | "install" | "uninstall" | "self-test", args: string[] = []): Promise<SandboxResult> {
+  async sandbox(command: "status" | "codex-status" | "install" | "uninstall" | "self-test", args: string[] = []): Promise<SandboxResult> {
     this.assertIntact();
     const { command: node, env } = await this.resolveNode();
     return new Promise((resolve) => {

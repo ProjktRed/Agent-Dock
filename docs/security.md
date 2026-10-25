@@ -49,8 +49,19 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   native confirmation. A run set to sandbox its checks does not start when the sandbox is not ready, and a
   check that cannot start in the sandbox fails; it never runs outside. Limits: the account can read what any
   local account can (system folders and, on many computers, folders on other drives); checks see the
-  environment of the sandbox account rather than yours on Windows; agents' own commands are not sandboxed
-  by this setting.
+  environment of the sandbox account rather than yours on Windows; agents' own commands are covered by the
+  next setting, not this one.
+- **Sandboxed agent commands (experimental, off by default)**, in the same place. Every Codex and Claude
+  Code call (orchestrator roles, Implementation, manual Elevation, the Supervisor's reviewer) runs its shell
+  commands sandboxed. Claude Code gets its own sandbox in the settings Agent Dock passes (the same sandbox
+  runtime; on Windows the `srt-sandbox` account): no network, writes only in the workspace, it fails instead
+  of running a command unconfined, and a command cannot ask to leave it. Codex on Windows gets
+  `windows.sandbox="elevated"` (its own sandbox accounts and firewall rules), which must already be set up;
+  Agent Dock checks with `codex doctor` and does not start Codex otherwise. On Linux Codex already confines its
+  commands. It turns on after the same setup and self-test as sandboxed checks, cannot be set by a window save
+  or an import, and a run refuses to start when the sandbox is not ready. Not covered yet: Cline and OpenCode
+  workers (they hold no provider key, see below), and Codex's and Claude Code's own processes and file tools,
+  which still run as you behind the tool guard.
 - Packaged builds carry a list of the engine's files and their SHA-256 hashes inside `app.asar`
   (whose own integrity Electron checks on Windows and macOS; Electron has no ASAR integrity check on
   Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with

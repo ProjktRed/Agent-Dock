@@ -872,20 +872,23 @@ async function ask(options: Electron.MessageBoxOptions): Promise<number> {
 }
 
 /**
- * Settings › Experimental › Run project checks in a sandbox. On: Windows sets up the sandbox account first (the
- * user confirms here, then approves Windows' administrator prompt), and the setting changes only after a self-test
- * inside the sandbox passes. Off is a weakening, so it needs a native confirmation. Runs pick it up at their next start.
+ * Settings › Experimental › Run project checks / agents' commands in a sandbox. On: Windows sets up the sandbox
+ * account first (the user confirms here, then approves Windows' administrator prompt), and the setting changes only
+ * after a self-test inside the sandbox passes (agents on Windows: Codex's elevated sandbox must be set up too, when a
+ * Codex connection exists). Off is a weakening, so it needs a native confirmation. Runs pick it up at their next start.
  */
-async function setSandboxChecks(on: boolean): Promise<SandboxResult> {
+async function setSandbox(kind: "sandboxChecks" | "sandboxAgents", on: boolean): Promise<SandboxResult> {
+  const what = kind === "sandboxChecks" ? "project checks" : "agents' commands";
   const save = async (value: boolean) => {
-    store.data.settings = { ...store.data.settings, safety: { ...store.data.settings.safety, sandboxChecks: value } };
+    store.data.settings = { ...store.data.settings, safety: { ...store.data.settings.safety, [kind]: value } };
     await store.saveSettings();
   };
   if (!on) {
-    if (store.data.settings.safety.sandboxChecks !== true) return { ok: true };
-    if (!(await confirmWeakening(["Run project checks as you again, outside the sandbox"]))) return { ok: false, cancelled: true };
+    if (store.data.settings.safety[kind] !== true) return { ok: true };
+    if (!(await confirmWeakening([`Run ${what} as you again, outside the sandbox`]))) return { ok: false, cancelled: true };
     await save(false);
-    if (process.platform === "win32" && (await ask({ type: "question", buttons: ["Keep it", "Remove it"], defaultId: 0, cancelId: 0, title: "Remove the sandbox account?", message: "Remove the srt-sandbox account and its network filter from Windows?", detail: "Keep it if you may turn the sandbox on again. Removing it needs one administrator prompt." })) === 1) {
+    const other = kind === "sandboxChecks" ? "sandboxAgents" : "sandboxChecks";
+    if (process.platform === "win32" && store.data.settings.safety[other] !== true && (await ask({ type: "question", buttons: ["Keep it", "Remove it"], defaultId: 0, cancelId: 0, title: "Remove the sandbox account?", message: "Remove the srt-sandbox account and its network filter from Windows?", detail: "Keep it if you may turn the sandbox on again. Removing it needs one administrator prompt." })) === 1) {
       const removed = await engine.sandbox("uninstall");
       if (!removed.ok) return { ok: true, problem: removed.cancelled ? "The sandbox account was kept (the administrator prompt was cancelled)." : `The sandbox account could not be removed: ${removed.problem}` };
     }
@@ -896,7 +899,7 @@ async function setSandboxChecks(on: boolean): Promise<SandboxResult> {
     const go = await ask({
       type: "question", buttons: ["Cancel", "Set up the sandbox"], defaultId: 0, cancelId: 0,
       title: "Set up the Windows sandbox?",
-      message: "Checks will run as a separate Windows account that cannot open your files.",
+      message: `${what[0].toUpperCase()}${what.slice(1)} will run as a separate Windows account that cannot open your files.`,
       detail: "Agent Dock will create a hidden local account (srt-sandbox) and a Windows network filter that blocks it from the internet, using Anthropic's sandbox runtime. Your own network is not affected. Windows asks for administrator approval once.\n\nWhile a check runs, the account gets access to that project's folder only, and it is taken away afterwards.",
     });
     if (go !== 1) return { ok: false, cancelled: true };
@@ -907,7 +910,14 @@ async function setSandboxChecks(on: boolean): Promise<SandboxResult> {
   if (!status.ready) return { ok: false, problem: status.problem };
   const secrets = [path.join(store.dir, "secrets.json"), path.join(os.homedir(), ".codex", "auth.json"), path.join(os.homedir(), ".claude", ".credentials.json")];
   const test = await engine.sandbox("self-test", ["--canary-dir", store.dir, ...secrets.flatMap((file) => ["--secret", file])]);
-  if (!test.ok) return { ...test, ok: false, problem: test.problem ?? "The sandbox self-test failed, so checks keep running as before." };
+  if (!test.ok) return { ...test, ok: false, problem: test.problem ?? `The sandbox self-test failed, so ${what} keep running as before.` };
+  if (kind === "sandboxAgents" && process.platform === "win32") {
+    const codex = store.data.clis.find((c) => c.kind === "codex");
+    if (codex) {
+      const ready = await engine.sandbox("codex-status", codex.location.trim() && codex.location.trim() !== "codex" ? ["--codex", codex.location.trim()] : []);
+      if (!ready.ok) return { ...test, ok: false, problem: ready.problem ?? "Codex's elevated sandbox could not be checked." };
+    }
+  }
   await save(true);
   return test;
 }
@@ -1359,7 +1369,8 @@ function registerIpc() {
   });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
   handle("sandbox:status", () => engine.sandbox("status"));
-  handle("sandbox:set", async (on: unknown) => setSandboxChecks(on === true));
+  handle("sandbox:set", async (on: unknown) => setSandbox("sandboxChecks", on === true));
+  handle("sandbox:setAgents", async (on: unknown) => setSandbox("sandboxAgents", on === true));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
     try { const r = await verifyLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }

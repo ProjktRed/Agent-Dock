@@ -47,11 +47,18 @@ export const adapter = {
 };
 
 const hookScript=fileURLToPath(new URL('../../claude-protection-hook.mjs',import.meta.url));
-export function claudeProtectionSettings({policyFile,logFile,fast=false,nodePath=process.execPath}) {
+/**
+ * Settings › Experimental › sandboxed agent commands: Claude Code's own sandbox (Anthropic's sandbox runtime;
+ * on Windows the srt-sandbox account) runs its shell commands with no network and writes only in the workspace.
+ * It fails closed: no command runs unconfined when the sandbox cannot start, and none may ask to leave it.
+ */
+export const CLAUDE_SANDBOX=Object.freeze({enabled:true,failIfUnavailable:true,allowUnsandboxedCommands:false,network:{allowedDomains:[]}});
+
+export function claudeProtectionSettings({policyFile,logFile,fast=false,nodePath=process.execPath,sandbox=false}) {
   // Native hooks run in a shell: reject characters that could alter the generated command.
   const parts=[nodePath,hookScript,policyFile,logFile];
   if(parts.some(p=>typeof p!=='string'||/["`$%\r\n]/.test(p)))throw Error('Unsafe path for Claude protection hook');
-  return {fastMode:fast,hooks:{PreToolUse:[{matcher:'.*',hooks:[{type:'command',command:parts.map(p=>'"'+p+'"').join(' '),timeout:30}]}]}};
+  return {fastMode:fast,...(sandbox?{sandbox:CLAUDE_SANDBOX}:{}),hooks:{PreToolUse:[{matcher:'.*',hooks:[{type:'command',command:parts.map(p=>'"'+p+'"').join(' '),timeout:30}]}]}};
 }
 
 export default adapter;

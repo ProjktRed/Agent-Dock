@@ -91,3 +91,31 @@ test("both check runners spawn what the sandbox wraps, one check at a time, and 
 function execGitInit(dir) {
   writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { test: "node -e 0", lint: "node -e 0" } }));
 }
+
+test("agents' commands sandboxed: Claude Code's sandbox fails closed with no network; Codex gets its elevated Windows sandbox", async () => {
+  const { installProtection, CODEX_WINDOWS_SANDBOX } = await import("../src/guard/install-protection.mjs");
+  const { useSandboxedAgents } = await import("../src/sandbox.mjs");
+  const workspace = temp(), stateDir = temp(), invocation = temp();
+  const claudeSettings = async () => JSON.parse((await installProtection({ cli: "claude", workspace, stateDir, invocation }))[1]);
+  try {
+    assert.equal((await claudeSettings()).sandbox, undefined);
+    assert.ok(!(await installProtection({ cli: "codex", workspace, stateDir, invocation })).includes('windows.sandbox="elevated"'));
+    useSandboxedAgents(true);
+    assert.deepEqual((await claudeSettings()).sandbox, { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: { allowedDomains: [] } });
+    const codex = await installProtection({ cli: "codex", workspace, stateDir, invocation });
+    if (process.platform === "win32") assert.deepEqual(codex.slice(-2), [...CODEX_WINDOWS_SANDBOX]);
+    else assert.ok(!codex.includes('windows.sandbox="elevated"'));
+  } finally { useSandboxedAgents(false); }
+});
+
+test("Windows: a Codex whose elevated sandbox is not set up fails its preflight while agents are sandboxed", { skip: process.platform !== "win32" }, async () => {
+  const { preflightCodex } = await import("../src/codex-command.mjs");
+  const { useSandboxedAgents } = await import("../src/sandbox.mjs");
+  const dir = temp(), script = path.join(dir, "fake-codex.mjs");
+  writeFileSync(script, `const a=process.argv.slice(2);if(a.includes("--version"))console.log("codex-cli 0.0.0");else{console.log("  sandbox backend          unelevated");console.log("  sandbox provisioning     complete");}`);
+  const launcher = { command: process.execPath, prefixArgs: [script], displayCommand: `fake-${Date.now()}` };
+  assert.equal((await preflightCodex(launcher)).version, "codex-cli 0.0.0");
+  useSandboxedAgents(true);
+  try { await assert.rejects(preflightCodex(launcher), /elevated Windows sandbox is not set up/); }
+  finally { useSandboxedAgents(false); }
+});

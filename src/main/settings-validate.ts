@@ -40,6 +40,7 @@ export function sanitizeSettings(incoming: unknown, current: Settings): Settings
   merged.skills.importedDirs = merged.skills.importedDirs.filter((dir) => current.skills.importedDirs.includes(dir));
   // The sandbox for checks is turned on only after its setup and self-test pass (sandbox:set), and off only there.
   merged.safety.sandboxChecks = current.safety.sandboxChecks === true;
+  merged.safety.sandboxAgents = current.safety.sandboxAgents === true;
   return { ...merged, general: { ...merged.general, ...normalizeAppearance(merged.general) } };
 }
 

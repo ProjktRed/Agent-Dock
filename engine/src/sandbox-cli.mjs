@@ -11,6 +11,8 @@ import { closeSandbox, sandboxedSpawn, sandboxProblem, useSandboxedChecks } from
 /**
  * The app's side of Settings › Experimental › Run project checks in a sandbox. Prints one JSON line.
  *   status                      { ready, problem }
+ *   codex-status [--codex <program>]
+ *                               Windows: Codex's elevated sandbox is set up; { ok, problem }
  *   install | uninstall         Windows: sets up or removes the sandbox account and its network filter
  *                               (srt-win, one administrator prompt); { ok, cancelled, problem }
  *   self-test --canary-dir <d> [--secret <file>]...
@@ -119,11 +121,17 @@ async function main(argv) {
   }
   if (command === "status") { const problem = await sandboxProblem(); return print({ ready: !problem, problem }); }
   if (command === "install" || command === "uninstall") return print(await windowsSetup(command));
+  if (command === "codex-status") {
+    if (process.platform !== "win32") return print({ ok: true, problem: null });
+    const { codexSandboxProblem, resolveCodexCommand } = await import("./codex-command.mjs");
+    const problem = await codexSandboxProblem(await resolveCodexCommand({ explicitCommand: flags.codex }));
+    return print({ ok: !problem, problem });
+  }
   if (command === "self-test") {
     if (!flags["canary-dir"]) throw new Error("--canary-dir is required");
     return print(await selfTest({ canaryDir: flags["canary-dir"], secrets: flags.secret }));
   }
-  throw new Error("usage: sandbox-cli.mjs status | install | uninstall | self-test --canary-dir <dir> [--secret <file>]...");
+  throw new Error("usage: sandbox-cli.mjs status | codex-status | install | uninstall | self-test --canary-dir <dir> [--secret <file>]...");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
