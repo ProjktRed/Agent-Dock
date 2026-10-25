@@ -88,6 +88,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   safely. Read-only git calls used for monitoring and QA evidence run with `core.fsmonitor=false`.
 - Claude Code always starts with `--setting-sources user`: a project's own `.claude/` settings
   (hooks, permissions) are not loaded. Agent Dock's protection hook is passed with `--settings`.
+- A repository's own CLI hooks never run: Agent Dock does not start Codex in a repository whose
+  `.codex/` defines hooks (Agent Dock starts Codex with its hook review off for its own guard hook, and
+  Codex loads a trusted project's hooks), nor Cline in one with `.clinerules/hooks/` (Cline runs those
+  without review). It checks the workspace and each folder up to its git root before every start.
+  OpenCode runs with project configuration disabled and its own config folders.
 - CLIs › Settings: run settings for Codex and Claude Code come from a fixed list, checked by the app
   and again by the engine, with no sandbox, approval, permission, hook, network or MCP setting on it.
   The config file editor writes only Codex's `config.toml` and Claude Code's user `settings.json`,

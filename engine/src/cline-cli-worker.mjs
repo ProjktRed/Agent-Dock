@@ -8,6 +8,7 @@ import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
+import { assertNoRepoCliConfig } from "./guard/repo-config.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
 import { clineUsage, noteUsage } from "./run-budget.mjs";
 import { clineRunOptions } from "./cli-run-settings.mjs";
@@ -481,6 +482,8 @@ export async function launchCline({
   thinking,
 }) {
   await access(clineJs, constants.R_OK);
+  // A repository's own Cline hooks (.clinerules/hooks/) would run with no review: never start over them.
+  assertNoRepoCliConfig("cline", workspace);
   const guardLaunch = guardPolicyPath
     ? clineGuard.launchConfiguration({ configDir, hooksDir, dataDir, pluginPath: guardPluginPath })
     : null;
