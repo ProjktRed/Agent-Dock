@@ -3,7 +3,7 @@ import os from "node:os";
 import { runReportHtml, runReportMarkdown } from "./lib/run-export";
 import { sanitizeTaskBoardUpdate } from "./lib/task-board";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol, session, shell, Tray } from "electron";
@@ -51,7 +51,7 @@ import { collectLlamaCpp, collectOllama, detectLlamaModelsDir, readLocalContext 
 import {assertSafeLaunch,hardenSession,hardenWebContents} from './lib/security';
 import { stopLauncher } from "./lib/stop-launcher";
 import { sanitizeSettings, weakenings } from "./settings-validate";
-import { rememberContent, restoreWatchedFiles, watchFolder } from "./lib/json-file";
+import { readJson, rememberContent, restoreWatchedFiles, watchFolder, writeJson } from "./lib/json-file";
 import { engineFileProblems, MANIFEST_FILE } from "./lib/integrity";
 import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
 import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
@@ -318,6 +318,30 @@ async function loadLogKey() {
   if (created) await engine.checkpointLegacyLogs(store.data.projects.map((p) => p.stateDir));
 }
 
+// Each project's newest action log entry as the app last verified it, signed with the log key and kept
+// in the app's config folder: restoring an older copy of a project's state folder (log and head record
+// together) no longer verifies, unless the app's config is rolled back as well.
+type LogAnchor = { seq: number; head: string; mac: string };
+const anchorsFile = () => path.join(store.dir, "action-log-anchors.json");
+const anchorMac = (projectId: string, seq: number, head: string) => createHmac("sha256", Buffer.from(logKey ?? "", "hex")).update(`anchor:${projectId}:${seq}:${head}`).digest("hex");
+async function readAnchor(projectId: string): Promise<{ seq: number; head: string } | null> {
+  if (!logKey) return null;
+  const saved = (await readJson<Record<string, LogAnchor>>(anchorsFile(), {}).catch(() => ({} as Record<string, LogAnchor>)))[projectId];
+  if (!saved || !Number.isInteger(saved.seq) || typeof saved.head !== "string" || typeof saved.mac !== "string") return null;
+  const expected = Buffer.from(anchorMac(projectId, saved.seq, saved.head)), got = Buffer.from(saved.mac);
+  return expected.length === got.length && timingSafeEqual(expected, got) ? { seq: saved.seq, head: saved.head } : null;
+}
+/** Verifies against the recorded entry, then records the newest one. */
+async function verifyLog(p: Project) {
+  const result = await engine.verifyActionLog(p, await readAnchor(p.id));
+  if (result.ok && logKey && result.lastSeq) {
+    const all = await readJson<Record<string, LogAnchor>>(anchorsFile(), {}).catch(() => ({} as Record<string, LogAnchor>));
+    all[p.id] = { seq: result.lastSeq, head: result.head, mac: anchorMac(p.id, result.lastSeq, result.head) };
+    await writeJson(anchorsFile(), all);
+  }
+  return result;
+}
+
 /** Before a start: a warning when the provider reports that the key has no spending limit (asked at most hourly per key). */
 const keyLimitChecked = new Map<string, number>();
 async function warnUncappedKey(p: Project) {
@@ -536,6 +560,8 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       osNotify(`Automation exited · ${p.name}`, "The engine process ended. See the engine log on the Overview page.");
     }
   }
+  // A run ended: its log must still verify against the app's record, which then moves to the new newest entry.
+  if (prev?.processAlive && !next.processAlive) void verifyLog(p).then((r) => { if (!r.ok) notice({ kind: "error", message: `${p.name}: the action log did not verify (${r.reason ?? "unknown"}). Check Settings › Verify logs.` }); }, () => undefined);
   if (prev?.processAlive && !next.processAlive && p.ci?.fixing) void ciFixEnded(p.id, next.runState).catch((error: Error) => notice({ kind: "error", message: `CI fix on ${p.name}: ${error.message}` }));
 }
 
@@ -1287,7 +1313,7 @@ function registerIpc() {
   });
   handle("engine:stopAll", (now: boolean) => (now === true ? stopAll(true) : stopAll(false)));
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
-    try { const r = await engine.verifyActionLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
+    try { const r = await verifyLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
   })));
   handle("plan:proposals", (id: string) => engine.planProposals(project(id)));

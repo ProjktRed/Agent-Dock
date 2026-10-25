@@ -195,3 +195,23 @@ test('appends and verifications at the same time: every entry is kept and no ver
   assert.deepEqual(failures,[]);
   assert.deepEqual(await verifyActionLog(dir).then(r=>[r.ok,r.entries,r.signed]),[true,150,150]);
 });
+
+// Leak plan L5 (0.39.0): restoring an older copy of the log together with its head record passed; the
+// app now keeps the newest entry it verified outside the state folder and checks against it.
+test('an older copy of the log and its head record fails against the entry recorded outside the state folder',async t=>{
+  const {mkdtemp,rm,readFile,writeFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');
+  const {useActionLogKey,HEAD_RECORD,actionLogHead}=await import('../src/action-log.mjs');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-expect-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  useActionLogKey('78'.repeat(32));t.after(()=>useActionLogKey(null));
+  await appendAction(dir,{type:'qa-pass',taskId:'T1'});await flushActionLog();
+  const oldLog=await readFile(path.join(dir,ACTION_LOG),'utf8'),oldHead=await readFile(path.join(dir,HEAD_RECORD),'utf8');
+  await appendAction(dir,{type:'qa-fail',taskId:'T2'});await appendAction(dir,{type:'qa-pass',taskId:'T3'});
+  const recorded=await actionLogHead(dir);
+  assert.equal(recorded.seq,3);
+  assert.equal((await verifyActionLog(dir,{expect:recorded})).ok,true);
+  await writeFile(path.join(dir,ACTION_LOG),oldLog);await writeFile(path.join(dir,HEAD_RECORD),oldHead);
+  assert.equal((await verifyActionLog(dir)).ok,true,'on its own the old copy still verifies');
+  assert.match((await verifyActionLog(dir,{expect:recorded})).reason,/older than Agent Dock's record/);
+  await writeFile(path.join(dir,ACTION_LOG),'');
+  assert.match((await verifyActionLog(dir,{expect:recorded})).reason,/empty/);
+});

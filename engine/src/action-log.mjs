@@ -189,6 +189,13 @@ export async function pruneActionLog(stateDir, { before }) {
   return expired.length;
 }
 
+/** The newest entry's sequence and hash (after queued appends), for a record kept outside the state folder. */
+export async function actionLogHead(stateDir) {
+  await flushActionLog();
+  const last = await lastEntry(path.join(path.resolve(stateDir), ACTION_LOG));
+  return { seq: last.seq, head: last.hash };
+}
+
 /** Waits for every queued append (call before the process exits). */
 export async function flushActionLog() {
   await Promise.allSettled([...queues.values()]);
@@ -215,12 +222,14 @@ async function readForVerify(dir, key) {
 /**
  * Checks every entry's sequence, link and hash, and with the log key its signature: every entry must be
  * signed except a terminal stop and those the signed legacy checkpoint covers. ok=false names the first
- * entry that does not fit.
+ * entry that does not fit. expect ({seq, head}, kept by the app outside the state folder): the log must
+ * still contain that entry unchanged, so restoring an older copy of the log and its head record fails too.
  */
-export async function verifyActionLog(stateDir, { key = logKey } = {}) {
+export async function verifyActionLog(stateDir, { key = logKey, expect = null } = {}) {
   const dir = path.resolve(stateDir);
   const { parts, anchor } = await readForVerify(dir, key);
   const lines = parts.join("\n").split("\n").filter((line) => line.trim());
+  if (!lines.length && expect?.seq > 0) return { ok: false, entries: 0, head: GENESIS, lastAt: null, brokenAt: 0, reason: `the log is empty, but Agent Dock recorded ${expect.seq} entries` };
   if (!lines.length) return anchor ? { ok: false, entries: 0, head: GENESIS, lastAt: null, brokenAt: 0, reason: `the log is empty, but it had ${anchor.seq} entries` } : { ok: true, entries: 0, head: GENESIS, lastAt: null };
   let prev = GENESIS, seq = 0, lastAt = null, pruned = 0, signed = 0, macs = 0, unsigned = 0;
   const legacy = key ? await legacyCheckpoint(dir, key) : null;
@@ -250,9 +259,11 @@ export async function verifyActionLog(stateDir, { key = logKey } = {}) {
     else if (key) unsigned++;
     if (legacy && entry.seq === legacy.seq && hash !== legacy.head) return fail("differs from the log recorded when Agent Dock's key was made");
     if (anchor && entry.seq === anchor.seq && hash !== anchor.head) return fail("differs from the newest signed entry Agent Dock recorded");
+    if (expect && entry.seq === expect.seq && hash !== expect.head) return fail("differs from the log Agent Dock recorded earlier");
     prev = hash; seq = entry.seq; lastAt = entry.at;
   }
   const short = (reason) => ({ ok: false, entries: lines.length, head: prev, lastAt, brokenAt: lines.length, reason });
+  if (expect && seq < expect.seq) return short(`the log is older than Agent Dock's record (it ends at entry ${seq}; Agent Dock recorded ${expect.seq})`);
   if (legacy && seq < legacy.seq) return short("entries recorded when Agent Dock's key was made are missing");
   if (anchor && seq < anchor.seq) return short(`the newest entries are missing (the log ends at ${seq}, it had ${anchor.seq})`);
   if (key && signed && !anchor) return short("the record of its newest signed entry is missing");

@@ -66,8 +66,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   entry fails verification even when the chain is recomputed. Entries written before the key existed
   verify only up to where each log ended when the key was made (recorded once, signed). Each signed entry
   also records itself as the log's newest, signed, so removing the newest entries or emptying the log
-  fails verification. Not detected: restoring an older copy of the whole log together with that record,
-  or deleting both (Verify logs then shows a log with no entries). Stops from the terminal command
+  fails verification. After each run and each Verify logs, the app also records the newest entry, signed,
+  in its own config folder, and checks that the log still contains it: restoring an older copy of a
+  project's state folder (log and head record together) or deleting both fails too, unless the app's
+  config is rolled back as well. The run-finished notification carries the last entry's number and hash,
+  evidence kept off this computer. Stops from the terminal command
   cannot be signed; Verify logs counts them separately and they cannot stand in for signed entries.
   The signature shows what happened through agents' tools and the app; it does not hold against code
   running as you, which can decrypt the key like any other saved secret (see above), and that includes

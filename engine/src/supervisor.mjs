@@ -6,6 +6,7 @@ import { notify } from "./notify.mjs";
 import { applyReviewAction, buildReviewPrompt, readDeferred } from "./supervisor-review.mjs";
 import { PLAN_FILE, proposePlanChange } from "./plan-stewardship.mjs";
 import { redactText } from "./redact.mjs";
+import { actionLogHead } from "./action-log.mjs";
 
 // Supervisor v1: deterministic monitors over the loop's own events. It raises alerts (Activity,
 // desktop, webhook/Discord) and, when allowed, asks for Pause or Stop at the next safe point.
@@ -204,7 +205,9 @@ export async function digest(kind = "periodic") {
   const text = [`${RUN.tasksPassed} task(s) approved, ${RUN.failures} QA failure(s), ${RUN.corrections} correction(s), ${RUN.elevations} Elevation(s) in ${hours} h.`,
     `Tokens ${runTokens().toLocaleString("en-US")}${RUN.usage.costUsd ? `, reported spend $${RUN.usage.costUsd.toFixed(2)}` : ""}.`,
     plan?.total ? `Plan ${plan.completed}/${plan.total} (${plan.percent}%).` : null,
-    `Supervisor alerts: ${S.alerts.length}${S.alerts.length ? ` (latest: ${S.alerts.at(-1).monitor})` : ""}.`].filter(Boolean).join(" ");
+    `Supervisor alerts: ${S.alerts.length}${S.alerts.length ? ` (latest: ${S.alerts.at(-1).monitor})` : ""}.`,
+    // The run's last action log entry, sent off this computer: an older copy of the log restored later no longer matches it.
+    kind === "final" && S.stateDir ? await actionLogHead(S.stateDir).then((h) => (h.seq ? `Action log: entry ${h.seq}, ${h.head.slice(0, 12)}.` : null), () => null) : null].filter(Boolean).join(" ");
   await S.state.record({ type: "supervisor-digest", kind, message: text });
   if (S.stateDir) await writeFile(path.join(S.stateDir, "supervisor-digest.md"), redactText(`# Supervisor digest (${kind})\n\n${new Date(S.now()).toISOString()}\n\n${text}\n\n## Alerts\n\n${S.alerts.map((a) => `- ${a.at} ${a.monitor}: ${a.message}${a.action ? ` (asked to ${a.action})` : ""}`).join("\n") || "- none"}\n`)).catch(() => {});
   notify({ type: "supervisor-digest", title: kind === "final" ? "Run finished" : "Supervisor digest", message: text });

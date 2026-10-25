@@ -241,8 +241,9 @@ export class EngineManager {
     for (const stateDir of stateDirs) await actionLog.checkpointLegacyLog(stateDir).catch((error: unknown) => console.error("Action log checkpoint failed", stateDir, error));
   }
 
-  async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number; unsigned?: number }> {
-    return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
+  /** expect: the newest entry the app recorded earlier (kept outside the state folder); the log must still contain it unchanged. */
+  async verifyActionLog(project: Project, expect: { seq: number; head: string } | null = null): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; lastSeq?: number; brokenAt?: number; reason?: string; signed?: number; unsigned?: number }> {
+    return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir, { expect });
   }
 
   /** Sets the blocked or waiting task aside (work stashed, task deferred); the next Run starts a fresh Assessment. */
