@@ -25,7 +25,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   read-only options.
 - **Project checks** (Settings › Execution & safety). A check such as `npm test` runs the project's
   scripts and tests, which agents can edit. These guards are **not an OS sandbox**: a check runs as your
-  user and can read the project's files. Off (the default) means checks are untrusted: while any run is
+  user and can read the project's files, and can decrypt Agent Dock's saved keys (see below). Off (the
+  default) means checks are untrusted: while any run is
   going, the app compares its config files with what it last wrote, puts back anything else changed
   (keeping the changed copy beside it as `<name>.changed-<time>`), and stops every run when those or its
   engine files changed. Turning it on needs a native confirmation, and a settings import cannot turn it
@@ -42,23 +43,33 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   values, and a change that weakens a safety control or chooses a program to run (tool guard off,
   trusted checks, engine guardrails off, an unprotected path, remote approvals, the llama.cpp launcher,
   the Node runtime, the update source) needs a native confirmation the window cannot answer; so does
-  turning the tool guard off for one project. Imported connections must be a known kind with a plain id.
+  turning the tool guard off for one project, and giving a CLI connection a program other than its plain
+  name or one found on PATH for it (when saved or tested). The window can look up only Git and the
+  supported CLIs on PATH. Imported connections must be a known kind with a plain id, and a connection's
+  address must be http(s) with no user name or password in it.
 - API keys entered in Agent Dock, and connection environment variables marked secret, are encrypted
   with your OS account (DPAPI on Windows, through Electron `safeStorage`), never leave the main process
   except as environment variables for the process that needs them, are stored apart from the app's own
-  keys, go to a connection's new address only after you confirm, and are redacted from logs, prompts,
-  notifications and the diagnostics export. Where the OS has no credential store (for example Linux
-  without an unlocked keyring) they are not saved at all. Config files are written 0600 in a 0700 folder.
+  keys, go to a connection's new address only after you confirm (the dialog names the host the key would
+  go to), and are redacted from logs, prompts, notifications and the diagnostics export. Where the OS has
+  no credential store (for example Linux without an unlocked keyring) they are not saved at all. Config
+  files are written 0600 in a 0700 folder. This encryption keeps them from other users of the computer,
+  not from programs running as you: as Electron documents for `safeStorage`, any program running under
+  your account can decrypt them, and that includes a project check (`npm test` runs code agents can
+  edit). Use keys made for Agent Dock with low spending limits.
 - The diagnostics export leaves out task prompts, objectives and role instructions (only their length
   is shown).
 - The action log's entries are hash-chained and signed (HMAC-SHA256) with a key the app keeps
-  encrypted; engines get the key, the processes they start do not. A rewritten entry fails verification
-  even when the chain is recomputed. Entries written before the key existed verify only up to where
-  each log ended when the key was made (recorded once, signed). Each signed entry also records itself as
-  the log's newest, signed, so removing the newest entries or emptying the log fails verification;
-  restoring an older copy of the whole log together with that record is not detected. Stops from the
-  terminal command cannot be signed; Verify logs counts them separately and they cannot stand in for
-  signed entries.
+  encrypted; engines get the key in their environment, the processes they start do not. A rewritten
+  entry fails verification even when the chain is recomputed. Entries written before the key existed
+  verify only up to where each log ended when the key was made (recorded once, signed). Each signed entry
+  also records itself as the log's newest, signed, so removing the newest entries or emptying the log
+  fails verification. Not detected: restoring an older copy of the whole log together with that record,
+  or deleting both (Verify logs then shows a log with no entries). Stops from the terminal command
+  cannot be signed; Verify logs counts them separately and they cannot stand in for signed entries.
+  The signature shows what happened through agents' tools and the app; it does not hold against code
+  running as you, which can decrypt the key like any other saved secret (see above), and that includes
+  a project check.
 - Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
   reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
 - llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.

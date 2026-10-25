@@ -157,3 +157,41 @@ test('removing the newest entries, emptying the log or swapping signed entries f
   await writeFile(file,original);await rm(path.join(dir,HEAD_RECORD));
   assert.match((await verifyActionLog(dir)).reason,/record of its newest signed entry is missing/);
 });
+
+// Third defensive review (0.39.0): a verification between an append and its head record reported a
+// sound log as broken. It now reads under the writers' lock.
+test('verification waits for a writer between an append and its head record',async t=>{
+  const {mkdtemp,rm,writeFile,readFile}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');
+  const {useActionLogKey,HEAD_RECORD}=await import('../src/action-log.mjs');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-lock-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  useActionLogKey('34'.repeat(32));t.after(()=>useActionLogKey(null));
+  await appendAction(dir,{type:'qa-pass',taskId:'T1'});await appendAction(dir,{type:'qa-pass',taskId:'T2'});await flushActionLog();
+  const head=await readFile(path.join(dir,HEAD_RECORD),'utf8'),log=await readFile(path.join(dir,ACTION_LOG),'utf8');
+  // A writer holds the lock with the second entry written but its head record not yet.
+  const lock=path.join(dir,`${ACTION_LOG}.lock`);await writeFile(lock,'');
+  await writeFile(path.join(dir,ACTION_LOG),log);
+  const first=JSON.parse(log.split('\n')[0]);
+  const {createHmac}=await import('node:crypto');
+  await writeFile(path.join(dir,HEAD_RECORD),JSON.stringify({seq:1,head:first.hash,mac:createHmac('sha256',Buffer.from('34'.repeat(32),'hex')).update(`head:1:${first.hash}`).digest('hex')}));
+  let settled=false;const verifying=verifyActionLog(dir).then(r=>{settled=true;return r;});
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.equal(settled,false,'verification waits while the lock is held');
+  await writeFile(path.join(dir,HEAD_RECORD),head);await rm(lock);
+  assert.deepEqual(await verifying.then(r=>[r.ok,r.signed]),[true,2]);
+});
+
+test('appends and verifications at the same time: every entry is kept and no verification fails',async t=>{
+  const {mkdtemp,rm}=await import('node:fs/promises');const os=await import('node:os');const path=await import('node:path');const {spawn}=await import('node:child_process');const {pathToFileURL}=await import('node:url');
+  const {useActionLogKey}=await import('../src/action-log.mjs');
+  const dir=await mkdtemp(path.join(os.tmpdir(),'action-log-race-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const key='56'.repeat(32);useActionLogKey(key);t.after(()=>useActionLogKey(null));
+  const mod=pathToFileURL(path.resolve('src/action-log.mjs')).href;
+  const writer=spawn(process.execPath,['--input-type=module','-e',`const m=await import(${JSON.stringify(mod)});m.useActionLogKey(${JSON.stringify(key)});for(let i=0;i<150;i++)await m.appendAction(${JSON.stringify(dir)},{type:'qa-pass',i});`],{stdio:['ignore','ignore','pipe']});
+  let stderr='';writer.stderr.on('data',d=>stderr+=d);
+  const exited=new Promise(resolve=>writer.on('exit',resolve));let done=false;exited.then(()=>{done=true;});
+  const failures=[];
+  while(!done){const r=await verifyActionLog(dir);if(!r.ok)failures.push(r.reason);}
+  assert.equal(await exited,0,stderr);
+  assert.deepEqual(failures,[]);
+  assert.deepEqual(await verifyActionLog(dir).then(r=>[r.ok,r.entries,r.signed]),[true,150,150]);
+});

@@ -13,7 +13,7 @@ vi.mock("electron", () => ({
 }));
 const { AppStore } = await import("../src/main/store");
 const { mergeImport, parseSettingsFile } = await import("../src/main/settings-transfer");
-const { checkCli } = await import("../src/main/lib/clis");
+const { checkCli, connectionUrlProblem, detectOnPath, programNeedsConfirmation } = await import("../src/main/lib/clis");
 const { DEFAULT_CLIS, DEFAULT_SETTINGS } = await import("../src/shared/defaults");
 
 const file = (clis: unknown[]) => JSON.stringify({ format: "agent-dock-settings", version: 1, exportedAt: "t", appVersion: "v", settings: {}, agents: [], clis, roles: [] });
@@ -57,5 +57,59 @@ describe("connection ids and kinds from a file or the window", () => {
     expect(health.state).toBe("disconnected");
     expect(health.detail).toMatch(/Unknown kind/);
     expect(health.log).toEqual([]);
+  });
+});
+
+// Third defensive review (0.39.0): the window could still choose programs to run, leftover keys under a
+// bare id could pass to a later connection, and the key-move dialog showed the raw address.
+describe("programs, addresses and leftover keys", () => {
+  it("drops every key left under a bare id, keeping the app's own and moving a saved connection's", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "dock-ids-"));
+    const enc = (text: string) => Buffer.from(`enc:${text}`).toString("base64");
+    try {
+      mkdirSync(path.join(root, "config"));
+      writeFileSync(path.join(root, "config", "clis.json"), JSON.stringify([conn({ id: "openai-1" }), conn({ id: "openai-2" })]));
+      writeFileSync(path.join(root, "config", "secrets.json"), JSON.stringify({ "openai-1": enc("old-copy"), "cli:openai-1": enc("current"), "openai-2": enc("moved"), "openai-gone": enc("orphan"), "approvals:key": enc("A"), "notify:telegram": enc("T") }));
+      const store = new AppStore(root);
+      await store.load();
+      expect(Object.keys(JSON.parse(readFileSync(path.join(root, "config", "secrets.json"), "utf8"))).sort()).toEqual(["approvals:key", "cli:openai-1", "cli:openai-2", "notify:telegram"]);
+      expect([store.getCliSecret("openai-1"), store.getCliSecret("openai-2"), store.getCliSecret("openai-gone")]).toEqual(["current", "moved", null]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("finds only Git and the supported CLIs, and never runs anything else", async () => {
+    await expect(detectOnPath(process.execPath)).rejects.toThrow(/Only Git and the supported CLIs/);
+    await expect(detectOnPath("*")).rejects.toThrow(/Only Git/);
+    await expect(detectOnPath("node")).rejects.toThrow(/Only Git/);
+  });
+
+  it("accepts only http(s) addresses without a user name or password", () => {
+    for (const ok of ["http://127.0.0.1:8080/v1", "https://openrouter.ai/api/v1", "http://[::1]:11434"]) expect(connectionUrlProblem(ok)).toBeNull();
+    expect(connectionUrlProblem("https://api.openai.com@evil.example/v1")).toMatch(/user name or password/);
+    expect(connectionUrlProblem("https://user:pw@example.com/v1")).toMatch(/user name or password/);
+    expect(connectionUrlProblem("file:///C:/x")).toMatch(/http/);
+    expect(connectionUrlProblem("javascript:alert(1)")).toMatch(/http/);
+    expect(connectionUrlProblem("not a url")).toMatch(/not a valid URL/);
+  });
+
+  it("asks before running a CLI program that is neither its plain name nor found on PATH for it", async () => {
+    const bin = mkdtempSync(path.join(tmpdir(), "dock-bin-"));
+    const saved = process.env.PATH;
+    try {
+      const fake = path.join(bin, process.platform === "win32" ? "codex.cmd" : "codex");
+      writeFileSync(fake, process.platform === "win32" ? "@echo off\r\necho 1.0\r\n" : "#!/bin/sh\necho 1.0\n", { mode: 0o755 });
+      process.env.PATH = `${bin}${path.delimiter}${saved}`;
+      expect(await programNeedsConfirmation({ kind: "codex", location: "codex" })).toBe(false);
+      expect(await programNeedsConfirmation({ kind: "codex", location: fake })).toBe(false);
+      expect(await programNeedsConfirmation({ kind: "codex", location: `"${fake}"` })).toBe(false);
+      expect(await programNeedsConfirmation({ kind: "codex", location: process.execPath })).toBe(true);
+      expect(await programNeedsConfirmation({ kind: "codex", location: "codex-other" })).toBe(true);
+      expect(await programNeedsConfirmation({ kind: "openai", location: "https://example.com/v1" })).toBe(false);
+    } finally {
+      process.env.PATH = saved;
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

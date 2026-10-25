@@ -127,7 +127,8 @@ async function withLock(file, operation) {
       const handle = await open(lock, "wx");
       try { return await operation(); } finally { await handle.close(); await rm(lock, { force: true }); }
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      // Windows reports a lock another process is just deleting as EPERM, not EEXIST: it is busy too.
+      if (error.code !== "EEXIST" && !(error.code === "EPERM" && process.platform === "win32")) throw error;
       // A writer that died mid-append leaves its lock; appends take milliseconds.
       const age = await stat(lock).then((s) => Date.now() - s.mtimeMs, () => 0);
       if (age > 10_000) await rm(lock, { force: true });
@@ -183,7 +184,8 @@ export async function pruneActionLog(stateDir, { before }) {
   if (!expired.length) return 0;
   const newest = expired.at(-1);
   await appendAction(stateDir, { type: "action-log-pruned", upToSeq: newest.last, head: newest.head, archives: expired.map((a) => a.name) });
-  for (const archive of expired) await rm(archive.file, { force: true });
+  // Under the lock, so a verification never reads some of these archives and not others.
+  await withLock(path.join(dir, ACTION_LOG), async () => { for (const archive of expired) await rm(archive.file, { force: true }); });
   return expired.length;
 }
 
@@ -193,17 +195,32 @@ export async function flushActionLog() {
 }
 
 /**
+ * Reads the archives, the log and its head record under the writers' lock: read without it, a verification
+ * can land between an append and its head record (or a rotation or pruning) and report a sound log as
+ * broken. A missing folder (nothing to verify) or a read-only one (no writer either) is read without it.
+ */
+async function readForVerify(dir, key) {
+  const file = path.join(dir, ACTION_LOG);
+  const read = async () => {
+    const parts = [];
+    for (const archive of await archives(dir)) parts.push(await readFile(archive.file, "utf8"));
+    try { parts.push(await readFile(file, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    return { parts, anchor: key ? await headRecord(dir, key) : null };
+  };
+  try { return await withLock(file, read); }
+  catch (error) { if (["ENOENT", "EACCES", "EROFS"].includes(error.code) || (error.code === "EPERM" && process.platform !== "win32")) return read(); throw error; }
+}
+
+/**
  * Checks every entry's sequence, link and hash, and with the log key its signature: every entry must be
  * signed except a terminal stop and those the signed legacy checkpoint covers. ok=false names the first
  * entry that does not fit.
  */
 export async function verifyActionLog(stateDir, { key = logKey } = {}) {
-  const dir = path.resolve(stateDir), parts = [];
-  for (const archive of await archives(dir)) parts.push(await readFile(archive.file, "utf8"));
-  try { parts.push(await readFile(path.join(dir, ACTION_LOG), "utf8")); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const dir = path.resolve(stateDir);
+  const { parts, anchor } = await readForVerify(dir, key);
   const lines = parts.join("\n").split("\n").filter((line) => line.trim());
-  const anchor = key ? await headRecord(dir, key) : null;
   if (!lines.length) return anchor ? { ok: false, entries: 0, head: GENESIS, lastAt: null, brokenAt: 0, reason: `the log is empty, but it had ${anchor.seq} entries` } : { ok: true, entries: 0, head: GENESIS, lastAt: null };
   let prev = GENESIS, seq = 0, lastAt = null, pruned = 0, signed = 0, macs = 0, unsigned = 0;
   const legacy = key ? await legacyCheckpoint(dir, key) : null;

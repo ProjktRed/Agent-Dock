@@ -15,7 +15,7 @@ import { defaultAgents } from "./defaults";
 import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
 import { appIcon } from "./icon";
-import { checkCli, detectOnPath, pickRunnable, whereAll } from "./lib/clis";
+import { checkCli, connectionUrlProblem, detectOnPath, pickRunnable, programNeedsConfirmation, URL_KINDS, whereAll } from "./lib/clis";
 import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
@@ -788,22 +788,44 @@ async function writeStopLauncher() {
 }
 let stopAllPath = "";
 
-/** A native confirmation (the window cannot answer it) before a safety control is weakened. */
-/** A connection's address changed: send its saved key there, or remove the key. */
+/**
+ * A connection's address changed: send its saved key there, or remove the key. The host is shown as the
+ * URL parser reads it (the address was checked first: http(s), no user name or password), so an address
+ * such as https://api.example.com@other.example cannot pass for the first host.
+ */
 async function confirmKeyMove(name: string, location: string): Promise<boolean> {
+  const url = new URL(location);
   const options = {
     type: "warning" as const,
     buttons: ["Remove the saved key", "Use it at the new address"],
     defaultId: 0,
     cancelId: 0,
     title: "Send the saved key to a new address?",
-    message: `${name} now points to ${location.slice(0, 200)}.`,
-    detail: "Its saved API key would be sent there. Keep it only if you changed the address yourself and trust it.",
+    message: `${shown(name, 80)} now sends its key to ${url.host}`,
+    detail: `New address: ${url.protocol}//${url.host}${url.pathname.slice(0, 120)}\n\nIts saved API key would be sent there. Keep it only if you changed the address yourself and trust ${url.host}.`,
   };
   const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
   return response === 1;
 }
 
+/**
+ * A program the window chose for a CLI connection (not its plain name, not one PATH finds for it) runs
+ * only after a native confirmation, once per program while the app is open.
+ */
+const confirmedPrograms = new Set<string>();
+/** Text from the window shown in a native dialog: control and text-direction characters cannot disguise it. */
+const shown = (text: string, max: number) => text.replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, "?").slice(0, max);
+async function approveProgram(cli: CliConnection): Promise<boolean> {
+  if (!(await programNeedsConfirmation(cli))) return true;
+  const location = cli.location.trim().replace(/^"(.*)"$/, "$1");
+  const key = process.platform === "linux" ? path.resolve(location) : path.resolve(location).toLowerCase();
+  if (confirmedPrograms.has(key)) return true;
+  if (!(await confirmWeakening([`Run ${shown(location, 260)} as ${shown(cli.name || cli.kind, 80)}`]))) return false;
+  confirmedPrograms.add(key);
+  return true;
+}
+
+/** A native confirmation (the window cannot answer it) before a safety control is weakened. */
 async function confirmWeakening(labels: string[]): Promise<boolean> {
   const options = {
     type: "warning" as const,
@@ -994,12 +1016,15 @@ function registerIpc() {
     if (isRunSettingKind(cli.kind)) cli = { ...cli, runSettings: cleanRunSettings(cli.kind, cli.runSettings) };
     else delete cli.runSettings;
     if (!isConnectionId(cli?.id) || !isCliKind(cli.kind) || typeof cli.location !== "string") throw new Error("Invalid connection");
+    if (URL_KINDS.has(cli.kind)) { const problem = connectionUrlProblem(cli.location); if (problem) throw new Error(problem); }
     store.assertSecretEnvStorable(cli);
     const i = store.data.clis.findIndex((c) => c.id === cli.id);
     const before = i >= 0 ? store.data.clis[i] : undefined;
     if (before && before.kind !== cli.kind) throw new Error("A connection's kind cannot change; add a new connection instead.");
+    // A program the user did not confirm is not saved: the connection keeps its program (a new one, the plain name).
+    if (before?.location !== cli.location && !(await approveProgram(cli))) cli = { ...cli, location: before?.location ?? cli.kind };
     // The saved key goes to a new address only when the user says so.
-    if (secret === undefined && before && before.location !== cli.location && store.hasCliSecret(cli.id) && !(await confirmKeyMove(cli.name || cli.id, cli.location))) secret = null;
+    if (secret === undefined && before && URL_KINDS.has(cli.kind) && before.location !== cli.location && store.hasCliSecret(cli.id) && !(await confirmKeyMove(cli.name || cli.id, cli.location))) secret = null;
     store.data.clis = i >= 0 ? store.data.clis.map((c) => (c.id === cli.id ? cli : c)) : [...store.data.clis, cli];
     if (secret !== undefined) await store.setCliSecret(cli.id, secret);
     await store.saveClis();
@@ -1051,11 +1076,14 @@ function registerIpc() {
   });
   handle("cli:healths", () => [...health.values()]);
   // A test from the window may use the saved key only for that saved connection at its saved address.
-  handle("cli:test", (cli: CliConnection, secret?: string | null) => {
-    if (!isCliKind(cli?.kind)) throw new Error("Unknown kind of connection");
+  // A program the window chose runs only after the user confirms it, as when it is saved.
+  handle("cli:test", async (cli: CliConnection, secret?: string | null) => {
+    if (!isCliKind(cli?.kind) || typeof cli.location !== "string") throw new Error("Unknown kind of connection");
+    if (URL_KINDS.has(cli.kind)) { const problem = connectionUrlProblem(cli.location); if (problem) throw new Error(problem); }
     const saved = store.data.clis.find((c) => c.id === cli.id);
-    const savedKey = saved && saved.kind === cli.kind && saved.location === cli.location ? store.getCliSecret(saved.id) : null;
-    return checkCli(cli, secret ?? savedKey);
+    const same = saved && saved.kind === cli.kind && saved.location === cli.location;
+    if (!same && !(await approveProgram(cli))) throw new Error("Not tested: the program was not confirmed.");
+    return checkCli(cli, secret ?? (same ? store.getCliSecret(saved.id) : null));
   });
   handle("cli:detect", (command: string) => detectOnPath(command));
   handle("cli:discover", async () => {
@@ -1110,7 +1138,7 @@ function registerIpc() {
       if (overrides.toolGuard !== undefined && typeof overrides.toolGuard !== "boolean") delete overrides.toolGuard;
       const withOverrides = (o: Project["workflowOverrides"]): Settings => ({ ...store.data.settings, workflow: { ...store.data.settings.workflow, ...o } });
       const weaker = weakenings(withOverrides(before.workflowOverrides ?? {}), withOverrides(overrides));
-      if (weaker.length && !(await confirmWeakening(weaker.map((w) => `${w.label} for ${before.name}`)))) {
+      if (weaker.length && !(await confirmWeakening(weaker.map((w) => `${w.label} for ${shown(before.name, 80)}`)))) {
         if (before.workflowOverrides?.toolGuard === undefined) delete overrides.toolGuard;
         else overrides.toolGuard = before.workflowOverrides.toolGuard;
       }

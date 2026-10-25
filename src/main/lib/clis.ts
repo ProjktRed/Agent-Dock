@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import path from "node:path";
 import type { Capability, CliConnection, CliHealth, PathDetection } from "@shared/types";
 import { run } from "./git";
 import { cmdLine, resolveProgram } from "./cmd-line";
@@ -35,7 +36,11 @@ export function pickRunnable(paths: string[]): string | null {
   return paths.find((p) => /\.(cmd|exe|bat)$/i.test(p)) ?? paths[0] ?? null;
 }
 
+/** What the window may ask Agent Dock to find on PATH and run with --version: Git and the CLIs it connects to. */
+const DETECTABLE = new Set(["git", "codex", "cline", "claude", "opencode"]);
+
 export async function detectOnPath(command: string): Promise<PathDetection> {
+  if (!DETECTABLE.has(command)) throw new Error("Only Git and the supported CLIs are detected here.");
   const paths = (await whereAll(command)).filter((p) => /\.(cmd|exe|bat)$/i.test(p) || !/\.\w+$/.test(p));
   const runnable = paths.filter((p) => /\.(cmd|exe|bat)$/i.test(p));
   const found = await Promise.all(
@@ -115,6 +120,34 @@ function blank(conn: CliConnection): CliHealth {
 }
 
 const PROGRAM_KINDS = new Set<string>(["codex", "cline", "claude", "opencode"]);
+/** Connections whose location is an address Agent Dock sends requests (and a saved key) to. */
+export const URL_KINDS = new Set<string>(["ollama", "llamacpp", "openai"]);
+
+/** Why a connection's address cannot be used: http(s) only, with no user name or password in it. */
+export function connectionUrlProblem(location: string): string | null {
+  let url: URL;
+  try { url = new URL(location); } catch { return "The address is not a valid URL."; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "The address must start with http:// or https://.";
+  if (url.username || url.password) return "The address must not contain a user name or password; enter the key in its own field.";
+  return null;
+}
+
+const samePath = (a: string, b: string) => {
+  const [x, y] = [path.resolve(a), path.resolve(b)];
+  return process.platform === "win32" || process.platform === "darwin" ? x.toLowerCase() === y.toLowerCase() : x === y;
+};
+
+/**
+ * A CLI connection's program is one the user picks when it is neither the plain name (found on PATH when
+ * it runs) nor a program PATH finds for that name: like the llama.cpp launcher, it runs only after the
+ * user confirms it.
+ */
+export async function programNeedsConfirmation(conn: Pick<CliConnection, "kind" | "location">): Promise<boolean> {
+  if (!PROGRAM_KINDS.has(conn.kind)) return false;
+  const location = conn.location.trim().replace(/^"(.*)"$/, "$1");
+  if (location === conn.kind) return false;
+  return !(await whereAll(conn.kind)).some((found) => samePath(found, location));
+}
 
 async function checkExecutable(conn: CliConnection, health: CliHealth): Promise<CliHealth> {
   const timeout = conn.startupTimeoutSeconds * 1000;

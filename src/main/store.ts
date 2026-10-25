@@ -78,9 +78,17 @@ export class AppStore {
     const savedClis = clis ?? (agents === null ? [] : legacy());
     this.data = { projects, agents, clis: savedClis, settings: mergeSettings(settings) };
     this.secrets = secrets;
-    // Keys saved before 0.39.0 were stored under the bare connection id.
+    // Keys saved before 0.39.0 were stored under the bare connection id: a saved connection's key moves to
+    // cli:<id>, and every other bare entry (a removed connection's, or a copy left for an older version) is
+    // dropped, so none can pass to a later connection that gets the same id. The app's own secrets all
+    // have a ":" in their names.
     let moved = false;
-    for (const c of this.data.clis) if (this.secrets[c.id] && !this.secrets[CLI_SECRET_PREFIX + c.id] && !/:/.test(c.id)) { this.secrets[CLI_SECRET_PREFIX + c.id] = this.secrets[c.id]; delete this.secrets[c.id]; moved = true; }
+    for (const id of Object.keys(this.secrets)) {
+      if (id.includes(":")) continue;
+      if (this.data.clis.some((c) => c.id === id) && !this.secrets[CLI_SECRET_PREFIX + id]) this.secrets[CLI_SECRET_PREFIX + id] = this.secrets[id];
+      delete this.secrets[id];
+      moved = true;
+    }
     if (moved) await writeJson(this.file("secrets"), this.secrets);
     // Secret environment values are kept encrypted beside the other secrets; older files had them in clis.json.
     this.data.clis = this.data.clis.map((c) => ({ ...c, env: (c.env ?? []).map((e) => (e.secret && !e.value ? { ...e, value: this.getSecret(envSecretId(c.id, e.key)) ?? "" } : e)) }));
