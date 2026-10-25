@@ -151,3 +151,12 @@ test('Windows checks call npm and npx through their .cmd shims',async()=>{
   assert.equal(windowsShims('npx vitest run; npm run lint'),'npx.cmd vitest run; npm.cmd run lint');
   for(const command of ['npm.cmd test','git status','npmx','my-npm test'])assert.equal(windowsShims(command),command);
 });
+
+// Smoke run (0.39.0): plain npx in a check downloaded a package it could not find; checks never download now.
+test('every npx in a check runs with --no-install',async()=>{
+  const {noInstall}=await import('../src/qa-runner.mjs');
+  assert.equal(noInstall('npx prettier --check x'),'npx --no-install prettier --check x');
+  assert.equal(noInstall('npx --no-install tsc'),'npx --no-install tsc');
+  assert.equal(noInstall('git status; npx.cmd vitest run'),'git status; npx.cmd --no-install vitest run');
+  for(const command of ['npm test','npxfoo','my-npx x'])assert.equal(noInstall(command),command);
+});

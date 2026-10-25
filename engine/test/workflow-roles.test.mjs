@@ -165,7 +165,7 @@ test('cloud implementation: Claude tools are scoped to the task with the tool gu
   assert.ok(open.disallowed.includes('Bash(git reset:*)'));
   const codex = buildImplementationArgs({ cli:'codex', model:'gpt-6.1-sol', effort:'high', fast:true, workspace:'/w', outputFile:'/o', task, toolGuard:true });
   assert.deepEqual(codex.slice(0, 2), ['exec', '--ephemeral']);
-  assert.ok(codex.includes('--approve-for-me'));
+  assert.ok(codex.includes('workspace-write') && codex.includes('approval_policy="never"') && !codex.includes('--approve-for-me'));
   assert.ok(codex.includes('service_tier="priority"'));
   assert.ok(!codex.includes('--dangerously-bypass-approvals-and-sandbox'));
   assert.deepEqual(parseImplementation({}), { cli:'cline', model:null, effort:null, fast:false });

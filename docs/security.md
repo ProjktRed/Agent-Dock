@@ -22,7 +22,9 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   including the value in `--option=value`, is path-checked; options that write reports or build output
   are refused, and options that rewrite files (`--write`, `--fix`, `-u`) need every target readable.
   History reads (`git show`, `git log`) name commits only, and read commands take only their
-  read-only options.
+  read-only options. Guarded commands must be plain ASCII outside a quoted commit message (PowerShell
+  reads several Unicode characters as syntax). Checks run `npx` with `--no-install`, so a check never
+  downloads a package.
 - **Project checks** (Settings › Execution & safety). A check such as `npm test` runs the project's
   scripts and tests, which agents can edit. These guards are **not an OS sandbox**: a check runs as your
   user and can read the project's files, and can decrypt Agent Dock's saved keys (see below). Off (the
@@ -88,11 +90,15 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   safely. Read-only git calls used for monitoring and QA evidence run with `core.fsmonitor=false`.
 - Claude Code always starts with `--setting-sources user`: a project's own `.claude/` settings
   (hooks, permissions) are not loaded. Agent Dock's protection hook is passed with `--settings`.
-- A repository's own CLI hooks never run: Agent Dock does not start Codex in a repository whose
-  `.codex/` defines hooks (Agent Dock starts Codex with its hook review off for its own guard hook, and
-  Codex loads a trusted project's hooks), nor Cline in one with `.clinerules/hooks/` (Cline runs those
-  without review). It checks the workspace and each folder up to its git root before every start.
-  OpenCode runs with project configuration disabled and its own config folders.
+- A repository's own CLI configuration never applies: Agent Dock does not start Codex in a repository
+  with a `.codex/config.toml` or `.codex/hooks.json` (Codex would apply its hooks, notify programs, MCP
+  servers or providers to the run, and Agent Dock starts Codex with its hook review off for its own guard
+  hook), nor Cline in one with `.clinerules/hooks/` (Cline runs those without review). It checks the
+  workspace and each folder up to its git root before every start. OpenCode runs with project
+  configuration disabled and its own config folders.
+- Codex roles that write run in Codex's workspace-write sandbox with approvals set to never: a command
+  the sandbox blocks (network, files outside the workspace) stays blocked instead of being let out by an
+  automatic reviewer.
 - CLIs › Settings: run settings for Codex and Claude Code come from a fixed list, checked by the app
   and again by the engine, with no sandbox, approval, permission, hook, network or MCP setting on it.
   The config file editor writes only Codex's `config.toml` and Claude Code's user `settings.json`,

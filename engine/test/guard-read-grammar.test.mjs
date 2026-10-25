@@ -39,7 +39,17 @@ test('read options cannot reach protected files, write, wait, run programs or se
     'Select-String -Path .env README.md','Select-String -LiteralPath secrets/config.json x','Get-Content \u2013Path .env','Get-Content \u2014Stream x README.md',
     'Get-Content README.md,.env','Get-Content -Path README.md,.env','git show HEAD:README.md,.env','npx eslint src,.env','type README.md,secrets/config.json','Get-Content env:PATH','Get-Content variable:x','Get-ChildItem HKCU:Software','Test-Path env:X',
     // Second defensive review (0.39.0): PowerShell reads curly quotes as quotes; the guard did not.
-    'Get-Content “.env”','Get-Content ‘.env’','Get-Content -Raw „secrets/config.json”','cat ‛.env’'])assert.equal(ok(policy,command),false,command);
+    'Get-Content “.env”','Get-Content ‘.env’','Get-Content -Raw „secrets/config.json”','cat ‛.env’',
+    // Third review (0.39.0): no character outside plain ASCII at all (other spaces, look-alike letters, invisible marks).
+    'Get-Content .env','Get-Content README.md','Get-Content README.md​','Get-Content еnv.txt','cat README.md\t.env','Get-Content РЕАДМЕ.md'])assert.equal(ok(policy,command),false,command);
+});
+
+test('a commit message may still contain any language; the rest of the command must be ASCII',async t=>{
+  const {policy}=await workspace(t);
+  const commit={...policy,allowGitCommit:true};
+  assert.equal(ok(commit,'git commit -m "Добавить slugify — с тестами"'),true);
+  assert.equal(ok(commit,"git commit -m 'Ajouter les tests é'"),true);
+  assert.equal(ok(commit,'git commit -m "x" README.md '),false);
 });
 
 // S-03: a check's --option=value can name a protected file, and check output options write files.
@@ -50,6 +60,9 @@ test('check arguments are path-checked in --option=value form, and checks may no
     'npx vitest run --outputFile.json=report.json','npx eslint --fix .','npx prettier --write .','npx prettier --write secrets/config.json','npx tsc --outDir dist','npx vitest run -u .','npx eslint -o out.txt src',
     'npx eslint --config=secrets/x.js src','npx vitest run --root=secrets','npx tsc -p secrets','npm test -- --outputFile=.env','npm test -- secrets/x.test.js'])assert.equal(qa(command),false,command);
   for(const command of ['npm test','npm run test','npm run format:check','npx vitest run --reporter=json','npx tsc --noEmit','npx eslint src','npm test -- src/Example.ts','npx prettier --write src/Example.ts','npx eslint --fix src'])assert.equal(qa(command),true,command);
+  // Smoke run (0.39.0): Assessment chose npx --no-install, the form that never downloads; it was refused.
+  for(const command of ['npx --no-install prettier --check README.md','npx --no-install tsc --noEmit'])assert.equal(qa(command),true,command);
+  for(const command of ['npx --no-install --yes prettier --check README.md','npx --no-install curl x','npx --no-install prettier --check .env'])assert.equal(qa(command),false,command);
 });
 
 // S-06: Linux file names differ by case, and a link inside the workspace can point outside it.

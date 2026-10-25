@@ -15,15 +15,16 @@ async function repo(t){
   return {root,dir};
 }
 
-test('a repository with its own Codex hooks is found, in either file and in a parent up to the git root',async t=>{
+// Any project config counts, not only hooks: notify programs, MCP servers and model providers run or
+// receive things too, and Codex applied an untrusted project's config once approval_policy was set.
+test('a repository with its own Codex configuration is found, in either file and in a parent up to the git root',async t=>{
   const {root,dir}=await repo(t);
   assert.deepEqual(repoCliConfigProblems('codex',dir),[]);
   await mkdir(path.join(dir,'.codex'));
-  await writeFile(path.join(dir,'.codex','config.toml'),'# hooks are mentioned only in this comment\nmodel = "gpt-x"\n');
-  assert.deepEqual(repoCliConfigProblems('codex',dir),[],'a config without hooks is fine');
-  await writeFile(path.join(dir,'.codex','config.toml'),'[[hooks.SessionStart]]\nmatcher = ".*"\n');
+  assert.deepEqual(repoCliConfigProblems('codex',dir),[],'an empty .codex folder is fine');
+  await writeFile(path.join(dir,'.codex','config.toml'),'notify = ["calc.exe"]\n');
   assert.deepEqual(repoCliConfigProblems('codex',dir),['.codex/config.toml']);
-  await writeFile(path.join(dir,'.codex','config.toml'),'hooks = { Stop = [] }\n');
+  await writeFile(path.join(dir,'.codex','config.toml'),'[[hooks.SessionStart]]\nmatcher = ".*"\n');
   assert.deepEqual(repoCliConfigProblems('codex',dir),['.codex/config.toml']);
   await writeFile(path.join(dir,'.codex','hooks.json'),'{}');
   assert.deepEqual(repoCliConfigProblems('codex',dir).sort(),['.codex/config.toml','.codex/hooks.json']);
@@ -38,7 +39,7 @@ test('a Codex call never starts over repository hooks; Claude Code is not affect
   const {root,dir}=await repo(t);
   await mkdir(path.join(dir,'.codex'));await writeFile(path.join(dir,'.codex','hooks.json'),'{}');
   const invocation=path.join(root,'inv');await mkdir(invocation);
-  await assert.rejects(installProtection({cli:'codex',workspace:dir,stateDir:path.join(root,'state'),invocation}),/own Codex hooks \(\.codex\/hooks\.json\).*not started/);
+  await assert.rejects(installProtection({cli:'codex',workspace:dir,stateDir:path.join(root,'state'),invocation}),/own Codex configuration \(\.codex\/hooks\.json\).*not started/);
   const claude=await installProtection({cli:'claude',workspace:dir,stateDir:path.join(root,'state'),invocation});
   assert.equal(claude[0],'--settings');
 });
@@ -52,4 +53,16 @@ test('Cline never starts over repository hooks in .clinerules/hooks',async t=>{
   assert.throws(()=>assertNoRepoCliConfig('cline',dir),/own Cline hooks \(\.clinerules\/hooks\)/);
   const clineJs=path.join(root,'cline.js');await writeFile(clineJs,'');
   await assert.rejects(launchCline({clineJs,workspace:dir,prompt:'x'}),/own Cline hooks/);
+});
+
+// Found while testing the fix: without a git repository the walk reached the user's home and its own
+// ~/.codex/config.toml. Codex then treats the workspace itself as the project root.
+test('outside a git repository only the workspace is checked, and the home folder never counts',async t=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'repo-config-nogit-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const dir=path.join(root,'work');await mkdir(dir);
+  await mkdir(path.join(root,'.codex'));await writeFile(path.join(root,'.codex','config.toml'),'notify = ["x"]\n');
+  assert.deepEqual(repoCliConfigProblems('codex',dir),[]);
+  await mkdir(path.join(dir,'.codex'));await writeFile(path.join(dir,'.codex','config.toml'),'notify = ["x"]\n');
+  assert.deepEqual(repoCliConfigProblems('codex',dir),['.codex/config.toml']);
+  assert.deepEqual(repoCliConfigProblems('codex',os.homedir()),[],'the home folder is user configuration, not a project');
 });

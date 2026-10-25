@@ -192,6 +192,10 @@ function readCommandSafe(policy,command,words,cwd) {
 function commandSafe(policy,script,cwd) {
   script=stripCheckOutputFilter(script);
   if(typeof script==='string'&&/\bgit\s+commit\b/.test(script))script=quotedMessages(script);
+  // Plain ASCII only outside a checked commit message: PowerShell reads several Unicode characters as
+  // syntax (dashes as "-", curly quotes as quotes, other spaces as separators), and each review found
+  // another. A file name that is not ASCII is refused too; the agent reads it another way.
+  if(typeof script==='string'&&/[^\x20-\x7e]/.test(script))return false;
   // ";" runs commands one after another, like "&&" (Windows PowerShell 5.1 has no "&&"): every part must be safe.
   if(typeof script==='string'&&script.includes(';')&&!/[\r\n|]/.test(script)){
     const parts=script.split(';').map(p=>p.trim());
@@ -215,6 +219,8 @@ function commandSafe(policy,script,cwd) {
     // npm consumes its own options unless script arguments follow an explicit separator.
     // In particular, --script-shell/--node-options must never be model-controlled.
     if(command.startsWith('npm')){const end=words[0]==='run'?2:1;if(words.length>end&&words[end]!=='--')return false;}
+    // npx --no-install runs only what the project already has (plain npx may download a package).
+    if(command.startsWith('npx')&&words[0]==='--no-install')words.shift();
     if(command.startsWith('npx')&&!['tsc','eslint','prettier','vitest','playwright'].includes(words[0]))return false;
     if(words.some(w=>/^--(?:prefix|cwd|config|require|import|eval|package|call|yes|script-shell|node-options|userconfig|globalconfig)(?:=|$)/i.test(w)))return false;
     if(words.some(w=>CHECK_OUTPUT_OPTION.test(w.split('=')[0])))return false;

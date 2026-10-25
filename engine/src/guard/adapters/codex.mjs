@@ -97,6 +97,13 @@ export function codexHookCommand(parts, platform = process.platform) {
   return `& ${quoted}; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 2 }`;
 }
 
+/**
+ * Codex roles that write (implementation, QA commits) run in Codex's workspace-write sandbox and are
+ * never let out of it: with --approve-for-me an automatic reviewer granted a command network access
+ * outside the sandbox (a live run downloaded and ran an npm package that way).
+ */
+export const CODEX_WRITE_SANDBOX = Object.freeze(["--sandbox", "workspace-write", "-c", 'approval_policy="never"']);
+
 export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile, platform = process.platform }) {
   const command = codexHookCommand([nodePath, hookScript, policyFile, logFile], platform);
   return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`];

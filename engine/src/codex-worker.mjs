@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {installProtection} from './guard/install-protection.mjs';
+import {CODEX_WRITE_SANDBOX} from './guard/adapters/codex.mjs';
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -274,7 +275,7 @@ export class CodexWorker {
     const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
       ...codexSkillArgs({workspace:this.workspace, env:this.env}),
-      ...(sandbox === "workspace-write" ? ["--approve-for-me"] : ["--sandbox", sandbox]),
+      ...(sandbox === "workspace-write" ? CODEX_WRITE_SANDBOX : ["--sandbox", sandbox]),
       "--cd", this.workspace, "--output-schema", schemaFile,
       "--output-last-message", outputFile, "-"];
     this.activeCount++;

@@ -9,6 +9,7 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
 import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
 import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
+import { noInstall } from "./qa-runner.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
@@ -78,7 +79,7 @@ export function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } =
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const executable = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-    const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-c", command];
+    const args = process.platform === "win32" ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)];
     const child = spawn(executable, args, {
       cwd, env: { ...withoutSecrets(), CODEX_QA: "1" }, windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],

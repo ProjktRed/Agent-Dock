@@ -6,7 +6,7 @@ import path from "node:path";
 import { CLAUDE_SETTING_SOURCES, claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
 import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
-import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
+import codexAdapter, { CODEX_WRITE_SANDBOX, codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
 import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
@@ -55,8 +55,8 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       ...codexRunArgs(),
       ...hookArgs,
       ...codexSkillArgs({workspace, env}),
-      // Same sandbox as Codex QA (workspace writes, approvals reviewed automatically); the scope hook limits changes to the task.
-      "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
+      // Same sandbox as Codex QA (workspace writes, never let out of it); the scope hook limits changes to the task.
+      ...CODEX_WRITE_SANDBOX, "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
   return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...claudeRunArgs({ model }), ...hookArgs, ...launchArgs];

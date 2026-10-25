@@ -17,13 +17,21 @@ export function windowsShims(command) {
   return command.replace(/(^|[;&|]\s*)(npm|npx)(?=\s|$)/gi, (_, before, name) => `${before}${name.toLowerCase()}.cmd`);
 }
 
+/**
+ * A check runs only tools the project already has: plain npx downloads and runs a package it cannot find
+ * (a mistyped or hijacked name included), so every npx in a check gets --no-install.
+ */
+export function noInstall(command) {
+  return command.replace(/(^|[;&|]\s*)(npx(?:\.cmd)?)(?=\s)(?!\s+--no-install(?=\s|$))/gi, "$1$2 --no-install");
+}
+
 /** timeoutMs > 0: a command still running then is ended, and fails with timedOut set. */
 function runCommand(command, cwd, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";
     const args = process.platform === "win32"
-      ? ["-NoProfile", "-NonInteractive", "-Command", windowsShims(command)]
-      : ["-c", command];
+      ? ["-NoProfile", "-NonInteractive", "-Command", windowsShims(noInstall(command))]
+      : ["-c", noInstall(command)];
     const child = spawn(shell, args, {
       cwd,
       env: { ...withoutSecrets(), CODEX_QA: "1" },

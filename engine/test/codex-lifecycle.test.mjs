@@ -32,7 +32,9 @@ test("explicit Windows sandbox mode is passed without disabling workspace bounda
     await codex.invoke(JSON.stringify(strictResult({ status: "fail" })), "workspace-write");
     const args = JSON.parse(await readFile(argsFile, "utf8"));
     assert.ok(args.includes('windows.sandbox="unelevated"'));
-    assert.ok(args.includes("--approve-for-me"));
+    // Third review (0.39.0): writes stay in the workspace-write sandbox and are never let out of it.
+    assert.ok(args.includes("workspace-write") && args.includes('approval_policy="never"'));
+    assert.equal(args.includes("--approve-for-me"), false);
     assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
     assert.throws(() => new CodexWorker({ workspace: root, stateDir: root, windowsSandbox: "disabled" }), /Invalid Windows sandbox/);
   } finally {
