@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { brokeredProviderKeys } from "./runtime/provider.mjs";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -114,6 +115,8 @@ export function childEnv(env = process.env, logKey = actionLogKeyHex()) {
   for (const [name, value] of Object.entries(env)) if (name.toUpperCase() !== "AGENT_DOCK_NOTIFY") out[name] = value;
   // Task engines sign their action log entries too (the key is not in this engine's own environment).
   if (logKey) out.AGENT_DOCK_LOG_KEY = logKey;
+  // A provider key this engine moved behind its broker: the task engine puts it behind a broker of its own.
+  Object.assign(out, brokeredProviderKeys());
   return out;
 }
 

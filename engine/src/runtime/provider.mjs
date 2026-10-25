@@ -1,3 +1,5 @@
+import { startKeyBroker } from "../key-broker.mjs";
+
 const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENCODE_URL = "https://opencode.ai/inference/openai/v1";
 const OPENCODE_MODELS_URL = "https://opencode.ai/inference/v1/models";
@@ -24,7 +26,37 @@ export function validateApiKeyEnvName(name = "AGENT_DOCK_PROVIDER_KEY") {
   return name;
 }
 
-/** Remote OpenAI-compatible provider description shared by Cline and OpenCode. */
+// Real keys this engine moved behind its broker, by variable name: a parallel task's engine is given them back
+// (it is this engine's own code and starts its own broker), never a worker.
+const brokeredKeys = new Map();
+const brokers = new Map();
+export const brokeredProviderKeys = () => Object.fromEntries(brokeredKeys);
+/** Tests: forget the brokers and keys of earlier cases. */
+export function resetKeyBrokers() { for (const broker of brokers.values()) void broker.then((b) => b.close(), () => {}); brokers.clear(); brokeredKeys.clear(); }
+
+/**
+ * Puts the provider's key behind the key broker (key-broker.mjs): the broker holds it in this engine's memory,
+ * and this engine's environment, which every worker and tool inherits, holds the run's token in its place
+ * (also in OPENROUTER_API_KEY / OPENAI_API_KEY when they held the key). null when there is no key.
+ */
+export async function brokerProviderKey({ provider, providerBaseUrl, providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY", env = process.env, start = startKeyBroker }) {
+  const apiKeyEnv = validateApiKeyEnvName(providerApiKeyEnv);
+  const apiKey = brokeredKeys.get(apiKeyEnv) ?? env[apiKeyEnv];
+  if (typeof apiKey !== "string" || !apiKey) return null;
+  const upstream = normalizedBaseUrl(provider, providerBaseUrl);
+  const id = `${apiKeyEnv} ${upstream}`;
+  if (!brokers.has(id)) brokers.set(id, start({ upstream, apiKey }));
+  const broker = await brokers.get(id);
+  brokeredKeys.set(apiKeyEnv, apiKey);
+  for (const name of ["OPENROUTER_API_KEY", "OPENAI_API_KEY"]) if (env[name] === apiKey) env[name] = broker.token;
+  env[apiKeyEnv] = broker.token;
+  return { ...broker, upstream, apiKey };
+}
+
+/**
+ * Remote OpenAI-compatible provider description shared by Cline and OpenCode. broker (brokerProviderKey): the
+ * worker is pointed at the broker and authenticates with its token; preflight still asks the provider itself.
+ */
 export function createProviderDescriptor({
   provider,
   model,
@@ -36,15 +68,19 @@ export function createProviderDescriptor({
   providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY",
   fetchImpl = globalThis.fetch,
   env = process.env,
+  broker = null,
 }) {
   if (!REMOTE_PROVIDERS.includes(provider)) throw new Error(`Unsupported remote provider: ${provider}`);
-  const baseUrl = normalizedBaseUrl(provider, providerBaseUrl);
+  const upstream = normalizedBaseUrl(provider, providerBaseUrl);
+  const baseUrl = broker?.url ?? upstream;
   const normalizedModel = provider === "opencode" ? model.replace(/^opencode\//, "") : model;
   const apiKeyEnv = validateApiKeyEnvName(providerApiKeyEnv);
-  const apiKey = env[apiKeyEnv];
+  const apiKey = broker?.apiKey ?? env[apiKeyEnv];
   const descriptor = {
     id: provider,
     baseUrl,
+    upstreamUrl: upstream,
+    brokered: Boolean(broker),
     model: normalizedModel,
     apiKeyEnv,
     contextTokens,
@@ -58,7 +94,7 @@ export function createProviderDescriptor({
       let response;
       let body;
       try {
-        const modelsUrl = provider === "opencode" ? OPENCODE_MODELS_URL : `${baseUrl}/models`;
+        const modelsUrl = provider === "opencode" ? OPENCODE_MODELS_URL : `${upstream}/models`;
         response = await fetchImpl(modelsUrl, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: controller.signal,
@@ -73,9 +109,9 @@ export function createProviderDescriptor({
       }
       const advertisedModels = Array.isArray(body?.data) ? body.data.map((entry) => entry?.id).filter(Boolean) : [];
       if (advertisedModels.length && !advertisedModels.includes(normalizedModel)) {
-        throw new Error(`${provider} at ${baseUrl} does not advertise required model ${normalizedModel}; advertised: ${advertisedModels.join(", ")}`);
+        throw new Error(`${provider} at ${upstream} does not advertise required model ${normalizedModel}; advertised: ${advertisedModels.join(", ")}`);
       }
-      return { requestedProvider: provider, provider, baseUrl, model: normalizedModel, advertisedModels };
+      return { requestedProvider: provider, provider, baseUrl: upstream, model: normalizedModel, advertisedModels };
     },
     readMetrics: null,
     writeBackendConfig: null,

@@ -8,12 +8,14 @@ import {adapter,PLUGIN_ID,prepareOpenCodeGuard,readGuardOutcome} from './guard/a
 import {stopMessage} from './guard/reasons.mjs';
 import {noteUsage,openCodeUsage} from './run-budget.mjs';
 import {openCodeRunOptions} from './cli-run-settings.mjs';
+import {withoutSecrets} from './secret-env.mjs';
 
 const FAIL_CLOSED='OpenCode guard plugin did not initialize; guarded run refused';
 const redact=(text,env,keyEnv)=>keyEnv&&env[keyEnv]?String(text).replaceAll(env[keyEnv],'[REDACTED]'):String(text);
 
+// No credentials but its own provider variable (the key broker's token for a cloud provider), as for Cline.
 export function openCodeChildEnv(env,guard,apiKeyEnv){
- const child={...env};
+ const child=withoutSecrets(env,{keep:apiKeyEnv?[apiKeyEnv]:[]});
  for(const name of Object.keys(child))if(name.startsWith('OPENCODE_')&&name!==apiKeyEnv)delete child[name];
  return {...child,...guard.env};
 }

@@ -96,10 +96,16 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
   reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
 - llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.
-- A Cline or OpenCode worker on a cloud provider gets that key in its environment, so a worker could
-  read it. The control that bounds a leak is a spending limit on the key itself: use a key made only for
-  Agent Dock, with a low limit set at the provider (for example an OpenRouter per-key credit limit). The
-  run and daily budgets stay the limit inside the app. Before a run, Agent Dock asks OpenRouter whether
+- A Cline or OpenCode worker on a cloud provider never gets the provider key. The engine keeps it in memory
+  and runs a key broker on 127.0.0.1 for the run: the worker is pointed at the broker and given a random
+  token made for that engine, and the broker adds the key on the way to the configured provider only (GET
+  and POST below the provider's base path; anything else, or a wrong token, is refused). The engine's own
+  environment, which workers and their tools inherit, holds the token in the key's place, and so do the
+  worker's config files. The token works only against that broker and stops working when the engine ends.
+  A worker can still spend through the broker while the run lasts, so a spending limit on the key itself
+  stays the control that bounds misuse: use a key made only for Agent Dock, with a low limit set at the
+  provider (for example an OpenRouter per-key credit limit). The run and daily budgets stay the limit
+  inside the app. Before a run, Agent Dock asks OpenRouter whether
   the key has a limit (`GET /api/v1/key`, at most hourly) and warns when it has none.
 - Notification channel settings (webhook URLs, the Telegram bot token, the AgentMail API key) go only
   to the engine, which reads them once at startup and removes them from its environment. Check

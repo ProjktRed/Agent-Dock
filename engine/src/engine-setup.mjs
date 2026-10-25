@@ -9,7 +9,7 @@ import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
 import { createRoleRunner, readRolesFile } from "./workflow-roles.mjs";
 import { ClineCliWorker } from "./cline-cli-worker.mjs";
 import { prepareClineRuntime } from "./cline-runtime-config.mjs";
-import { createProviderDescriptor } from "./runtime/provider.mjs";
+import { brokerProviderKey, createProviderDescriptor } from "./runtime/provider.mjs";
 import { OpenCodeCliWorker } from "./opencode-cli-worker.mjs";
 
 // The engine owns this task boundary. An app polling QA PASS can arrive after
@@ -78,7 +78,10 @@ export async function createImplementationWorker(options, { stateDir, workspace,
           readMetrics: runtime.readMetrics,
         };
       } else {
+        // OpenCode gets the key broker's address and token, never the key (key-broker.mjs).
+        const broker = await brokerProviderKey({ provider: options.provider, providerBaseUrl: options.providerBaseUrl, providerApiKeyEnv: options.providerApiKeyEnv });
         providerDescriptor = createProviderDescriptor({
+          broker,
           provider: options.provider,
           model: options.model,
           contextTokens: options.clineContextTokens,

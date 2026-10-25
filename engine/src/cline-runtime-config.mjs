@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { createProviderDescriptor } from "./runtime/provider.mjs";
+import { brokerProviderKey, createProviderDescriptor } from "./runtime/provider.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 // llama-server's own default port.
@@ -265,9 +265,11 @@ export async function prepareClineRuntime({
     };
   }
   if (provider === "openrouter" || provider === "opencode" || provider === "openai") {
+    // Cline gets the key broker's address and token, never the key (key-broker.mjs).
+    const broker = await brokerProviderKey({ provider, providerBaseUrl, providerApiKeyEnv });
     const descriptor = createProviderDescriptor({
       provider, model, contextTokens, maxOutputTokens, timeoutSeconds,
-      providerBaseUrl, providerApiKeyEnv, fetchImpl,
+      providerBaseUrl, providerApiKeyEnv, fetchImpl, broker,
     });
     const remoteModel = descriptor.model;
     const dataDir = path.join(path.resolve(stateDir), "cline-data");
@@ -283,6 +285,8 @@ export async function prepareClineRuntime({
         provider: clineProvider,
         model: remoteModel,
         ...(provider === "openai" || provider === "opencode" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
+        // OpenRouter keeps Cline's own provider (its cost reporting) with the broker's address in place of its default.
+        ...(provider === "openrouter" && descriptor.brokered ? { baseUrl: descriptor.baseUrl } : {}),
         contextWindow: contextTokens,
         maxTokens: maxOutputTokens,
         timeout: timeoutSeconds * 1000,
