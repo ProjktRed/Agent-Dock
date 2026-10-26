@@ -186,7 +186,7 @@ export class EngineManager {
     return new mod.DashboardState({ stateDir: project.stateDir });
   }
 
-  /** Same semantics as the engine dashboard (engine/src/dashboard-cli.mjs onControl). */
+  /** The engine's control file (dashboard-state.mjs setControl). */
   async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}, source = "app"): Promise<void> {
     this.gitCache.delete(project.id);
     const running = await this.refreshAlive(project);

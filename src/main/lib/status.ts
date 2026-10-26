@@ -33,7 +33,7 @@ export interface EngineControl {
 const LEGACY_STAGES: Record<string, string> = { "cline-working": "implementing", "cline-complete": "implemented", "codex-qa": "qa", WAITING_FOR_CODEX: "WAITING_FOR_LIMIT" };
 const stageOf = (live: EngineLive | null) => (live?.stage ? LEGACY_STAGES[live.stage] ?? live.stage : undefined);
 
-/** Mirrors the engine dashboard's primary status (dashboard-server.mjs primaryStatus + view-model labels). */
+/** The run's primary status, from the engine's live state and control file. */
 export function deriveRunState(live: EngineLive | null, control: EngineControl, processAlive: boolean): { runState: RunState; label: string } {
   if (!live) return { runState: processAlive ? "running" : "idle", label: processAlive ? "Starting" : "Idle" };
   const stage = stageOf(live) ?? "waiting";

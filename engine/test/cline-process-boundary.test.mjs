@@ -1,4 +1,3 @@
-import {dashboardFetch} from './dashboard-client.mjs';
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -12,7 +11,6 @@ import { PassThrough } from "node:stream";
 import { ClineCliWorker } from "../src/cline-cli-worker.mjs";
 import * as clineAdapter from "../src/cline-cli-worker.mjs";
 import { DashboardState } from "../src/dashboard-state.mjs";
-import { startDashboardServer } from "../src/dashboard-server.mjs";
 import { runNodeLoop } from "../src/node-loop.mjs";
 
 const fakeCline = fileURLToPath(new URL("../fixtures/fake-cline-process.mjs", import.meta.url));
@@ -28,7 +26,6 @@ async function harness({ prompt, exitDecision = "pass", maxAttempts = 1, launch 
   const state = new DashboardState({ stateDir });
   const activeTask = { ...task, prompt };
   await state.initialize({ task: activeTask, workspace, maxAttempts });
-  const dashboard = await startDashboardServer({ stateDir, workspace, port: 0 });
   const worker = new ClineCliWorker({
     stateDir,
     workspace,
@@ -78,12 +75,11 @@ async function harness({ prompt, exitDecision = "pass", maxAttempts = 1, launch 
     await state.record({ type: "manual-review", qa: error.message });
     return { status: "manual-review", output: error.message };
   });
-  return { root, stateDir, state, dashboard, loop, events, getQaLaunches: () => qaLaunches };
+  return { root, stateDir, state, loop, events, getQaLaunches: () => qaLaunches };
 }
 
 async function dispose(run) {
   await run.loop.catch(() => {});
-  await run.dashboard.close();
   await rm(run.root, { recursive: true, force: true });
 }
 
@@ -107,8 +103,6 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
     launch: () => clineAdapter.collectClineProcess("fake", [], { spawnProcess, drainTimeoutMs: 50 }),
   });
   try {
-    const before = await dashboardFetch(run.dashboard, "/api/status");
-    assert.equal(before.status, 200);
     // The bug this guards against is an indefinite wait; 3 s detects it without failing on a loaded machine.
     const quick = await Promise.race([run.loop, timeout(3000)]);
     assert.notEqual(quick.timedOut, true, "worker waited for descendant-held pipe close");
@@ -116,7 +110,6 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
     assert.ok(run.events.some((event) => event.type === "codex-qa-started"));
     assert.equal(heldStdout.destroyed, true);
     assert.equal(heldStderr.destroyed, true);
-    assert.equal((await dashboardFetch(run.dashboard, "/api/status")).status, 200);
     assert.equal(await run.state.readLive().then((live) => live.stage), "complete");
     await assert.rejects(import("node:fs/promises").then(({ access }) => access(path.join(run.stateDir, "cline.busy.lock"))));
   } finally {
@@ -124,13 +117,13 @@ test("Cline exit is authoritative when an inherited stdout pipe remains open", a
   }
 });
 
-test("non-zero Cline exit can enter explicit controlled manual review while dashboard stays alive", async () => {
+test("non-zero Cline exit can enter explicit controlled manual review", async () => {
   const run = await harness({ prompt: "nonzero", exitDecision: "manual-review" });
   try {
     const result = await run.loop;
     assert.equal(result.status, "blocked");
     assert.ok(run.events.some((event) => event.type === "cline-finished" && event.exitCode === 7));
-    const status = await dashboardFetch(run.dashboard, "/api/status").then((response) => response.json());
+    const status = await run.state.readLive();
     assert.equal(status.stage, "BLOCKED");
     assert.match(status.latestQa, /fake QA failure/);
   } finally {
@@ -144,7 +137,6 @@ test("bounded Cline timeout remains a controlled manual-review state", async () 
     const result = await run.loop;
     assert.equal(result.status, "blocked");
     assert.ok(run.events.some((event) => event.type === "cline-finished" && event.exitCode === 124));
-    assert.equal((await dashboardFetch(run.dashboard, "/api/status")).status, 200);
   } finally { await dispose(run); }
 });
 
@@ -186,31 +178,26 @@ test("stdout and stderr ending before process exit cannot deadlock completion", 
   assert.equal(afterExit.exitCode, 0);
 });
 
-test("missing or malformed final run_result becomes manual review without stopping dashboard", async () => {
+test("missing or malformed final run_result becomes manual review", async () => {
   for (const prompt of ["malformed", "incomplete"]) {
     const run = await harness({ prompt });
     try {
       const result = await run.loop;
       assert.equal(result.status, "blocked");
       assert.match(result.output, /run_result/i);
-      const response = await dashboardFetch(run.dashboard, "/api/status");
-      assert.equal(response.status, 200);
-      assert.equal((await response.json()).stage, "BLOCKED");
+      assert.equal((await run.state.readLive()).stage, "BLOCKED");
     } finally {
       await dispose(run);
     }
   }
 });
 
-test("worker completion cannot terminate or close the dashboard process", async () => {
+test("worker completion cannot terminate the engine process", async () => {
   const run = await harness({ prompt: "success" });
   try {
     await run.loop;
     assert.equal(process.exitCode, undefined);
-    const first = await dashboardFetch(run.dashboard, "/api/status");
-    const second = await dashboardFetch(run.dashboard, "/api/status");
-    assert.equal(first.status, 200);
-    assert.equal(second.status, 200);
+    assert.ok(await run.state.readLive());
   } finally {
     await dispose(run);
   }

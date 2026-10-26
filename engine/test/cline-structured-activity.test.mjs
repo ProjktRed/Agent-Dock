@@ -8,7 +8,6 @@ import test from "node:test";
 
 import { collectClineProcess } from "../src/cline-cli-worker.mjs";
 import { DashboardState } from "../src/dashboard-state.mjs";
-import { dashboardView } from "../ui/view-model.js";
 
 function fakeProcess(lines) {
   const child = new EventEmitter();
@@ -49,7 +48,7 @@ const agentEvent = (event) => JSON.stringify({ type: "agent_event", event });
 const toolEvent = (tool) => agentEvent({ type: "say", say: "tool", text: JSON.stringify(tool) });
 const final = JSON.stringify({ type: "run_result", finishReason: "completed", text: "done" });
 
-test("real-style structured command and file events reach dashboard state", async () => {
+test("real-style structured command and file events reach the engine's state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "cline-events-"));
   const state = new DashboardState({ stateDir: root });
   await state.initialize({ task: { id: "events", name: "Events", prompt: "work" }, workspace: root, maxAttempts: 2 });
@@ -73,12 +72,6 @@ test("real-style structured command and file events reach dashboard state", asyn
     assert.ok(events.some((event) => event.type === "cline-search" && event.path === "src" && event.query === "needle"));
     assert.ok(events.some((event) => event.type === "cline-message" && event.message === "Applying the focused fix"));
 
-    const live = await state.readLive();
-    const view = dashboardView({ ...live, events });
-    assert.equal(view.activity.currentAction, "Applying the focused fix");
-    assert.equal(view.activity.lastCommand, "npm.cmd test");
-    assert.equal(view.activity.lastFileRead, "src/read.js");
-    assert.equal(view.activity.lastFileModified, "src/write.js");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -221,8 +214,7 @@ test("Latest Message uses coalesced text and malformed delta fragments remain ha
       onEvent: (event) => state.record({ ...event, attempt: 1 }),
     });
     const events = await state.readEvents();
-    const view = dashboardView({ ...(await state.readLive()), events });
-    assert.equal(view.activity.latestMessage, "Full message");
+    assert.equal(events.filter((event) => event.type === "cline-message").at(-1)?.message, "Full message");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -281,9 +273,8 @@ test("actual Cline final text reaches Latest Message once through dashboard stat
       onEvent: (event) => state.record({ ...event, attempt: 1 }),
     });
     const events = await state.readEvents();
-    const view = dashboardView({ ...(await state.readLive()), events });
     assert.equal(events.filter((event) => event.type === "cline-message").length, 1);
-    assert.equal(view.activity.latestMessage, "Full sentence.");
+    assert.equal(events.filter((event) => event.type === "cline-message").at(-1)?.message, "Full sentence.");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -319,6 +310,6 @@ test("old persisted fragments remain historical and do not change new message co
     });
     const events = await state.readEvents();
     assert.deepEqual(events.filter((event) => event.type === "cline-message").map((event) => event.message), ["Old", "fragment", "New sentence"]);
-    assert.equal(dashboardView({ ...(await state.readLive()), events }).activity.latestMessage, "New sentence");
+    assert.equal(events.filter((event) => event.type === "cline-message").at(-1)?.message, "New sentence");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

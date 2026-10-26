@@ -7,7 +7,7 @@ import path from "node:path";
  * update swap script. The build writes their hashes into app.asar as engine-manifest.json; the app compares
  * the installed files with it before it loads or starts the engine.
  */
-export const MANIFEST_ROOTS = ["engine/src", "engine/skills", "engine/ui", "engine/package.json", "engine/node_modules", "scripts/swap.mjs"];
+export const MANIFEST_ROOTS = ["engine/src", "engine/skills", "engine/package.json", "engine/node_modules", "scripts/swap.mjs"];
 /** Not packaged (package.json build filter) and never run: source maps and type declarations of the engine's dependencies. */
 const NOT_PACKAGED = /\.(?:map|d\.[cm]?ts)$/i;
 export const MANIFEST_FILE = "engine-manifest.json";

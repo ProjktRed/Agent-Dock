@@ -172,10 +172,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - Importing a settings file never sets programs to start: connection program paths, the llama.cpp
   launcher and the Node runtime stay as they are on this computer. An import cannot turn the tool
   guard off, and its protected paths are added to yours.
-- The standalone engine dashboard requires a fresh random bearer token for every API route. Its
-  browser launch link carries the token in a fragment, which the page removes from history and saves
-  per tab. The link is handed to the browser through a private launch page, never on a command line. A server restart invalidates older tokens. Tokens are not written to engine logs. Host,
-  origin and JSON request checks remain enforced.
+- The engine opens no network port: the standalone browser dashboard was removed in 0.39.0, and the app
+  controls the engine only through files in the project's state folder.
 - Updates install only when the release's manifest carries a valid Ed25519 signature from the key
   built into the app, and the download's size and SHA-256 match that manifest.
 - Packaged Electron refuses debugging/inspection switches, has developer tools and the application

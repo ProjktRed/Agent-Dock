@@ -50,7 +50,7 @@ tests/           vitest unit tests for the main-process logic
 ## Controls
 
 Controls write the engine's `control.json` through its own `DashboardState`, with the same
-semantics as the engine dashboard: **Pause** = pause after the current task, **Stop** = at the
+semantics for every source (app, Telegram, Supervisor): **Pause** = pause after the current task, **Stop** = at the
 next safe point, **Stop after current task** = pause, then stop once paused, **Stop now** =
 terminate the process tree. Resume, Elevate and Resolve start the engine if it isn't running.
 

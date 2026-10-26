@@ -4,18 +4,16 @@ The dependency-free Node process that owns Agent Dock's automation loop. The orc
 (Codex CLI or Claude Code) runs as a fresh, one-shot child for Assessment, QA, Resolver and
 Elevation. The Implementation worker is Cline or OpenCode on a local or OpenAI-compatible model,
 or Codex CLI / Claude Code. Agent Dock launches it per project; it can also run on its own from a
-terminal, with its own dashboard.
+terminal (its state folder is what Agent Dock reads; there is no separate browser dashboard).
 
-## Start dashboard and loop
+## Start the loop
 
 From the `engine/` folder:
 
 ```powershell
-npm run dashboard -- --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
+node src/cli.mjs --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --state-dir .state
 ```
 
-The command automatically opens http://127.0.0.1:4180 in the default browser.
-The server binds only to 127.0.0.1.
 Replace the objective before running. This command begins real project work.
 Run it from an ordinary terminal; no supervising Codex chat needs to stay active.
 
@@ -81,7 +79,7 @@ Launch from PowerShell with `node` directly, because `npm run` through cmd.exe s
 objectives that contain double quotes:
 
 ```powershell
-node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
+node src/cli.mjs --workspace <path-to-repo> --objective "<objective>" --orchestrator claude --state-dir .state-<name>
 ```
 
 ## Implementation through Codex or Claude Code (`--implementation-cli`)
@@ -282,9 +280,8 @@ Successful safe recovery proceeds to Assessment, then Cline, then independent
 QA; Resolver cannot accept or commit work. Legacy blocked runs without ownership
 evidence require manual review and are not retroactively trusted.
 
-The recessed dashboard's left progress list reads the target repository's
-`IMPLEMENTATION_PLAN.md` checkboxes, rather than estimating task acceptance.
-Phase expansion is client-side and survives polling.
+Agent Dock's progress list reads the target repository's `IMPLEMENTATION_PLAN.md`
+checkboxes, rather than estimating task acceptance.
 
 ## Verification commands
 

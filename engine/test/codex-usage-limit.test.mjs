@@ -1,4 +1,3 @@
-import {dashboardFetch} from './dashboard-client.mjs';
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -17,7 +16,6 @@ import {
   runNodeLoop,
 } from "../src/node-loop.mjs";
 import { DashboardState, atomicWriteJson } from "../src/dashboard-state.mjs";
-import { startDashboardServer } from "../src/dashboard-server.mjs";
 
 const task = {
   id: "limit-task",
@@ -75,7 +73,6 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
   let clineRuns = 0;
   let assessments = 0;
   let firstReviewInput;
-  const dashboard = await startDashboardServer({ stateDir, workspace: root, port: 0 });
   const loop = startTestLoop({
     prepareQa,
     workspace: root, stateDir, objective: "bounded", initialTask: task, maxAttempts: 2,
@@ -107,9 +104,7 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     assert.equal(pending.operation, "qa");
     assert.deepEqual(pending.inputs, firstReviewInput);
     assert.equal(pending.attempt, 1);
-    const status = await dashboardFetch(dashboard, "/api/status").then((response) => response.json());
-    assert.equal(status.primaryStatus, "waiting for usage limit");
-    assert.equal(status.task.id, task.id);
+    assert.equal((await state.readLive()).task.id, task.id);
 
     await state.setControl("pause");
     assert.equal((await state.readControl()).pauseAfterCurrent, true);
@@ -122,7 +117,6 @@ test("QA usage limit waits, preserves task/diff/attempt, and Resume reruns only 
     assert.equal(assessments, 1);
   } finally {
     await loop.stop();
-    await dashboard.close();
     await rm(root, { recursive: true, force: true });
   }
 });

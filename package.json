@@ -61,7 +61,6 @@
         "filter": [
           "src/**",
           "skills/**",
-          "ui/**",
           "package.json"
         ]
       },
