@@ -14,20 +14,21 @@ export interface SafetyPreset {
   approveTasks: boolean;
   sandboxChecks: boolean;
   sandboxAgents: boolean;
+  webAccess: boolean;
 }
 
 export const SAFETY_PRESETS: Record<SafetyPresetName, SafetyPreset & { label: string; summary: string }> = {
   strict: {
-    label: "Strict", summary: "You approve every task; checks and agents' commands run in the sandbox; anything the guard cannot verify is refused.",
-    toolGuard: true, checksTrusted: false, askMinutes: 0, approveTasks: true, sandboxChecks: true, sandboxAgents: true,
+    label: "Strict", summary: "You approve every task; checks and agents' commands run in the sandbox; no web access; anything the guard cannot verify is refused.",
+    toolGuard: true, checksTrusted: false, askMinutes: 0, approveTasks: true, sandboxChecks: true, sandboxAgents: true, webAccess: false,
   },
   standard: {
     label: "Standard", summary: "Tasks run on their own; Agent Dock watches its own files during checks; anything the guard cannot verify is put to you for up to 10 minutes.",
-    toolGuard: true, checksTrusted: false, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false,
+    toolGuard: true, checksTrusted: false, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: true,
   },
   trusted: {
     label: "Trusted", summary: "For projects whose tests you trust completely: checks run as you, unwatched; the guard still asks about what it cannot verify.",
-    toolGuard: true, checksTrusted: true, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false,
+    toolGuard: true, checksTrusted: true, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: true,
   },
 };
 
@@ -40,6 +41,7 @@ export function safetyValues(s: Settings): SafetyPreset {
     approveTasks: s.workflow.approveTasks === true,
     sandboxChecks: s.safety.sandboxChecks === true,
     sandboxAgents: s.safety.sandboxAgents === true,
+    webAccess: s.safety.webAccess !== false,
   };
 }
 

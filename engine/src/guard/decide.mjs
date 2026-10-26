@@ -43,6 +43,11 @@ function decideStateless(policy,action,adapter){
 
 /** Stateless adapters stay synchronous; stateful decisions may resolve paths. */
 export function decide(policy,action,{adapter,mode='hook'}={}){
+ // Web search and page fetch: only with web access on (never for QA), and only web addresses.
+ if(action.kind==='web'){
+  const url=action.input?.url;
+  return policy.webAccess===true&&(url===undefined||/^https?:\/\//i.test(String(url)))?allow():stop('Web access for agents is off (Settings › Execution & safety)');
+ }
  // Cline's narrowed SDK never executes unknown tools or non-enumerated commands.
  // Keep its retry/counter protocol; its plugin is the final gate after the file hook.
  const sdkRejected=adapter?.id==='cline'&&policy.runtimeReady&&(

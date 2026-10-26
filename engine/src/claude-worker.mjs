@@ -11,6 +11,7 @@ import { claudeUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import { claudeRunArgs, claudeRunEnv } from "./cli-run-settings.mjs";
+import { webAccess, CLAUDE_WEB_TOOLS } from "./web-access.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -24,7 +25,7 @@ const QA_TOOLS = [...READ_ONLY_TOOLS, ...shell([
   "npm test", "npm run test", "npm run typecheck", "npm run lint", "npm run build", "npm run format:check",
   "npx vitest run", "npx playwright test", "npx prettier --check", "git add", "git commit",
 ])];
-const NEVER_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch"];
+const NEVER_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent"];
 const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]limit|credit balance is too low|resets? (?:at|in))/i;
 
 /** Every Claude Code session reads the user's own settings only, never the workspace's .claude/ settings (hooks, permissions). */
@@ -85,8 +86,9 @@ export class ClaudeWorker extends CodexWorker {
       ...claudeRunArgs({ model }),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
       ...protectionArgs,
-      "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
-      "--disallowedTools", ...NEVER_TOOLS,
+      // Web access (Settings) for the research roles; QA (writable) never gets it.
+      "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS), ...(!writable && webAccess() ? CLAUDE_WEB_TOOLS : []),
+      "--disallowedTools", ...NEVER_TOOLS, ...(!writable && webAccess() ? [] : CLAUDE_WEB_TOOLS),
       ...(writable ? this.additionalWritableDirs.flatMap((dir) => ["--add-dir", dir]) : [])];
     this.activeCount++;
     let stdout = "", stderr = "";

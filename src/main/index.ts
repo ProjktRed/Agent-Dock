@@ -918,7 +918,7 @@ async function applySafetyPreset(name: SafetyPresetName): Promise<{ ok: boolean;
   const before = store.data.settings;
   const next = structuredClone(before);
   next.workflow = { ...next.workflow, toolGuard: preset.toolGuard, approveTasks: preset.approveTasks };
-  next.safety = { ...next.safety, checksTrusted: preset.checksTrusted, askMinutes: preset.askMinutes };
+  next.safety = { ...next.safety, checksTrusted: preset.checksTrusted, askMinutes: preset.askMinutes, webAccess: preset.webAccess };
   const weaker = weakenings(before, next);
   if (weaker.length && !(await confirmWeakening(weaker.map((w) => w.label)))) return { ok: false, problems: ["Nothing was changed."] };
   store.data.settings = next;

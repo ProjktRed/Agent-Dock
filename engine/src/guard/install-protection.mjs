@@ -6,6 +6,7 @@ import {claudeProtectionSettings} from './adapters/claude.mjs';
 import {assertNoRepoCliConfig} from './repo-config.mjs';
 import {agentsSandboxed} from '../sandbox.mjs';
 import {actionAsk,hookTimeoutSeconds} from './ask.mjs';
+import {webAccess,codexWebSearchArgs} from '../web-access.mjs';
 
 /** Codex on Windows: its elevated sandbox (separate sandbox accounts and firewall rules) for every command. */
 export const CODEX_WINDOWS_SANDBOX=Object.freeze(['-c','windows.sandbox="elevated"']);
@@ -17,11 +18,11 @@ export const CODEX_WINDOWS_SANDBOX=Object.freeze(['-c','windows.sandbox="elevate
 export async function installProtection({cli,workspace,stateDir,invocation,task,toolGuard=false,allowGitCommit=false,fast=false}) {
   if(cli==='codex')assertNoRepoCliConfig('codex',workspace);
   const policyFile=path.join(invocation,'scope-policy.json'),logFile=path.join(invocation,'scope-hook.ndjson');
-  const policy={workspace,protectedPaths:protectedPathsFor({workspace,stateDir}),allowedPaths:task?.allowedPaths??[],qaCommand:task?.qaCommand??'',toolGuard,allowGitCommit,protectionOnly:cli==='claude'||!task,taskId:task?.id??null,ask:actionAsk()};
+  const policy={workspace,protectedPaths:protectedPathsFor({workspace,stateDir}),allowedPaths:task?.allowedPaths??[],qaCommand:task?.qaCommand??'',toolGuard,allowGitCommit,protectionOnly:cli==='claude'||!task,taskId:task?.id??null,ask:actionAsk(),webAccess:webAccess()&&!allowGitCommit};
   await writeFile(policyFile,JSON.stringify(policy),{mode:0o600});
   // Settings › Experimental: agents' own commands sandboxed (Codex already confines them on Linux and macOS).
   const sandbox=agentsSandboxed();
   return cli==='codex'
-    ?[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...(sandbox&&process.platform==='win32'?CODEX_WINDOWS_SANDBOX:[])]
+    ?[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...(sandbox&&process.platform==='win32'?CODEX_WINDOWS_SANDBOX:[]),...codexWebSearchArgs(policy.webAccess)]
     :['--settings',JSON.stringify(claudeProtectionSettings({policyFile,logFile,fast,sandbox,timeout:hookTimeoutSeconds(policy.ask)}))];
 }

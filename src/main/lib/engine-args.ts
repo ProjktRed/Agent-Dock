@@ -367,6 +367,7 @@ ${project.objective}` : project.objective;
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
   if (settings.safety?.sandboxChecks === true) args.push("--sandbox-checks", "true");
   if (settings.safety?.sandboxAgents === true) args.push("--sandbox-agents", "true");
+  if (settings.safety?.webAccess !== false) args.push("--web-access", "true");
   // Ask instead of refuse: unattended, only where an answer can come (Telegram); otherwise refused at once as before.
   const askMinutes = Math.min(60, Math.max(0, Math.floor(Number(settings.safety?.askMinutes ?? 0)) || 0));
   if (askMinutes > 0 && (workflow.unattended !== true || input.remoteApprovals === true)) args.push("--ask-minutes", String(askMinutes));

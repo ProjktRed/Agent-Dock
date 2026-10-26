@@ -1,5 +1,6 @@
 import {fileURLToPath} from 'node:url';
 import {toAction as codexAction} from './codex.mjs';
+import {webAccess,CLAUDE_WEB_TOOLS} from '../../web-access.mjs';
 
 const shell = (prefixes) => prefixes.flatMap((p) => [`Bash(${p}:*)`, `PowerShell(${p}:*)`]);
 const GIT_READ = ["git status", "git diff", "git log", "git show", "git rev-parse", "git ls-files"];
@@ -14,8 +15,9 @@ export function claudeImplementationTools({ task, toolGuard }) {
   const allowed = toolGuard
     ? [...fileTools, ...shell([...GIT_READ, ...CHECKS, ...(qa ? [qa] : [])])]
     : [...fileTools, "Bash", "PowerShell"];
-  const disallowed = ["Agent", "WebFetch", "WebSearch", "NotebookEdit", ...shell(GIT_WRITE)];
-  return { allowed, disallowed };
+  const web = webAccess();
+  const disallowed = ["Agent", ...(web ? [] : CLAUDE_WEB_TOOLS), "NotebookEdit", ...shell(GIT_WRITE)];
+  return { allowed: web ? [...allowed, ...CLAUDE_WEB_TOOLS] : allowed, disallowed };
 }
 
 export const adapter = {
@@ -30,6 +32,8 @@ export const adapter = {
     const tool=String(event?.tool_name??'');
     // Answer-only tools: --json-schema returns the result through StructuredOutput; TodoWrite only updates the session's plan.
     if(['StructuredOutput','TodoWrite'].includes(tool))return {kind:'output',tool,input:event.tool_input,cwd:event.cwd};
+    // Web access (Settings): the guard lets these through only when the policy says web access is on.
+    if(['WebSearch','WebFetch'].includes(tool))return {kind:'web',tool,input:event.tool_input,cwd:event.cwd};
     if(['Edit','Write','NotebookEdit'].includes(tool))return {kind:'edit',tool,input:event.tool_input,paths:[event.tool_input?.file_path??event.tool_input?.notebook_path],patch:false,cwd:event.cwd};
     return codexAction(event);
   },

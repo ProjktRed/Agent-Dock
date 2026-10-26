@@ -16,6 +16,7 @@ import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
+import { useWebAccess } from "./web-access.mjs";
 import { sandboxProblem, useSandboxedAgents } from "./sandbox.mjs";
 import { useActionAsk } from "./guard/ask.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
@@ -32,6 +33,7 @@ const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
 // Manual Elevation starts Codex or Claude Code like a run does: the same sandbox for their commands, failing closed.
 useSandboxedAgents(options.sandboxAgents);
+useWebAccess(options.webAccess);
 useActionAsk({ stateDir, minutes: options.askMinutes });
 if (options.sandboxAgents) {
   const problem = await sandboxProblem();

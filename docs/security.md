@@ -67,6 +67,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with
   it before it loads or starts the engine, and refuses changed, missing or added files. A file the
   watch cannot read or put back counts as changed.
+- **Web access for agents** (Settings › Execution & safety; on in Standard and Trusted, off in Strict). Codex
+  runs with web_search "live" and Claude Code with WebSearch and WebFetch, for Implementation and Assessment only;
+  QA runs with web search disabled and without those tools. Off, Codex's web search is disabled outright (its
+  own default is a cached search) and Claude Code's web tools are not offered; the guard also refuses them
+  unless the run's policy allows web access, and accepts only http(s) addresses for WebFetch. The search and
+  fetch run inside the CLI, not as shell commands, so the sandbox for agents' commands keeps those offline.
+  Web pages can carry instructions aimed at agents: protected paths, the task's file scope, QA and the
+  engine's scope check apply to whatever an agent does next.
 - **Ask instead of refuse** (Settings › Execution & safety › Safety level, "When the guard cannot verify an
   action"; Standard: ask, wait 10 minutes). A Codex or Claude Code tool call that the guard refuses only because
   it cannot prove it safe (an unknown tool, a shell command it cannot read) is put to you instead of refused. The

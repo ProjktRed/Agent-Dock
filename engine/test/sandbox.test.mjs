@@ -103,7 +103,7 @@ test("agents' commands sandboxed: Claude Code's sandbox fails closed with no net
     useSandboxedAgents(true);
     assert.deepEqual((await claudeSettings()).sandbox, { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: { allowedDomains: [] } });
     const codex = await installProtection({ cli: "codex", workspace, stateDir, invocation });
-    if (process.platform === "win32") assert.deepEqual(codex.slice(-2), [...CODEX_WINDOWS_SANDBOX]);
+    if (process.platform === "win32") assert.deepEqual(codex.slice(codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) - 1, codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) + 1), [...CODEX_WINDOWS_SANDBOX]);
     else assert.ok(!codex.includes('windows.sandbox="elevated"'));
   } finally { useSandboxedAgents(false); }
 });

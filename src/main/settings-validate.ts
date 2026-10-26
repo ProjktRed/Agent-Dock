@@ -55,6 +55,7 @@ export function weakenings(before: Settings, after: Settings): Weakening[] {
   const out: Weakening[] = [];
   if (before.workflow.toolGuard !== false && after.workflow.toolGuard === false) out.push({ label: "Turn the worker tool guard off", revert: (s) => { s.workflow = { ...s.workflow, toolGuard: true }; } });
   if (before.safety.checksTrusted !== true && after.safety.checksTrusted === true) out.push({ label: "Trust project check scripts (stop watching Agent Dock's own files during runs)", revert: (s) => { s.safety = { ...s.safety, checksTrusted: false }; } });
+  if (before.safety.webAccess === false && after.safety.webAccess !== false) out.push({ label: "Let agents search the web and read web pages", revert: (s) => { s.safety = { ...s.safety, webAccess: false }; } });
   if (before.advanced.engineGuardrails !== false && after.advanced.engineGuardrails === false) out.push({ label: "Turn the engine guardrails off", revert: (s) => { s.advanced = { ...s.advanced, engineGuardrails: true }; } });
   const removed = before.safety.protectedPaths.filter((p) => !after.safety.protectedPaths.includes(p));
   if (removed.length) out.push({ label: `Stop protecting ${removed.join(", ")}`, revert: (s) => { s.safety = { ...s.safety, protectedPaths: [...new Set([...s.safety.protectedPaths, ...removed])] }; } });

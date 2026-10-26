@@ -123,6 +123,8 @@ export function parseLoopOptions(argv) {
     // Settings › Experimental: project checks run in the sandbox (sandbox.mjs).
     sandboxChecks: booleanOption(options["sandbox-checks"], "sandbox-checks", false),
     sandboxAgents: booleanOption(options["sandbox-agents"], "sandbox-agents", false),
+    // Web access for agents (web-access.mjs): Codex's live web search, Claude Code's WebSearch and WebFetch.
+    webAccess: booleanOption(options["web-access"], "web-access", false),
     // Ask instead of refuse (guard/ask.mjs): minutes to wait for your answer; 0 refuses at once.
     askMinutes: options["ask-minutes"] === undefined ? 0 : Math.min(60, Math.max(0, Number(options["ask-minutes"]) || 0)),
     // Approve each task before Implementation starts.

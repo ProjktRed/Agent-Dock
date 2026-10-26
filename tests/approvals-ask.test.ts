@@ -7,7 +7,7 @@ import { currentSafetyPreset, SAFETY_PRESETS } from "../src/shared/safety-preset
 import { upgradeSafety } from "../src/shared/defaults";
 import { buildEngineArgs } from "../src/main/lib/engine-args";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, defaultAgents } from "../src/main/defaults";
-import { sanitizeSettings } from "../src/main/settings-validate";
+import { sanitizeSettings, weakenings } from "../src/main/settings-validate";
 import { decideActionRequest, readActionRequests } from "../src/main/lib/action-requests";
 import { pendingMissingTools, pendingTaskApproval } from "../src/main/lib/status";
 
@@ -29,6 +29,17 @@ describe("safety levels", () => {
     const old = upgradeSafety({ protectedPaths: [".git/"], toolConfigPathsAdded: true, checksTrusted: false });
     expect(old).toMatchObject({ askMinutes: 10, sandboxChecks: false, sandboxAgents: false, protectedPaths: [".git/"] });
     expect(currentSafetyPreset({ ...structuredClone(DEFAULT_SETTINGS), safety: old })).toBe("standard");
+  });
+});
+
+describe("web access for agents", () => {
+  it("on by default (Standard, Trusted), off in Strict; turning it on is a change you confirm", () => {
+    expect(value(args(settings()), "--web-access")).toBe("true");
+    expect(args(settings((s) => { s.safety.webAccess = false; }))).not.toContain("--web-access");
+    expect(SAFETY_PRESETS.strict.webAccess).toBe(false);
+    expect(SAFETY_PRESETS.standard.webAccess).toBe(true);
+    const off = settings((s) => { s.safety.webAccess = false; });
+    expect(weakenings(off, DEFAULT_SETTINGS).map((w) => w.label)).toContain("Let agents search the web and read web pages");
   });
 });
 

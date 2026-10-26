@@ -30,7 +30,7 @@ function commandText(action) {
 
 /** The refusal is certain (a protected path, an edit), not just unverified: never put to the user. */
 export function definitelyRefused(policy, action) {
-  if (action.kind === "edit" || action.kind === "read") return true;
+  if (action.kind === "edit" || action.kind === "read" || action.kind === "web") return true;
   const cwd = action.cwd || policy.workspace;
   const protectedName = (file) => { try { return isProtectedPath(policy, file, cwd); } catch { return true; } };
   if (protectedName(cwd)) return true;
