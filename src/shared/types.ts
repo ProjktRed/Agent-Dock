@@ -44,9 +44,6 @@ export interface Project {
   ciFixLoop?: boolean;
   /** One-shot note added to the objective on the next start: the failed CI log to fix. Cleared once started. */
   ciNote?: string | null;
-  /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
-  parentId?: string | null;
-  laneBranch?: string | null;
   /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
   wsl?: { enabled: boolean; distro: string };
 }

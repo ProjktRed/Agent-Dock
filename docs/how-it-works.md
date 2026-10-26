@@ -245,11 +245,7 @@ All per project in Projects › Workflow, unless noted.
   (`--local-server-managed external`); a task in progress finishes on its own before parallel rounds start. Plan items are checked off as each change
   is merged. Projects › Workflow › **Clean up parallel worktrees** removes the kept worktrees (each
   `node_modules` link first) and every `agent-dock/parallel-…` branch, after you confirm; unmerged work
-  on them is lost, and it waits while a run of the project or its lanes is active.
-- **Parallel lanes**: run another objective at the same time in a linked git worktree
-  (`<project>-lanes/<name>`) on its own `agent-dock/lane-…` branch. Each lane is its own project with
-  its own engine and state folder; merge its branch when you are happy with it. Removing a lane keeps
-  its branch.
+  on them is lost, and it waits while a run of the project (or of a project in one of its worktrees) is active.
 - **WSL isolation (opt-in)**: the engine and every agent CLI and command it starts run inside a WSL
   distro. Node.js, git and the agent CLIs must be installed and signed in there (**Check distro**
   lists them). Windows drives stay reachable under `/mnt` unless automount is off in the distro's

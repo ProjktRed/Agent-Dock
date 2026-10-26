@@ -2,61 +2,11 @@ import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync
 import path from "node:path";
 import { run } from "./git";
 
-// Parallel lanes: a project can run extra tasks side by side in linked git worktrees. Each lane is a
-// worktree of the project on its own agent-dock/lane-<name> branch, registered as its own project
-// (own engine, own state folder), so lanes never share a working tree or a lock. You merge a lane's
-// branch when you are happy with it (or open a pull request from it).
-
-export const laneSlug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-
-/** Where a lane's worktree goes: next to the project, in "<project>-lanes/<slug>". */
-export const lanePath = (projectPath: string, slug: string) => path.join(`${path.resolve(projectPath)}-lanes`, slug);
-
 const git = async (cwd: string, ...args: string[]) => {
   const r = await run("git", args, { cwd, timeoutMs: 120_000 });
   if (r.code !== 0) throw new Error(`git ${args.slice(0, 2).join(" ")} failed: ${(r.stderr || r.stdout).trim().split(/\r?\n/).pop()}`);
   return r.stdout.trim();
 };
-
-/** Creates the lane's worktree and branch from the project's current HEAD. */
-export async function addLaneWorktree(projectPath: string, name: string): Promise<{ path: string; branch: string; slug: string }> {
-  const slug = laneSlug(name);
-  if (!slug) throw new Error("Give the lane a name with letters or digits.");
-  const target = lanePath(projectPath, slug), branch = `agent-dock/lane-${slug}`;
-  if (existsSync(target)) throw new Error(`${target} already exists.`);
-  await git(projectPath, "rev-parse", "--verify", "HEAD");
-  await git(projectPath, "worktree", "add", "-b", branch, target, "HEAD");
-  return { path: target, branch, slug };
-}
-
-/** Removes the lane's worktree (its branch and commits stay, so nothing approved is lost). */
-export async function removeLaneWorktree(projectPath: string, worktreePath: string, force = false): Promise<void> {
-  if (!existsSync(worktreePath)) { await git(projectPath, "worktree", "prune"); return; }
-  await git(projectPath, "worktree", "remove", ...(force ? ["--force"] : []), worktreePath);
-}
-
-/**
- * Merges a lane's branch into the branch the project has checked out, as one merge commit. Both working
- * trees must be clean (uncommitted lane work would be left behind). A conflict aborts the merge, so the
- * project is exactly as it was, and the conflicting files are named.
- */
-export async function mergeLaneBranch(projectPath: string, lanePath: string, laneBranch: string, laneName: string): Promise<{ commit: string; into: string; commits: number }> {
-  const into = await git(projectPath, "rev-parse", "--abbrev-ref", "HEAD");
-  if (into === "HEAD") throw new Error("The project has no branch checked out (detached HEAD), so there is nothing to merge into.");
-  if (await git(projectPath, "status", "--porcelain", "--untracked-files=all")) throw new Error(`The project has uncommitted changes on ${into}. Commit or discard them first.`);
-  if (existsSync(lanePath) && await git(lanePath, "status", "--porcelain", "--untracked-files=all")) throw new Error("The lane has uncommitted changes, which would not be merged. Let its run finish, or commit or discard them in its folder.");
-  const commits = Number(await git(projectPath, "rev-list", "--count", `${into}..${laneBranch}`));
-  if (!commits) throw new Error(`${laneBranch} has no commits that ${into} lacks.`);
-  const r = await run("git", ["merge", "--no-ff", "--no-edit", "-m", `Merge lane ${laneName} (${laneBranch})`, laneBranch], { cwd: projectPath, timeoutMs: 120_000 });
-  if (r.code !== 0) {
-    const conflicts = (await run("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: projectPath })).stdout.trim().split(/\r?\n/).filter(Boolean);
-    await run("git", ["merge", "--abort"], { cwd: projectPath, timeoutMs: 60_000 });
-    throw new Error(conflicts.length
-      ? `The lane conflicts with ${into} in ${conflicts.slice(0, 8).join(", ")}${conflicts.length > 8 ? ` and ${conflicts.length - 8} more` : ""}. Nothing was merged; merge it yourself, or open a pull request from ${laneBranch}.`
-      : `git merge failed: ${(r.stderr || r.stdout).trim().split(/\r?\n/).pop()}. Nothing was merged.`);
-  }
-  return { commit: await git(projectPath, "rev-parse", "HEAD"), into, commits };
-}
 
 // Parallel tasks (engine --parallel) keep a worktree, on an agent-dock/parallel-… branch, for each task
 // that did not finish or did not merge, in "<project>-parallel/<task>-<run>". Cleanup removes them all;
@@ -64,7 +14,7 @@ export async function mergeLaneBranch(projectPath: string, lanePath: string, lan
 
 export const PARALLEL_BRANCH = "agent-dock/parallel-";
 
-/** The folder parallel tasks keep their worktrees in: next to the project, like lanes. */
+/** The folder parallel tasks keep their worktrees in: next to the project. */
 export const parallelRoot = (projectPath: string) => `${path.resolve(projectPath)}-parallel`;
 
 /** A path as git writes it: long names, not 8.3 short ones (C:UsersRUNNER~1), which Node keeps as given.
@@ -100,7 +50,7 @@ export interface ParallelLeftovers {
 }
 
 /** What cleanup would remove, from git's worktree and branch lists. A parallel branch checked out in a
- *  worktree outside the "-parallel" folder (yours, or a lane's run) is left alone. All projects and lanes of
+ *  worktree outside the "-parallel" folder (yours, or another project's run) is left alone. All projects of
  *  a repo share its branches, so a branch with no worktree counts as this project's only when its name
  *  (agent-dock/parallel-<worktree folder>) matches a folder this project's runs used: one git lists inside
  *  "-parallel" (also when prunable), or one of `ownNames` (folders found there, or in the state folder).

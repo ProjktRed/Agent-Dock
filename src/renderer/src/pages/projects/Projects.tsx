@@ -53,7 +53,6 @@ function WorkflowTab({ project }: { project: Project }) {
       <ScheduleRow project={project} />
       <PullRequestRow project={project} />
       <CiRow project={project} />
-      {!project.parentId && <LanesRow project={project} />}
       <WslRow project={project} />
       <div className="setrow">
         <div className="grow"><div className="lt row" style={{ gap: 8 }}>Engine state folder<Support kind="engine" /></div><div className="ld mono">{project.stateDir}</div></div>
@@ -268,51 +267,6 @@ function CiRow({ project }: { project: Project }) {
       {watch && <button className="btn sm" disabled={busy !== ""} onClick={() => void act("refresh")}>{busy === "refresh" ? "Checking…" : "Refresh"}</button>}
       {watch && ci?.state === "fail" && !watch.fixing && <button className="btn sm" disabled={busy !== "" || running} title={running ? "Stop the automation first" : "Starts a run that fixes it from the failed log"} onClick={() => void act("fix")}>{busy === "fix" ? "Starting…" : "Fix CI failure"}</button>}
       <ScopeChip />
-    </div>
-  );
-}
-
-/** Parallel lanes: extra tasks side by side, each in its own git worktree, branch and engine. */
-function LanesRow({ project }: { project: Project }) {
-  const { snap, setProjects, toast, statuses } = useApp();
-  const [name, setName] = useState("");
-  const [objective, setObjective] = useState("");
-  const [busy, setBusy] = useState(false);
-  const lanes = snap.projects.filter((p) => p.parentId === project.id);
-  const act = async (fn: () => Promise<Project[]>, done: string) => {
-    setBusy(true);
-    try { setProjects(await fn()); toast("success", done); setName(""); setObjective(""); }
-    catch (error) { toast("error", cleanError(error)); }
-    finally { setBusy(false); }
-  };
-  const merge = async (laneId: string) => {
-    setBusy(true);
-    try { await window.api.mergeLane(laneId); }
-    catch (error) { toast("error", cleanError(error)); }
-    finally { setBusy(false); }
-  };
-  return (
-    <div className="setrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
-      <div className="grow" style={{ minWidth: 260 }}>
-        <div className="lt row" style={{ gap: 8 }}>Parallel lanes<Support kind="app" /></div>
-        <div className="ld">Run another objective at the same time in a git worktree of this project, on its own agent-dock/lane-… branch with its own engine. Each lane appears as its own project; Merge brings its branch into this project's branch as one merge commit (a conflict merges nothing), or open a pull request from it. Lanes use your CLIs' limits in parallel.</div>
-        {lanes.length > 0 && (
-          <div className="stack" style={{ gap: 6, marginTop: 8 }}>
-            {lanes.map((l) => (
-              <div className="row" key={l.id} style={{ gap: 8 }}>
-                <span className="mono sub grow ellipsis" title={l.path}>{l.laneBranch ?? l.name}</span>
-                <button className="btn sm" disabled={busy || statuses[l.id]?.processAlive || statuses[project.id]?.processAlive} title={`Merge ${l.laneBranch ?? "the lane"} into the branch this project has checked out`} onClick={() => void merge(l.id)}>Merge</button>
-                <button className="btn sm" disabled={busy || statuses[l.id]?.processAlive} onClick={() => void act(() => window.api.removeLane(l.id, false), "Lane removed; its branch is kept")}>Remove</button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-          <input className="input" style={{ width: 160 }} placeholder="Lane name" aria-label="Lane name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="input grow" style={{ minWidth: 200 }} placeholder="Objective (defaults to this project's)" aria-label="Lane objective" value={objective} onChange={(e) => setObjective(e.target.value)} />
-          <button className="btn sm" disabled={busy || !name.trim()} onClick={() => void act(() => window.api.addLane(project.id, name, objective), "Lane added as its own project")}>Add lane</button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -32,7 +32,7 @@ import { taskModeOf } from "@shared/task-mode";
 import { cleanRunSettings, isRunSettingKind } from "@shared/cli-settings";
 import { isCliKind, isConnectionId } from "@shared/defaults";
 import { CI_FIX_MAX, CI_GIVE_UP_MS, CI_POLL_MS, ciFixNote, failedLogs, isFinal, readCi } from "./lib/ci-status";
-import { addLaneWorktree, cleanParallelWorktrees, listParallelLeftovers, mergeLaneBranch, removeLaneWorktree } from "./lib/worktree";
+import { cleanParallelWorktrees, listParallelLeftovers } from "./lib/worktree";
 import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRerun, savedTaskIds, taskHistory } from "./projects";
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
@@ -1319,46 +1319,9 @@ function registerIpc() {
     const p = project(id), saved = await savedTaskIds(p.stateDir);
     return taskHistory(await readActivity(p.stateDir, 20_000)).map((h) => ({ ...h, canRerun: canRerun(saved, h.taskId) }));
   });
-  handle("project:addLane", async (parentId: string, name: string, objective: string) => {
-    const parent = project(parentId);
-    if (parent.parentId) throw new Error("Add lanes to the main project, not to another lane.");
-    const lane = await addLaneWorktree(parent.path, String(name));
-    try {
-      const p = await addProject({ mode: "local", path: lane.path, name: `${parent.name} · ${String(name).trim()}`, objective: String(objective).trim() || parent.objective }, store.data.projects, stateRoot);
-      store.data.projects.push({ ...p, parentId, laneBranch: lane.branch, roleOverrides: { ...parent.roleOverrides }, workflowOverrides: { ...parent.workflowOverrides } });
-    } catch (error) {
-      await removeLaneWorktree(parent.path, lane.path, true).catch(() => {});
-      throw error;
-    }
-    await store.saveProjects();
-    return store.data.projects;
-  });
-  handle("project:mergeLane", async (id: string) => {
-    const lane = project(id);
-    if (!lane.parentId || !lane.laneBranch) throw new Error("This project is not a parallel lane.");
-    const parent = project(lane.parentId);
-    if (engine.isAlive(id) || engine.isAlive(parent.id)) throw new Error("Stop the lane's and the project's automation first.");
-    const name = lane.name.startsWith(`${parent.name} · `) ? lane.name.slice(parent.name.length + 3) : lane.name;
-    const merged = await mergeLaneBranch(parent.path, lane.path, lane.laneBranch, name);
-    notice({ kind: "success", message: `Merged ${lane.laneBranch} into ${merged.into} (${merged.commits} commit${merged.commits === 1 ? "" : "s"}, ${merged.commit.slice(0, 7)}). Remove the lane when you no longer need it.` });
-    return merged;
-  });
-  handle("project:removeLane", async (id: string, force: boolean) => {
-    const lane = project(id);
-    if (!lane.parentId) throw new Error("This project is not a parallel lane.");
-    if (engine.isAlive(id)) throw new Error("Stop the lane's automation first.");
-    const parent = store.data.projects.find((x) => x.id === lane.parentId);
-    try { await removeLaneWorktree(parent?.path ?? lane.path, lane.path, force === true); }
-    catch (error) { throw new Error(`${(error as Error).message} Commit or discard the lane's changes in its folder first.`); }
-    store.data.projects = store.data.projects.filter((x) => x.id !== id);
-    if (store.data.settings.activeProjectId === id) store.data.settings.activeProjectId = lane.parentId;
-    await Promise.all([store.saveProjects(), store.saveSettings()]);
-    lastStatus.delete(id);
-    return store.data.projects;
-  });
-  // Kept parallel-task worktrees and branches. A lane shares its parent's git repo, so a run in any of
-  // them blocks cleanup (it could be creating or merging a parallel branch right now).
-  const repoRunning = (p: Project) => store.data.projects.some((x) => [x.id, x.parentId].some((id) => id === p.id || (!!p.parentId && id === p.parentId)) && engine.isAlive(x.id));
+  // Kept parallel-task worktrees and branches. Any project in the same folder or one of its worktrees shares the
+  // repo, so a run in any of them blocks cleanup (it could be creating or merging a parallel branch right now).
+  const repoRunning = (p: Project) => store.data.projects.some((x) => engine.isAlive(x.id) && (x.id === p.id || path.resolve(x.path).toLowerCase().startsWith(path.resolve(p.path).toLowerCase())));
   handle("project:parallelLeftovers", async (id: string) => {
     const p = project(id);
     if (!existsSync(p.path)) return { worktrees: [], branches: [] };
@@ -1366,7 +1329,7 @@ function registerIpc() {
   });
   handle("project:cleanParallel", async (id: string) => {
     const p = project(id);
-    if (repoRunning(p)) throw new Error("Stop the automation for this project and its lanes first.");
+    if (repoRunning(p)) throw new Error("Stop the automation for this project first.");
     return cleanParallelWorktrees(p.path, p.stateDir);
   });
   handle("wsl:check", async (distro: string) => {
