@@ -146,7 +146,7 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
             <input className="input tnum" style={{ width: 90 }} inputMode="numeric" value={atOnce} onChange={(e) => setAtOnce(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} aria-label="Requests Ollama answers at once" />
             <button className="btn sm" disabled={!Number(atOnce) || Number(atOnce) === (cli.parallelRequests ?? 1)} onClick={async () => setClis(await window.api.saveCli({ ...cli, parallelRequests: Math.min(16, Math.max(1, Number(atOnce))) }))}>Save</button>
           </div>
-          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL (Settings tab sets both).</span>
+          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL (the Settings tab shows what Ollama uses).</span>
         </div>
       )}
       <div className="row" style={{ gap: 10 }}>

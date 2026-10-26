@@ -1,9 +1,9 @@
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { OLLAMA_SETTINGS, RUN_SETTINGS, RUN_SETTING_KINDS, cleanRunSettings, ollamaValue } from "@shared/cli-settings";
-import { configFilePath, configProblem, readConfigFile, writeConfigFile } from "../src/main/lib/cli-config-files";
+import { OLLAMA_SETTINGS, RUN_SETTINGS, RUN_SETTING_KINDS, cleanRunSettings } from "@shared/cli-settings";
+import { configFile, configFilePath } from "../src/main/lib/cli-config-files";
 import { isLocalUrl, parseServerConfig } from "../src/main/lib/ollama-settings";
 // @ts-expect-error The engine is plain JavaScript without type declarations.
 import { RUN_SETTING_RULES, claudeRunArgs, claudeRunEnv, cleanRunSettings as engineClean, clineRunOptions, codexRunArgs, openCodeRunOptions, setCliRunSettings } from "../engine/src/cli-run-settings.mjs";
@@ -60,39 +60,15 @@ describe("CLI config files", () => {
     expect(configFilePath("claude", { CLAUDE_CONFIG_DIR: "/c" }, "/home/u")).toBe(path.join("/c", "settings.json"));
   });
 
-  it("are checked before saving: TOML for Codex, a JSON object for Claude Code", () => {
-    expect(configProblem("codex", 'model = "x"\n[profiles.a]\nmodel = "y"\n')).toBeNull();
-    expect(configProblem("codex", "model = \n")).toMatch(/Not valid TOML/);
-    expect(configProblem("claude", '{"env":{}}')).toBeNull();
-    expect(configProblem("claude", '﻿{"env":{}}')).toBeNull();
-    expect(configProblem("codex", '﻿model = "x"')).toBeNull();
-    expect(configProblem("claude", "[]")).toMatch(/JSON object/);
-    expect(configProblem("claude", "{")).toMatch(/Not valid JSON/);
-    expect(configProblem("claude", "")).toMatch(/at least \{\}/);
-  });
-
-  it("keep the previous version, and refuse a save over a file that changed since it was read", async () => {
+  it("are shown, never written: Agent Dock only says where they are", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "cli-config-"));
     try {
-      const file = path.join(dir, "sub", "settings.json");
-      const fresh = await readConfigFile("claude", file);
-      expect([fresh.exists, fresh.mtimeMs]).toEqual([false, null]);
-      const first = await writeConfigFile("claude", '{"a":1}', null, file);
-      expect(first.text).toBe('{"a":1}');
-      await expect(writeConfigFile("claude", '{"a":2}', null, file)).rejects.toThrow(/changed since it was opened/);
-      await writeFile(file, '{"edited":true}');
-      await utimes(file, new Date(), new Date(Date.now() + 5_000));
-      await expect(writeConfigFile("claude", '{"a":2}', first.mtimeMs, file)).rejects.toThrow(/changed since it was opened/);
-      const now = await readConfigFile("claude", file);
-      await expect(writeConfigFile("claude", "{", now.mtimeMs, file)).rejects.toThrow(/Not valid JSON/);
-      await writeConfigFile("claude", '{"a":3}', now.mtimeMs, file);
-      expect([await readFile(file, "utf8"), await readFile(`${file}.agent-dock.bak`, "utf8")]).toEqual(['{"a":3}', '{"edited":true}']);
-      // Rev F08: a 0600 config (and its backup) stays 0600 after a save. Windows has no such mode bits.
-      if (process.platform !== "win32") {
-        await chmod(file, 0o600);
-        await writeConfigFile("claude", '{"a":4}', (await readConfigFile("claude", file)).mtimeMs, file);
-        expect([(await stat(file)).mode & 0o777, (await stat(`${file}.agent-dock.bak`)).mode & 0o777]).toEqual([0o600, 0o600]);
-      }
+      expect(configFile("claude", path.join(dir, "sub", "settings.json"))).toMatchObject({ exists: false, folderExists: false });
+      const file = path.join(dir, "settings.json");
+      expect(configFile("claude", file)).toMatchObject({ kind: "claude", path: file, exists: false, folderExists: true });
+      await writeFile(file, "{}");
+      expect(configFile("claude", file).exists).toBe(true);
+      expect(await readdir(dir)).toEqual(["settings.json"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -100,18 +76,10 @@ describe("CLI config files", () => {
 });
 
 describe("Ollama server settings", () => {
-  it("accept only valid values", () => {
-    const def = (key: string) => OLLAMA_SETTINGS.find((s) => s.key === key)!;
-    expect(ollamaValue(def("OLLAMA_NUM_PARALLEL"), " 2 ")).toBe("2");
-    expect(ollamaValue(def("OLLAMA_NUM_PARALLEL"), "0")).toBeNull();
-    expect(ollamaValue(def("OLLAMA_KV_CACHE_TYPE"), "q8_0")).toBe("q8_0");
-    expect(ollamaValue(def("OLLAMA_KV_CACHE_TYPE"), "q2")).toBeNull();
-    expect(ollamaValue(def("OLLAMA_KEEP_ALIVE"), "30m")).toBe("30m");
-    expect(ollamaValue(def("OLLAMA_KEEP_ALIVE"), "-1")).toBe("-1");
-    expect(ollamaValue(def("OLLAMA_KEEP_ALIVE"), "1d; rm")).toBeNull();
-    expect(ollamaValue(def("OLLAMA_MODELS"), "E:\\Ollama Models")).toBe("E:\\Ollama Models");
-    expect(ollamaValue(def("OLLAMA_MODELS"), 'models"&calc')).toBeNull();
+  it("are shown, never written, and leave OLLAMA_HOST to the connection's address", async () => {
     expect(OLLAMA_SETTINGS.some((s) => s.key === "OLLAMA_HOST")).toBe(false);
+    const source = await readFile(path.join(__dirname, "..", "src", "main", "lib", "ollama-settings.ts"), "utf8");
+    expect(source).not.toMatch(/SetEnvironmentVariable|setx/i);
   });
 
   it("read what the running Ollama uses from its server.log", () => {

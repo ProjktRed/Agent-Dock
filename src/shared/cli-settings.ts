@@ -4,13 +4,13 @@
 // Elevation and implementation (in implementation before the scope guard's flags, so the guard wins), Cline
 // and OpenCode for implementation. None loosens what Agent Dock sets: no sandbox, approval, permission, hook,
 // network or MCP setting is on these lists. The engine checks them again against its own copy
-// (engine/src/cli-run-settings.mjs). Cline and OpenCode run with their own config isolated, so they have
-// run settings only, no config file editor.
+// (engine/src/cli-run-settings.mjs). The CLIs' own config files and Ollama's server settings are shown,
+// never changed (from 0.39).
 
 export type RunSettingKind = "codex" | "claude" | "cline" | "opencode";
 export const RUN_SETTING_KINDS: RunSettingKind[] = ["codex", "claude", "cline", "opencode"];
 export const isRunSettingKind = (kind: string): kind is RunSettingKind => (RUN_SETTING_KINDS as string[]).includes(kind);
-/** The CLIs whose own config file the app can edit. */
+/** The CLIs whose own config file the app can show. */
 export type ConfigFileKind = "codex" | "claude";
 export type RunSettingValue = string | number | boolean;
 export type RunSettings = Record<string, RunSettingValue>;
@@ -73,53 +73,34 @@ export function cleanRunSettings(kind: RunSettingKind, raw: unknown): RunSetting
 }
 
 // Ollama's own server settings: environment variables Ollama reads when it starts (Windows: your user
-// environment). Agent Dock never starts Ollama, so these touch no engine code. OLLAMA_HOST is left out:
-// the connection's address says where Ollama listens.
+// environment). Shown only; you change them in Ollama or your environment. OLLAMA_HOST is left out: the
+// connection's address says where Ollama listens.
 export interface OllamaSettingDef {
   key: string;
   label: string;
   help: string;
-  type: "number" | "choice" | "bool" | "duration" | "path";
-  choices?: string[];
-  min?: number;
-  max?: number;
 }
 
 export const OLLAMA_SETTINGS: OllamaSettingDef[] = [
-  { key: "OLLAMA_NUM_PARALLEL", label: "Requests at once", type: "number", min: 1, max: 16, help: "How many requests Ollama answers at the same time. Parallel tasks on Ollama run at most this many at once." },
-  { key: "OLLAMA_CONTEXT_LENGTH", label: "Default context length", type: "number", min: 2_048, max: 1_048_576, help: "Context window for models that do not set one. Each request at once needs its own share of memory." },
-  { key: "OLLAMA_KV_CACHE_TYPE", label: "KV cache type", type: "choice", choices: ["f16", "q8_0", "q4_0"], help: "q8_0 halves the context's memory with little loss; needs flash attention." },
-  { key: "OLLAMA_FLASH_ATTENTION", label: "Flash attention", type: "bool", help: "Less memory for long contexts on GPUs that support it." },
-  { key: "OLLAMA_KEEP_ALIVE", label: "Keep model loaded", type: "duration", help: "How long a model stays in memory after its last request, e.g. 5m, 1h, or -1 for always." },
-  { key: "OLLAMA_MAX_LOADED_MODELS", label: "Models loaded at once", type: "number", min: 1, max: 8, help: "How many different models Ollama keeps loaded together." },
-  { key: "OLLAMA_MODELS", label: "Models folder", type: "path", help: "Where Ollama keeps its models. Ollama's own settings window can override this." },
+  { key: "OLLAMA_NUM_PARALLEL", label: "Requests at once", help: "How many requests Ollama answers at the same time. Parallel tasks on Ollama run at most this many at once." },
+  { key: "OLLAMA_CONTEXT_LENGTH", label: "Default context length", help: "Context window for models that do not set one. Each request at once needs its own share of memory." },
+  { key: "OLLAMA_KV_CACHE_TYPE", label: "KV cache type", help: "q8_0 halves the context's memory with little loss; needs flash attention." },
+  { key: "OLLAMA_FLASH_ATTENTION", label: "Flash attention", help: "Less memory for long contexts on GPUs that support it." },
+  { key: "OLLAMA_KEEP_ALIVE", label: "Keep model loaded", help: "How long a model stays in memory after its last request, e.g. 5m, 1h, or -1 for always." },
+  { key: "OLLAMA_MAX_LOADED_MODELS", label: "Models loaded at once", help: "How many different models Ollama keeps loaded together." },
+  { key: "OLLAMA_MODELS", label: "Models folder", help: "Where Ollama keeps its models. Ollama's own settings window can override this." },
 ];
 
-/** A valid Ollama setting value as text (what the environment holds), or null when it is not valid. */
-export function ollamaValue(def: OllamaSettingDef, value: string): string | null {
-  const v = value.trim();
-  if (def.type === "number") return /^\d+$/.test(v) && Number(v) >= def.min! && Number(v) <= def.max! ? String(Number(v)) : null;
-  if (def.type === "choice") return def.choices!.includes(v) ? v : null;
-  if (def.type === "bool") return v === "1" || v === "0" ? v : null;
-  if (def.type === "duration") return /^(-1|0|\d{1,6}(ms|s|m|h)?)$/.test(v) ? v : null;
-  // A folder: an absolute path without quotes or control characters.
-  return /^(?:[A-Za-z]:[\\/]|\/)[^"\0-\x1f]{0,400}$/.test(v) ? v : null;
-}
-
-/** A CLI's own config file as read (Codex config.toml, Claude Code settings.json). */
+/** Where a CLI's own config file is (Codex config.toml, Claude Code settings.json). */
 export interface ConfigFile {
-  kind: RunSettingKind;
+  kind: ConfigFileKind;
   path: string;
   exists: boolean;
-  text: string;
-  /** Last change as read; a save with another value is refused (the file changed meanwhile). */
-  mtimeMs: number | null;
+  folderExists: boolean;
 }
 
 export interface OllamaSettingsState {
-  /** Writing is Windows only; elsewhere Ollama's service holds its settings (systemd, launchctl). */
-  editable: boolean;
-  /** Your user environment's values (null when not set). */
+  /** Windows: your user environment's values (null when not set). Elsewhere Ollama's service holds them. */
   saved: Record<string, string | null>;
   /** What the running Ollama started with, from its server.log; null when there is no log to read. */
   running: { values: Record<string, string>; at: string | null } | null;

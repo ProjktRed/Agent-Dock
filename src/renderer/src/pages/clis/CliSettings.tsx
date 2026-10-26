@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import type { CliConnection } from "@shared/types";
-import { OLLAMA_SETTINGS, RUN_SETTINGS, cleanRunSettings, isRunSettingKind, ollamaValue, type ConfigFile, type ConfigFileKind, type OllamaSettingsState, type RunSettingKind, type RunSettings } from "@shared/cli-settings";
+import { OLLAMA_SETTINGS, RUN_SETTINGS, cleanRunSettings, isRunSettingKind, type ConfigFile, type ConfigFileKind, type OllamaSettingsState, type RunSettingKind, type RunSettings } from "@shared/cli-settings";
 import { cleanError, useApp } from "../../store";
 import { Icon } from "../../components/Icon";
-import { Spinner, Toggle } from "../../components/ui";
+import { Toggle } from "../../components/ui";
 
 /** Settings passed to every run of this CLI, implementation included (none loosens the sandbox). */
 function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKind }) {
@@ -50,95 +50,51 @@ function RunSettingsForm({ cli, kind }: { cli: CliConnection; kind: RunSettingKi
   );
 }
 
-/** The CLI's own config file: changes the CLI everywhere, also outside Agent Dock. */
-function ConfigFileEditor({ kind, name }: { kind: ConfigFileKind; name: string }) {
+/** Where the CLI's own config file is. Agent Dock does not edit it: it changes the CLI everywhere. */
+function ConfigFileLink({ kind, name }: { kind: ConfigFileKind; name: string }) {
   const { toast } = useApp();
   const [file, setFile] = useState<ConfigFile | null>(null);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const load = async () => {
-    setError(null);
+  useEffect(() => { void window.api.cliConfigFile(kind).then(setFile, (e) => toast("error", cleanError(e))); }, [kind]);
+  const show = async () => {
     try {
-      const f = await window.api.cliConfigFile(kind);
-      setFile(f);
-      setText(f.text);
-    } catch (e) {
-      setError(cleanError(e));
-    }
-  };
-  useEffect(() => { void load(); }, [kind]);
-  const save = async () => {
-    if (!file) return;
-    setBusy(true);
-    try {
-      const f = await window.api.saveCliConfigFile(kind, text, file.mtimeMs);
-      setFile(f);
-      setText(f.text);
-      toast("success", `Saved ${f.path}${file.exists ? ". The previous version is next to it as .agent-dock.bak" : ""}`);
+      const problem = await window.api.showCliConfigFile(kind);
+      if (problem) toast("info", problem);
     } catch (e) {
       toast("error", cleanError(e));
-    } finally {
-      setBusy(false);
     }
   };
-  const dirty = file !== null && text !== file.text;
   return (
     <div className="well pad stack" style={{ gap: 10 }}>
-      <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">{name}'s own config file</b>{file && <span className="chip">{file.exists ? (kind === "codex" ? "TOML" : "JSON") : "Not created yet"}</span>}</div>
+      <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">{name}'s own config file</b>{file && !file.exists && <span className="chip">Not created yet</span>}</div>
       <span className="hint">
-        {file ? <span className="mono">{file.path}</span> : "Reading…"} · Changes {name} everywhere, also when you use it outside Agent Dock.
+        {file ? <span className="mono">{file.path}</span> : "Reading…"} · Edit it in your own editor: it changes {name} everywhere, also when you use it outside Agent Dock.
         {kind === "claude" ? " Agent Dock's runs read this file too, but their permissions, allowed tools and protection hooks are set by Agent Dock and still apply." : " Agent Dock's runs read it too, but set their own sandbox, approvals and protection hooks on top."}
       </span>
-      {error ? <div className="banner errb"><Icon name="warn" className="err" /><span>{error}</span></div> : (
-        <textarea className="ta mono" style={{ minHeight: 220 }} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} placeholder={kind === "codex" ? "# config.toml\nmodel_reasoning_summary = \"concise\"" : "{\n}"} aria-label={`${name} config file`} />
-      )}
-      <div className="row"><span className="sub grow">{dirty ? "Unsaved changes" : ""}</span><button className="btn ghost" disabled={busy} onClick={() => void load()}><Icon name="refresh" size="sm" />Reload</button><button className="btn primary" disabled={!dirty || busy} onClick={() => void save()}>{busy && <Spinner />}Save file</button></div>
+      <div className="row"><span className="grow" /><button className="btn" disabled={!file || (!file.exists && !file.folderExists)} onClick={() => void show()}><Icon name="external" size="sm" />{file?.exists === false ? "Show its folder" : "Show config file"}</button></div>
     </div>
   );
 }
 
-/** Ollama's own server settings (your user environment on Windows), and what the running Ollama uses. */
-function OllamaSettingsForm({ cli }: { cli: CliConnection }) {
-  const { setClis, toast } = useApp();
+const OLLAMA_FAQ = "https://github.com/ollama/ollama/blob/main/docs/faq.md#how-do-i-configure-ollama-server";
+const shownValue = (key: string, value: string) => (key === "OLLAMA_FLASH_ATTENTION" ? (value === "1" ? "On" : value === "0" ? "Off" : value) : value);
+
+/** Ollama's own server settings as your environment and the running Ollama have them. Agent Dock does not change them. */
+function OllamaSettingsView({ cli }: { cli: CliConnection }) {
   const [state, setState] = useState<OllamaSettingsState | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const apply = (s: OllamaSettingsState) => {
-    setState(s);
-    setDraft(Object.fromEntries(OLLAMA_SETTINGS.map((d) => [d.key, s.saved[d.key] ?? ""])));
-  };
   const load = async () => {
     setError(null);
-    try { apply(await window.api.ollamaSettings()); } catch (e) { setError(cleanError(e)); }
+    try { setState(await window.api.ollamaSettings()); } catch (e) { setError(cleanError(e)); }
   };
   useEffect(() => { void load(); }, []);
   const local = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i.test(cli.location.trim());
-  const changes = state ? Object.fromEntries(OLLAMA_SETTINGS.filter((d) => (draft[d.key] ?? "").trim() !== (state.saved[d.key] ?? "")).map((d) => [d.key, draft[d.key].trim() || null])) : {};
-  const invalid = OLLAMA_SETTINGS.filter((d) => changes[d.key] && ollamaValue(d, changes[d.key]!) === null);
-  const save = async () => {
-    setBusy(true);
-    try {
-      const r = await window.api.saveOllamaSettings(changes);
-      apply(r.state);
-      setClis(r.clis);
-      toast("success", "Saved. Quit Ollama from its tray icon and open it again to use them.");
-    } catch (e) {
-      toast("error", cleanError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!local) return <div className="well pad sub">This connection's Ollama is on another computer ({cli.location}). Its settings are changed there.</div>;
+  if (!local) return <div className="well pad sub">This connection's Ollama is on another computer ({cli.location}). Its settings are there.</div>;
   return (
     <div className="well pad stack" style={{ gap: 12 }}>
       <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Ollama's server settings</b>{state?.running?.at && <span className="chip" title="From Ollama's server.log">Running since {new Date(state.running.at).toLocaleString()}</span>}</div>
       <span className="hint">
-        {state?.editable === false
-          ? "On Linux and macOS, Ollama's service holds these settings (systemd or launchctl), so Agent Dock only shows what the running Ollama uses."
-          : "Saved in your Windows user environment, where Ollama reads them when it starts: quit Ollama from its tray icon and open it again to use a change. Empty removes the setting, so Ollama uses its default."}
-        {" "}Requests at once also sets this connection's limit for parallel tasks.
+        What Ollama uses. Change them in Ollama's own settings window or as environment variables (on Linux and macOS, on Ollama's service), then restart Ollama.
+        {" "}<a href={OLLAMA_FAQ} target="_blank" rel="noreferrer">How to configure Ollama</a>. Requests at once is also set on the Connection tab.
       </span>
       {error && <div className="banner errb"><Icon name="warn" className="err" /><span>{error}</span></div>}
       {state && (
@@ -147,45 +103,38 @@ function OllamaSettingsForm({ cli }: { cli: CliConnection }) {
             const running = state.running?.values[d.key];
             const savedValue = state.saved[d.key];
             // Ollama started with something else: not restarted since, or its own settings window overrides it.
-            const differs = savedValue !== null && running !== undefined && running !== savedValue && !(d.type === "duration" && running.startsWith(savedValue));
+            const differs = savedValue !== null && running !== undefined && running !== savedValue && !(d.key === "OLLAMA_KEEP_ALIVE" && running.startsWith(savedValue));
             return (
-              <label className="field" key={d.key} title={d.help}>
+              <div className="field" key={d.key} title={d.help}>
                 <span style={{ overflowWrap: "anywhere" }}>{d.label} <span className="mono mut" style={{ fontSize: 11 }}>{d.key}</span></span>
-                {d.type === "choice" || d.type === "bool" ? (
-                  <select className="sel" disabled={!state.editable} value={draft[d.key] ?? ""} onChange={(e) => setDraft({ ...draft, [d.key]: e.target.value })}>
-                    <option value="">Ollama default</option>
-                    {(d.type === "bool" ? [["1", "On"], ["0", "Off"]] : d.choices!.map((c) => [c, c])).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
-                ) : (
-                  <input className={`input ${d.type === "number" ? "tnum" : "mono"}`} disabled={!state.editable} value={draft[d.key] ?? ""} placeholder="Ollama default" onChange={(e) => setDraft({ ...draft, [d.key]: e.target.value })} />
-                )}
+                <span className="mono" style={{ overflowWrap: "anywhere" }}>{running !== undefined ? shownValue(d.key, running) || "(default)" : "Not known"}</span>
                 <span className={`hint ${differs ? "warn" : ""}`} style={{ overflowWrap: "anywhere" }}>
-                  {running !== undefined ? `Running Ollama uses: ${running || "(default)"}.` : "Running Ollama: not known."}
-                  {differs ? " Not what is saved: restart Ollama, or its own settings window overrides this." : ""} {d.help}
+                  {savedValue !== null ? `Your environment: ${shownValue(d.key, savedValue)}.` : ""}
+                  {differs ? " Not what Ollama uses: restart Ollama, or its own settings window overrides this." : ""} {d.help}
                 </span>
-              </label>
+              </div>
             );
           })}
         </div>
       )}
-      {invalid.length > 0 && <div className="banner"><Icon name="warn" className="warn" /><span>Not valid: {invalid.map((d) => d.label).join(", ")}.</span></div>}
-      <div className="row"><span className="sub grow">{Object.keys(changes).length ? "Unsaved changes" : ""}</span><button className="btn ghost" disabled={busy} onClick={() => void load()}><Icon name="refresh" size="sm" />Reload</button><button className="btn primary" disabled={!state?.editable || !Object.keys(changes).length || invalid.length > 0 || busy} onClick={() => void save()}>{busy && <Spinner />}Save</button></div>
+      {state && !state.running && <span className="hint">Ollama's server.log was not found, so what the running Ollama uses is not known.</span>}
+      <div className="row"><span className="grow" /><button className="btn ghost" onClick={() => void load()}><Icon name="refresh" size="sm" />Reload</button></div>
     </div>
   );
 }
 
-/** CLIs › Settings: run settings (Codex, Claude Code, Cline, OpenCode), Codex's and Claude Code's config file, and Ollama's server. */
+/** CLIs › Settings: run settings (Codex, Claude Code, Cline, OpenCode), where Codex's and Claude Code's config file is, and Ollama's server settings. */
 export function CliSettings({ cli }: { cli: CliConnection }) {
   if (isRunSettingKind(cli.kind)) {
     return (
       <div className="stack fade-in" style={{ gap: 14 }}>
         <RunSettingsForm key={cli.id + JSON.stringify(cli.runSettings ?? {})} cli={cli} kind={cli.kind} />
-        {/* Cline and OpenCode run with their own config isolated: there is no file of theirs to edit. */}
-        {(cli.kind === "codex" || cli.kind === "claude") && <ConfigFileEditor kind={cli.kind} name={cli.name} />}
+        {/* Cline and OpenCode run with their own config isolated: there is no file of theirs to show. */}
+        {(cli.kind === "codex" || cli.kind === "claude") && <ConfigFileLink kind={cli.kind} name={cli.name} />}
       </div>
     );
   }
-  if (cli.kind === "ollama") return <div className="stack fade-in"><OllamaSettingsForm cli={cli} /></div>;
+  if (cli.kind === "ollama") return <div className="stack fade-in"><OllamaSettingsView cli={cli} /></div>;
   return null;
 }
 

@@ -36,7 +36,6 @@
     "electron-vite": "5.0.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "smol-toml": "1.9.0",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vitest": "4.1.11"

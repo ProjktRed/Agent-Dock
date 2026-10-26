@@ -166,10 +166,9 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   automatic reviewer.
 - CLIs › Settings: run settings for Codex and Claude Code come from a fixed list, checked by the app
   and again by the engine, with no sandbox, approval, permission, hook, network or MCP setting on it.
-  The config file editor writes only Codex's `config.toml` and Claude Code's user `settings.json`,
-  which are trusted configuration: that file can define hooks, which run commands. Ollama's settings
-  are written only to a fixed list of `OLLAMA_*` variables in your user environment, with checked
-  values passed to PowerShell as data, never as command text.
+  The app does not write the CLIs' own config files or Ollama's settings: it shows where Codex's
+  `config.toml` and Claude Code's user `settings.json` are, and reads a fixed list of `OLLAMA_*`
+  variables from your user environment and Ollama's `server.log`.
 - Importing a settings file never sets programs to start: connection program paths, the llama.cpp
   launcher and the Node runtime stay as they are on this computer. An import cannot turn the tool
   guard off, and its protected paths are added to yours.

@@ -37,16 +37,16 @@ CLIs › select a connection › **Settings**:
 - **Cline and OpenCode: run settings.** Used when they implement a task: for Cline the retries (mistakes
   in a row before it stops) and how it compacts a long conversation; for OpenCode the most steps per
   task and the model's reasoning variant. Agent Dock runs both with their own config kept apart, so
-  there is no config file of theirs to edit here.
-- **Codex and Claude Code: their own config file** (`~/.codex/config.toml`, `~/.claude/settings.json`,
-  or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). This changes the CLI everywhere, also outside Agent
-  Dock. A save is checked first (TOML, or a JSON object), is refused if the file changed since you
-  opened it, and keeps the previous version next to it as `.agent-dock.bak`.
+  there is no config file of theirs to show here.
+- **Codex and Claude Code: where their own config file is** (`~/.codex/config.toml`,
+  `~/.claude/settings.json`, or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). **Show config file** shows it
+  in your file manager so you can edit it in your own editor. Agent Dock does not change it: it changes
+  the CLI everywhere, also outside Agent Dock.
 - **Ollama: its server settings** (requests at once, default context length, KV cache type, flash
-  attention, keep-alive, models loaded at once, models folder). On Windows they're saved in your user
-  environment; quit Ollama from its tray icon and open it again to use them. Each one shows what the
-  running Ollama actually uses (from its `server.log`), so you can see when Ollama's own settings
-  window overrides one. Requests at once also sets the connection's limit for parallel tasks.
+  attention, keep-alive, models loaded at once, models folder), as the running Ollama uses them (from
+  its `server.log`) and as your Windows user environment has them. Change them in Ollama's own settings
+  window or as environment variables, then restart Ollama; Agent Dock does not change them. Set the
+  connection's **Requests at once** to match `OLLAMA_NUM_PARALLEL`.
 
 Cline, OpenCode, the OpenAI-compatible providers and llama.cpp's server settings are not on this tab
 yet.

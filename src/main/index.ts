@@ -55,8 +55,8 @@ import { sanitizeSettings, weakenings } from "./settings-validate";
 import { readJson, rememberContent, restoreWatchedFiles, watchFolder, writeJson } from "./lib/json-file";
 import { engineFileProblems, MANIFEST_FILE, WATCH_ROOTS } from "./lib/integrity";
 import { SAFETY_PRESETS, type SafetyPresetName } from "@shared/safety-presets";
-import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
-import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
+import { configFile } from "./lib/cli-config-files";
+import { readOllamaSettings } from "./lib/ollama-settings";
 
 try {
   assertSafeLaunch(app.isPackaged,[...process.argv,...process.execArgv,...['remote-debugging-port','remote-debugging-pipe','inspect','inspect-brk','inspect-port'].filter(flag=>app.commandLine.hasSwitch(flag)).map(flag=>'--'+flag)]);
@@ -1166,25 +1166,19 @@ function registerIpc() {
     return snapshot().clis;
   });
   const configKind = (kind: unknown) => {
-    if (kind !== "codex" && kind !== "claude") throw new Error("Only Codex's and Claude Code's config files are edited here.");
+    if (kind !== "codex" && kind !== "claude") throw new Error("Only Codex's and Claude Code's config files are shown here.");
     return kind;
   };
-  handle("cli:configFile", (kind: unknown) => readConfigFile(configKind(kind)));
-  handle("cli:saveConfigFile", (kind: unknown, text: unknown, mtimeMs: unknown) => {
-    if (typeof text !== "string" || (mtimeMs !== null && typeof mtimeMs !== "number")) throw new Error("Invalid config file save");
-    return writeConfigFile(configKind(kind), text, mtimeMs);
+  handle("cli:configFile", (kind: unknown) => configFile(configKind(kind)));
+  // Shows the file (or its folder) in the file manager, never opens it: you edit it in your own editor.
+  handle("cli:showConfigFile", (kind: unknown) => {
+    const file = configFile(configKind(kind));
+    if (file.exists) shell.showItemInFolder(file.path);
+    else if (file.folderExists) void shell.openPath(path.dirname(file.path));
+    else return `${path.dirname(file.path)} does not exist yet: ${kind === "codex" ? "Codex" : "Claude Code"} creates it.`;
+    return "";
   });
   handle("cli:ollamaSettings", () => readOllamaSettings());
-  handle("cli:saveOllamaSettings", async (changes: Record<string, string | null>) => {
-    const state = await writeOllamaSettings(changes ?? {});
-    // Requests at once is also the most parallel tasks a local Ollama connection gets: keep them the same.
-    if ("OLLAMA_NUM_PARALLEL" in (changes ?? {})) {
-      const atOnce = Math.max(1, Number(state.saved.OLLAMA_NUM_PARALLEL) || 1);
-      store.data.clis = store.data.clis.map((c) => (c.kind === "ollama" && isLocalUrl(c.location) ? { ...c, parallelRequests: atOnce } : c));
-      await store.saveClis();
-    }
-    return { state, clis: snapshot().clis };
-  });
   handle("cli:collectModels", async (id: string) => {
     const conn = store.data.clis.find((c) => c.id === id);
     if (!conn) throw new Error("Connection not found");

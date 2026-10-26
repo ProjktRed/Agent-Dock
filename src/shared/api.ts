@@ -87,13 +87,12 @@ export interface DesktopApi {
   saveAgent(agent: Agent): Promise<Agent[]>;
   deleteAgent(id: string): Promise<Agent[]>;
   saveCli(cli: CliConnection, secret?: string | null): Promise<CliConnection[]>;
-  /** Codex's config.toml or Claude Code's user settings.json (CLIs › Settings). */
+  /** Where Codex's config.toml or Claude Code's user settings.json is (CLIs › Settings). */
   cliConfigFile(kind: ConfigFileKind): Promise<ConfigFile>;
-  /** Checked, refused if the file changed since `mtimeMs`, previous version kept as .agent-dock.bak. */
-  saveCliConfigFile(kind: ConfigFileKind, text: string, mtimeMs: number | null): Promise<ConfigFile>;
+  /** Shows it (or its folder) in the file manager; "" when shown, else why not. */
+  showCliConfigFile(kind: ConfigFileKind): Promise<string>;
+  /** Ollama's server settings as your environment and the running Ollama have them (read only). */
   ollamaSettings(): Promise<OllamaSettingsState>;
-  /** Sets (value) or clears (null) Ollama's settings in your user environment (Windows). */
-  saveOllamaSettings(changes: Record<string, string | null>): Promise<{ state: OllamaSettingsState; clis: CliConnection[] }>;
   deleteCli(id: string): Promise<CliConnection[]>;
   checkCli(id: string): Promise<CliHealth>;
   healths(): Promise<CliHealth[]>;
