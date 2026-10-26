@@ -126,9 +126,8 @@ trusting checks, unprotecting a path or changing a program Agent Dock runs asks 
 - **Pull-request mode** (Projects › Workflow): each run works on its own `agent-dock/run-…` branch.
   Nothing is pushed until you press **Open pull request**. On GitLab this opens a merge request.
 - **GitHub CI** (Projects › Workflow): after Open pull request, the pushed commit's GitHub Actions
-  runs show there, with a notification when they finish. Needs GitHub CLI signed in (`gh auth login`).
-  **Fix CI failure** starts a run that fixes it from the failed log; with **Fix failures automatically**
-  on, that happens by itself and the fix is pushed (at most 3 fix runs per push of yours).
+  runs show there, each linking to GitHub, with a notification when they finish. Needs GitHub CLI
+  signed in (`gh auth login`).
 - **Parallel tasks** (Settings › Workflow rules): up to 4 tasks of the same objective at once, each
   in its own worktree; each change is checked again on the combined code before it is committed.
   Needs a cloud Implementation agent. A task that did not finish or merge keeps its worktree and

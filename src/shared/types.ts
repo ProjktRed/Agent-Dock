@@ -40,10 +40,6 @@ export interface Project {
   prBase?: string | null;
   /** GitHub CI: the pushed run branch whose GitHub Actions runs the app watches, set when the app pushes it. */
   ci?: CiWatch | null;
-  /** GitHub CI fix loop (off by default): a failed CI run starts a run that fixes it, then pushes the branch again. */
-  ciFixLoop?: boolean;
-  /** One-shot note added to the objective on the next start: the failed CI log to fix. Cleared once started. */
-  ciNote?: string | null;
   /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
   wsl?: { enabled: boolean; distro: string };
 }
@@ -57,10 +53,6 @@ export interface CiWatch {
   prUrl: string | null;
   /** The last summary seen; a final one (pass, fail, cancelled) ends the polling for this commit. */
   state: CiState;
-  /** Fix-loop runs started for this branch since the last push you made; at most CI_FIX_MAX. */
-  fixAttempts: number;
-  /** A fix-loop run is working; when it ends with new commits the branch is pushed again. */
-  fixing: boolean;
 }
 
 export type CiState = "pending" | "pass" | "fail" | "cancelled" | "none" | "unavailable";

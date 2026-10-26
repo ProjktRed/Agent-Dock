@@ -172,8 +172,6 @@ export interface DesktopApi {
   estimates(projectId: string): Promise<EstimateRecord[]>;
   /** Reads the runs again now, with GitHub CLI. */
   refreshCi(projectId: string): Promise<CiStatus>;
-  /** Starts a run that fixes the failed CI run; the branch is pushed again when it completes. */
-  fixCi(projectId: string): Promise<CiStatus>;
   /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
   /** Merges a lane's branch into the branch the main project has checked out (one merge commit; a conflict merges nothing). */
   /** Removes a lane's worktree and its project entry; its branch and commits stay. */

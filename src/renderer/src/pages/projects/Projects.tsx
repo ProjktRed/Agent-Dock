@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shared/schedule";
 import type { HistoryEntry } from "@shared/api";
 import type { CiCheck, CiState, CiStatus, Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
-import { CI_FIX_MAX } from "@shared/ci";
 import { cleanError, useApp } from "../../store";
 import { ago, longDate, plural, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
@@ -215,23 +214,22 @@ const CI_LABEL: Record<CiState, string> = { pending: "Running", pass: "Passed", 
 const CI_ST: Record<CiState, StatusKind> = { pending: "active", pass: "done", fail: "blocked", cancelled: "attn", none: "pending", unavailable: "pending" };
 const CHECK_ST: Record<CiCheck["bucket"], StatusKind> = { pending: "active", pass: "done", fail: "blocked", cancel: "attn", skipping: "pending" };
 
-/** GitHub CI: the Actions runs of the pushed run branch, read with GitHub CLI, and the opt-in fix loop. */
+/** GitHub CI: the Actions runs of the pushed run branch, read with GitHub CLI, with links to them on GitHub. */
 function CiRow({ project }: { project: Project }) {
-  const { saveProject, toast, statuses } = useApp();
+  const { toast } = useApp();
   const [ci, setCi] = useState<CiStatus | null>(null);
-  const [busy, setBusy] = useState<"" | "refresh" | "fix">("");
-  const running = statuses[project.id]?.processAlive === true;
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     let live = true;
     void window.api.ciStatus(project.id).then((s) => { if (live) setCi(s); }).catch(() => {});
     const off = window.api.onCi((s) => { if (s.projectId === project.id) setCi(s); });
     return () => { live = false; off(); };
   }, [project.id]);
-  const act = async (kind: "refresh" | "fix") => {
-    setBusy(kind);
-    try { setCi(await (kind === "refresh" ? window.api.refreshCi(project.id) : window.api.fixCi(project.id))); }
+  const refresh = async () => {
+    setBusy(true);
+    try { setCi(await window.api.refreshCi(project.id)); }
     catch (error) { toast("error", cleanError(error)); }
-    finally { setBusy(""); }
+    finally { setBusy(false); }
   };
   const watch = ci?.watch ?? null;
   if (!project.prMode && !watch) return null;
@@ -239,7 +237,7 @@ function CiRow({ project }: { project: Project }) {
     <div className="setrow" style={{ alignItems: "flex-start" }}>
       <div className="grow">
         <div className="lt row" style={{ gap: 8 }}>GitHub CI<Support kind="app" />
-          {watch && ci && <span className="row sub" style={{ gap: 6 }}><St kind={CI_ST[ci.state]} title={CI_LABEL[ci.state]} />{watch.fixing ? "Fixing" : CI_LABEL[ci.state]}</span>}
+          {watch && ci && <span className="row sub" style={{ gap: 6 }}><St kind={CI_ST[ci.state]} title={CI_LABEL[ci.state]} />{CI_LABEL[ci.state]}</span>}
         </div>
         <div className="ld">
           {watch
@@ -259,13 +257,8 @@ function CiRow({ project }: { project: Project }) {
             ))}
           </div>
         )}
-        <label className="row sub" style={{ gap: 6, marginTop: 8 }} title={`When CI fails, start a run that fixes it from the failed log, then push the branch again. At most ${CI_FIX_MAX} fix runs per push of yours; checks and tests are never weakened to pass.`}>
-          <Toggle on={project.ciFixLoop === true} onChange={(v) => void saveProject({ ...project, ciFixLoop: v })} label="Fix CI failures automatically" />
-          Fix failures automatically (pushes the fix){watch && watch.fixAttempts > 0 ? ` · ${watch.fixAttempts} of ${CI_FIX_MAX} fix runs used` : ""}
-        </label>
       </div>
-      {watch && <button className="btn sm" disabled={busy !== ""} onClick={() => void act("refresh")}>{busy === "refresh" ? "Checking…" : "Refresh"}</button>}
-      {watch && ci?.state === "fail" && !watch.fixing && <button className="btn sm" disabled={busy !== "" || running} title={running ? "Stop the automation first" : "Starts a run that fixes it from the failed log"} onClick={() => void act("fix")}>{busy === "fix" ? "Starting…" : "Fix CI failure"}</button>}
+      {watch && <button className="btn sm" disabled={busy} onClick={() => void refresh()}>{busy ? "Checking…" : "Refresh"}</button>}
       <ScopeChip />
     </div>
   );

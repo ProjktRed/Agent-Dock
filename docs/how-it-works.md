@@ -185,11 +185,8 @@ All per project in Projects › Workflow, unless noted.
 - **GitHub CI**: once the app has pushed a run branch, Projects › Workflow › GitHub CI shows that
   commit's GitHub Actions runs (`gh run list`, polled every minute until they finish, for at most six
   hours) and tells you when they pass or fail (Windows notification per the notification settings).
-  It uses your own `gh auth login`; the app stores no GitHub token. **Fix CI failure** (or the opt-in
-  fix loop, off by default) starts a run whose objective begins with the failed jobs' log (`gh run view
-  --log-failed`, the last 120 lines, fenced as data), for that start only. When that run completes with
-  new commits the app pushes the branch again and watches CI anew; a run that does not complete, or
-  makes no commits, pushes nothing. The loop stops after 3 fix runs per push of yours.
+  It uses your own `gh auth login`; the app stores no GitHub token. Each run links to its page on
+  GitHub. The app does not fix a failed run or push anything by itself.
 - **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
   round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
   (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>-<run>`)

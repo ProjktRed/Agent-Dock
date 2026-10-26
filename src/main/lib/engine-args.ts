@@ -143,12 +143,7 @@ export function buildEngineArgs(input: {
   };
   if (qa) useConnection(qa, "QA");
 
-  // A CI fix run: the failed log goes before the objective, for this start only.
-  const objective = project.ciNote ? `${project.ciNote}
-
-Project objective:
-${project.objective}` : project.objective;
-  const args = ["--workspace", project.path, "--objective", objective, "--state-dir", project.stateDir];
+  const args = ["--workspace", project.path, "--objective", project.objective, "--state-dir", project.stateDir];
   const unattended = workflow.unattended === true;
   // Unattended: never waits at a task boundary and never runs with the tool guard off.
   args.push('--auto-continue', String(unattended || workflow.autoContinue));

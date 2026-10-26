@@ -84,13 +84,3 @@ export async function openPullRequest(cwd: string, base: string, title: string, 
   if (!repo) throw new Error(`Pushed ${branch}. The remote is not on GitHub or GitLab, so open the pull request on your Git host.`);
   return { url: compareUrl(repo, base, branch), created: false, branch, sha, repo };
 }
-
-/** The CI fix loop: pushes the run branch again when a fix run added commits. Returns the new HEAD, or null when nothing is new. */
-export async function pushRunBranch(cwd: string, branch: string, pushedSha: string): Promise<string | null> {
-  const current = await git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
-  if (current !== branch) throw new Error(`The project is on ${current}, not ${branch}, so the fix was not pushed.`);
-  const sha = await git(cwd, "rev-parse", "HEAD");
-  if (sha === pushedSha) return null;
-  await git(cwd, "push", "origin", branch);
-  return sha;
-}

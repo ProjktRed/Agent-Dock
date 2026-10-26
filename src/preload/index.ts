@@ -55,7 +55,6 @@ const api: DesktopApi = {
   ciStatus: invoke("project:ciStatus") as DesktopApi["ciStatus"],
   estimates: invoke("project:estimates") as DesktopApi["estimates"],
   refreshCi: invoke("project:ciRefresh") as DesktopApi["refreshCi"],
-  fixCi: invoke("project:ciFix") as DesktopApi["fixCi"],
   parallelLeftovers: invoke("project:parallelLeftovers") as DesktopApi["parallelLeftovers"],
   cleanParallel: invoke("project:cleanParallel") as DesktopApi["cleanParallel"],
   checkWsl: invoke("wsl:check") as DesktopApi["checkWsl"],
