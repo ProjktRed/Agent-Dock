@@ -6,6 +6,7 @@ import path from "node:path";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol, session, shell, Tray } from "electron";
 import { pathToFileURL } from "node:url";
 import { APP_SCHEME, appUrl, resolveAppPath } from "./lib/app-protocol";
@@ -1435,6 +1436,24 @@ function registerIpc() {
   handle("task:decide", async (id: string, taskId: unknown, decision: unknown) => {
     const done = await engine.decideTask(project(id), String(taskId), decision === "approve" ? "approve" : "reject", "app");
     if (!done) throw new Error("That task is no longer waiting for an answer.");
+    return true;
+  });
+  // Missing tools: after you confirm, a visible terminal runs the suggested install command. Only the official
+  // package-manager forms the engine suggests are run (winget ids, npm -g for pnpm/yarn), never other text.
+  handle("tools:install", async (id: string, tool: unknown) => {
+    const p = project(id);
+    if (process.platform !== "win32" || p.wsl?.enabled) throw new Error("Run the install command in a terminal where the project runs.");
+    const t = (await engine.status(p)).missingTools?.tools.find((x) => x.tool === String(tool));
+    if (!t?.install || !/^(?:winget install --id [\w.-]+ -e --source winget|npm install -g (?:pnpm|yarn))$/.test(t.install)) throw new Error("There is no install command for that tool; use its download page.");
+    const options: Electron.MessageBoxOptions = {
+      type: "question", buttons: ["Install", "Cancel"], defaultId: 0, cancelId: 1, title: `Install ${t.name}`,
+      message: `Install ${t.name}?`,
+      detail: `Agent Dock opens a terminal and runs:\n\n${t.install}\n\nThe installer may ask for administrator permission.${t.note ? ` ${t.note}` : ""} The task continues by itself once ${t.name} is found.`,
+    };
+    const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+    if (response !== 0) return false;
+    spawn("cmd.exe", ["/d", "/k", t.install], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    await engine.recordEvent(p, { type: "tool-install-started", tool: t.tool, name: t.name, command: t.install, source: "app" }).catch(() => undefined);
     return true;
   });
   // The in-app prompt's answer: allow once, allow this exact action for the rest of the run, or refuse.

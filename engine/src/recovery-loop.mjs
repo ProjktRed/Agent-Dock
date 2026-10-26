@@ -18,6 +18,7 @@ import {objectiveWithPriority} from './task-priority.mjs';
 import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
+import {missingTools as findMissingTools} from './tool-check.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReason:value.runResult?.finishReason??null,text:String(value.summary??value.runResult?.summary??value.runResult?.text??'No structured summary provided.').slice(0,2000)}});
@@ -33,7 +34,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   solReassessmentEnabled=true,baseline=()=>captureGitBaseline(workspace),verify=verifyReview,
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
-  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,approveTasks=false,
+  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,missingTools=findMissingTools,toolPollMs=10_000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,approveTasks=false,
   knowledgeFile,roles=[],runRole=null,fixWorkers={},
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
@@ -232,6 +233,23 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
               return{status:'deferred'};
             }
             await new Promise(resolve=>setTimeout(resolve,pollMs));
+            continue;
+          }
+          // Missing tools: the check needs a toolchain that is not installed. Nothing has run yet; wait (the app
+          // suggests installing it) and continue once it is found. Set aside defers the task untouched.
+          if(r.phase==='worker'&&!r.toolsChecked) {
+            const missing=await missingTools({workspace,command:task.qaCommand});
+            if(!missing.length){if(r.toolsMissingAt)await emit('tools-ready',{taskId:task.id});r.toolsChecked=true;r.toolsMissingAt=null;await save();continue;}
+            if(!r.toolsMissingAt){r.toolsMissingAt=new Date().toISOString();await emit('tools-missing',{taskId:task.id,tools:missing,qaCommand:task.qaCommand??''});await save();}
+            const decision=(await readControl()).taskDecision;
+            if(decision?.taskId===task.id&&decision.decision==='reject'&&String(decision.at)>=r.toolsMissingAt) {
+              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:`Set aside by you: ${missing.map(t=>t.name).join(', ')} not installed`});
+              if(deferred.blocked)return block(deferred.blocked);
+              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+              await emit('task-deferred',{taskId:task.id,reason:deferred.entry.reason,stash:deferred.entry.stash?.message??null});
+              return{status:'deferred'};
+            }
+            await sleep(toolPollMs);
             continue;
           }
           const boundaryControl=await readControl();

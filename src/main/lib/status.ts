@@ -1,4 +1,4 @@
-import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState, TaskApprovalRequest } from "@shared/types";
+import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState, TaskApprovalRequest, MissingTools } from "@shared/types";
 
 /** Shape of the engine's live.json (engine/src/dashboard-state.mjs). Only fields the app reads. */
 export interface EngineLive {
@@ -207,6 +207,20 @@ export function skipPoll(input: { active: boolean; alive: boolean; last: Pick<Pr
 }
 
 /** Approve each task: the newest request still unanswered (no approval, set-aside or stop after it), while the engine runs. */
+/** The newest tools-missing with no tools-ready, set-aside, stop or block after it, while the engine runs. */
+export function pendingMissingTools(events: EngineEvent[], processAlive: boolean): MissingTools | null {
+  if (!processAlive) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as EngineEvent & Record<string, unknown>;
+    if (["tools-ready", "task-deferred", "stopped", "blocked", "loop-complete"].includes(e.type)) return null;
+    if (e.type === "tools-missing" && typeof e.taskId === "string" && Array.isArray(e.tools)) {
+      const tools = (e.tools as Record<string, unknown>[]).map((t) => ({ tool: String(t.tool ?? ""), name: String(t.name ?? t.tool ?? "tool"), install: typeof t.install === "string" ? t.install : null, url: String(t.url ?? ""), note: typeof t.note === "string" ? t.note : null }));
+      return { taskId: e.taskId, qaCommand: String(e.qaCommand ?? ""), tools, since: e.timestamp };
+    }
+  }
+  return null;
+}
+
 export function pendingTaskApproval(events: EngineEvent[], processAlive: boolean): TaskApprovalRequest | null {
   if (!processAlive) return null;
   for (let i = events.length - 1; i >= 0; i--) {

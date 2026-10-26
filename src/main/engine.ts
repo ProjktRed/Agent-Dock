@@ -10,7 +10,7 @@ import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
 import { gitInfo, run } from "./lib/git";
 import { readPlan } from "./lib/plan";
-import { buildStatus, parallelRound, pendingTaskApproval, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
+import { buildStatus, parallelRound, pendingMissingTools, pendingTaskApproval, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
 import { decideActionRequest, readActionRequests } from "./lib/action-requests";
 import { readActivity } from "./lib/usage";
 import { buildTaskBoard, writeTaskBoard } from "./lib/task-board";
@@ -268,7 +268,8 @@ export class EngineManager {
   async decideTask(project: Project, taskId: string, decision: "approve" | "reject", source = "app"): Promise<boolean> {
     if (!(await this.refreshAlive(project))) return false;
     const events = await readActivity(project.stateDir, 200).catch(() => []);
-    if (pendingTaskApproval(events, true)?.taskId !== taskId) return false;
+    // Approve or set aside a task waiting for approval; set aside a task waiting for a missing tool.
+    if (pendingTaskApproval(events, true)?.taskId !== taskId && !(decision === "reject" && pendingMissingTools(events, true)?.taskId === taskId)) return false;
     await (await this.state(project)).setControl(decision === "approve" ? "approve-task" : "reject-task", { source, reason: taskId });
     return true;
   }
@@ -396,7 +397,7 @@ export class EngineManager {
     const board = await buildTaskBoard(project.stateDir, plan, live, Boolean(record)).catch(() => undefined);
     const parallel = await this.parallelRound(project, Boolean(record)).catch(() => null);
     const actionRequests = record ? await readActionRequests(project.stateDir).catch(() => []) : [];
-    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}), taskApproval: pendingTaskApproval(events, Boolean(record)), actionRequests };
+    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}), taskApproval: pendingTaskApproval(events, Boolean(record)), missingTools: pendingMissingTools(events, Boolean(record)), actionRequests };
   }
 
   /** A parallel round in progress: each task's live state from its engine's folder (<state>/parallel/<task>/live.json). */

@@ -156,6 +156,7 @@ export interface DesktopApi {
   setSandboxAgents(on: boolean): Promise<SandboxResult>;
   /** Approve each task: Approve, or Set aside (Assessment chooses again), for the task waiting before Implementation. */
   decideTask(projectId: string, taskId: string, decision: "approve" | "reject"): Promise<boolean>;
+  installTool(projectId: string, tool: string): Promise<boolean>;
   /** Settings › Safety level: applies a preset (native confirmations and sandbox setup as for each toggle). */
   applySafetyPreset(name: "strict" | "standard" | "trusted"): Promise<{ ok: boolean; problems: string[] }>;
   /** Ask instead of refuse: refuses a waiting agent action (allowing is only possible in the native dialog or on Telegram). */

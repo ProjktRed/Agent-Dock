@@ -631,6 +631,8 @@ export interface ProjectStatus {
   taskApproval?: TaskApprovalRequest | null;
   /** Ask instead of refuse: agent actions waiting for your answer. */
   actionRequests?: ActionRequest[];
+  /** The task waits before Implementation: its check needs a toolchain that is not installed. */
+  missingTools?: MissingTools | null;
   updatedAt: string | null;
 }
 
@@ -797,6 +799,21 @@ export interface SandboxResult {
 }
 
 /** A new task waiting for Approve / Set aside (engine event task-approval-requested). */
+/** Engine tool-check.mjs: toolchains the task's check needs, with the suggested install command. */
+export interface MissingTool {
+  tool: string;
+  name: string;
+  install: string | null;
+  url: string;
+  note: string | null;
+}
+export interface MissingTools {
+  taskId: string;
+  qaCommand: string;
+  tools: MissingTool[];
+  since: string;
+}
+
 export interface TaskApprovalRequest {
   taskId: string;
   name: string;

@@ -9,7 +9,7 @@ import { buildEngineArgs } from "../src/main/lib/engine-args";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, defaultAgents } from "../src/main/defaults";
 import { sanitizeSettings } from "../src/main/settings-validate";
 import { decideActionRequest, readActionRequests } from "../src/main/lib/action-requests";
-import { pendingTaskApproval } from "../src/main/lib/status";
+import { pendingMissingTools, pendingTaskApproval } from "../src/main/lib/status";
 
 const project: Project = { id: "p1", name: "orbit", path: "E:\\dev\\orbit", repoUrl: null, objective: "Ship it", description: "", createdAt: "", archived: false, stateDir: "C:\\state\\p1", roleOverrides: {}, workflowOverrides: {} };
 const agents = () => defaultAgents({ qa: "gpt-6.1-sol", assessment: "gpt-6.1-sol", elevate: "gpt-6-astra", reasoning: "medium" }).map((a) => (a.role === "implementation" ? { ...a, model: "m" } : a));
@@ -88,5 +88,15 @@ describe("ask instead of refuse: requests", () => {
     expect(await decideActionRequest(state, b, "deny", "app", true)).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, `${a}.decision.json`), "utf8"))).toMatchObject({ decision: "allow", remember: true });
     expect(JSON.parse(readFileSync(join(dir, `${b}.decision.json`), "utf8")).remember).toBeUndefined();
+  });
+});
+
+describe("missing tools", () => {
+  it("the task waits while the newest tools-missing has no tools-ready, set-aside, stop or block after it", () => {
+    const ev = (type: string, extra: Record<string, unknown> = {}) => ({ timestamp: new Date().toISOString(), type, ...extra }) as EngineEvent;
+    const missing = ev("tools-missing", { taskId: "T1", qaCommand: "npm run test:rust", tools: [{ tool: "cargo", name: "Rust (cargo)", install: "winget install --id Rustlang.Rustup -e --source winget", url: "https://rustup.rs", note: null }] });
+    expect(pendingMissingTools([missing], true)).toMatchObject({ taskId: "T1", qaCommand: "npm run test:rust", tools: [{ tool: "cargo", name: "Rust (cargo)" }] });
+    expect(pendingMissingTools([missing], false)).toBeNull();
+    for (const after of ["tools-ready", "task-deferred", "stopped", "blocked"]) expect(pendingMissingTools([missing, ev(after, { taskId: "T1" })], true)).toBeNull();
   });
 });

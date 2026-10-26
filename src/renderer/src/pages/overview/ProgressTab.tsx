@@ -119,6 +119,46 @@ function TaskApprovalPanel({ s, projectId }: { s: ProjectStatus; projectId: stri
   );
 }
 
+/** Missing tools: the task waits before Implementation until its check's toolchain is installed. */
+function MissingToolsPanel({ s, projectId, wsl }: { s: ProjectStatus; projectId: string; wsl: boolean }) {
+  const { toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const m = s.missingTools;
+  if (!m) return null;
+  const install = (tool: string) => {
+    setBusy(true);
+    void window.api.installTool(projectId, tool).then((started) => started && toast("info", "The installer is running in its own window. The task continues once the tool is found."), (error) => toast("error", (error as Error).message)).finally(() => setBusy(false));
+  };
+  const setAside = () => {
+    setBusy(true);
+    void window.api.decideTask(projectId, m.taskId, "reject").then(() => toast("success", `Task ${m.taskId} set aside: Assessment chooses again.`), (error) => toast("error", (error as Error).message)).finally(() => setBusy(false));
+  };
+  return (
+    <section className="banner warnb fade-in" role="alert" style={{ padding: 18 }}>
+      <Icon name="warn" className="attn" />
+      <div className="grow stack" style={{ gap: 10 }}>
+        <div style={{ fontWeight: 600, color: "var(--t)" }}>{m.tools.map((t) => t.name).join(", ")} {m.tools.length === 1 ? "is" : "are"} not installed <span className="mono sub">{m.taskId}</span></div>
+        <div className="sub">The check <span className="mono">{m.qaCommand}</span> needs {m.tools.length === 1 ? "it" : "them"}. Nothing has run yet: the task waits and continues by itself once {m.tools.length === 1 ? "it is" : "they are"} found.</div>
+        {m.tools.map((t) => (
+          <div key={t.tool} className="well pad stack" style={{ gap: 6 }}>
+            <b style={{ fontWeight: 600 }}>{t.name}</b>
+            {t.install && <div className="mono log selectable" style={{ maxHeight: 60 }}>{t.install}</div>}
+            {t.note && <span className="sub">{t.note}</span>}
+            <div className="row wrap" style={{ gap: 10 }}>
+              {t.install && !wsl && <button className="btn primary sm" disabled={busy} onClick={() => install(t.tool)}>Install</button>}
+              {t.url && <a className="btn ghost sm" href={t.url} target="_blank" rel="noreferrer"><Icon name="external" size="sm" />Download page</a>}
+              {(!t.install || wsl) && <span className="sub">Install it in {wsl ? "the project's WSL distro" : "a terminal"}, then wait here.</span>}
+            </div>
+          </div>
+        ))}
+        <div className="row wrap" style={{ gap: 10 }}>
+          <button className="btn sm" disabled={busy} title="Nothing was changed yet; the task is listed as deferred and Assessment chooses another" onClick={setAside}>Set task aside</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** Ask instead of refuse: every action still waiting, also the ones put off with "Later" in the prompt. */
 function ActionRequestsPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
   const list = s.actionRequests ?? [];
@@ -323,6 +363,7 @@ export function ProgressTab() {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <TaskApprovalPanel s={s} projectId={activeProject.id} />
+      <MissingToolsPanel s={s} projectId={activeProject.id} wsl={Boolean(activeProject.wsl?.enabled)} />
       <ActionRequestsPanel s={s} projectId={activeProject.id} />
       <AttentionPanel s={s} projectId={activeProject.id} />
       <PlanProposals projectId={activeProject.id} refreshKey={`${s.events.length}:${s.events.at(-1)?.timestamp ?? ""}`} />
