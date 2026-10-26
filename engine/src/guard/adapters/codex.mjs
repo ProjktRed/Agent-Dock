@@ -104,9 +104,9 @@ export function codexHookCommand(parts, platform = process.platform) {
  */
 export const CODEX_WRITE_SANDBOX = Object.freeze(["--sandbox", "workspace-write", "-c", 'approval_policy="never"']);
 
-export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile, platform = process.platform }) {
+export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile, platform = process.platform, timeout = 30 }) {
   const command = codexHookCommand([nodePath, hookScript, policyFile, logFile], platform);
-  return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`];
+  return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=${Math.round(timeout)}}]}]`];
 }
 
 export const adapter = {

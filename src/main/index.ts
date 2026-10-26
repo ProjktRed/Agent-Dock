@@ -10,7 +10,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol,
 import { pathToFileURL } from "node:url";
 import { APP_SCHEME, appUrl, resolveAppPath } from "./lib/app-protocol";
 import type { ControlAction, LaunchCheck, Notice } from "@shared/api";
-import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, NotifyChannel, Project, ProjectStatus, SandboxResult, Settings, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
+import type { AddProjectRequest, Agent, CiStatus, CiWatch, CliConnection, CliHealth, EngineInfo, ActionRequest, NotifyChannel, Project, ProjectStatus, SandboxResult, Settings, TaskApprovalRequest, SkillInfo, TokenRecord, UsageSummary } from "@shared/types";
 import { defaultAgents } from "./defaults";
 import { discoverClis, foundTools, runningLocal, systemProbes } from "./discovery";
 import { EngineManager } from "./engine";
@@ -53,6 +53,7 @@ import { stopLauncher } from "./lib/stop-launcher";
 import { sanitizeSettings, weakenings } from "./settings-validate";
 import { readJson, rememberContent, restoreWatchedFiles, watchFolder, writeJson } from "./lib/json-file";
 import { engineFileProblems, MANIFEST_FILE, WATCH_ROOTS } from "./lib/integrity";
+import { SAFETY_PRESETS, type SafetyPresetName } from "@shared/safety-presets";
 import { readConfigFile, writeConfigFile } from "./lib/cli-config-files";
 import { isLocalUrl, readOllamaSettings, writeOllamaSettings } from "./lib/ollama-settings";
 
@@ -218,7 +219,7 @@ function osNotify(title: string, body: string) {
 }
 
 function launchCheck(p: Project): LaunchCheck {
-  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasCliSecret(c.id) })), settings: store.data.settings, roles: roles.roles, protectedRoots: [store.dir, engineDir, ...(app.isPackaged ? [path.dirname(process.execPath)] : [])] });
+  return buildEngineArgs({ project: p, agents: agents(), clis: store.data.clis.map((c) => ({ ...c, hasSecret: store.hasCliSecret(c.id) })), settings: store.data.settings, roles: roles.roles, protectedRoots: [store.dir, engineDir, ...(app.isPackaged ? [path.dirname(process.execPath)] : [])], remoteApprovals: Boolean(approvalChannels().telegram) });
 }
 
 /** Engine arguments for a start; writes the workflow roles the engine reads (--roles-file) into the project's state folder. */
@@ -505,7 +506,10 @@ async function startApprovals() {
       const p = store.data.projects.find((x) => x.id === r.projectId && !x.archived);
       if (!p) return false;
       if (r.target.startsWith("plan:")) return (await engine.planProposals(p)).some((x) => x.id === r.target.slice(5) && x.status === "pending" && x.applies !== false);
-      const now = stateApproval(await engine.status(p));
+      const status = await engine.status(p);
+      if (r.target.startsWith("task:")) return (action === "approve-task" || action === "reject-task") && status.taskApproval?.taskId === r.target.slice(5);
+      if (r.target.startsWith("action:")) return (action === "allow-action" || action === "refuse-action") && Boolean(status.actionRequests?.some((x) => x.id === r.target.slice(7)));
+      const now = stateApproval(status);
       return Boolean(now && now.target === r.target && now.actions.includes(action));
     },
     execute: async (r, action, via) => {
@@ -515,6 +519,13 @@ async function startApprovals() {
         const list = await engine.decidePlanProposal(p, r.target.slice(5), action === "approve-plan" ? "approve" : "dismiss", source);
         const proposal = list.find((x) => x.id === r.target.slice(5));
         result = action === "dismiss-plan" ? "plan change dismissed" : proposal?.status === "applied" ? `plan change committed (${proposal.commit?.slice(0, 7)})` : "plan change approved; it is committed between tasks";
+      } else if (action === "approve-task" || action === "reject-task") {
+        const done = await engine.decideTask(p, r.target.slice(5), action === "approve-task" ? "approve" : "reject", source);
+        result = !done ? "that task is no longer waiting" : action === "approve-task" ? "task approved; Implementation starts" : "task set aside; Assessment chooses again";
+      } else if (action === "allow-action" || action === "refuse-action") {
+        const done = await engine.decideAction(p, r.target.slice(7), action === "allow-action" ? "allow" : "deny", source);
+        closeActionDialog(r.target.slice(7));
+        result = !done ? "that action was already answered or expired" : action === "allow-action" ? "allowed once" : "refused";
       } else {
         await runControl(r.projectId, action, source);
         result = { resume: "resumed", elevate: "Elevation started", resolve: "resolver started", "retry-qa": "QA restarted", stop: "stopping at the next safe point" }[action];
@@ -524,6 +535,49 @@ async function startApprovals() {
     },
   });
   approvals.start();
+}
+
+// ---------- ask instead of refuse; approve each task ----------
+
+/**
+ * An agent action the guard could not verify (engine guard/ask.mjs) is put to you in a native dialog the window
+ * cannot answer, one at a time, and on Telegram. The first answer wins; the dialog closes when Telegram answered
+ * or the time ran out (the engine then refuses it).
+ */
+const askedActions = new Set<string>();
+const actionDialogs = new Map<string, AbortController>();
+let actionQueue: Promise<void> = Promise.resolve();
+function closeActionDialog(id: string) { actionDialogs.get(id)?.abort(); }
+
+function askAction(p: Project, r: ActionRequest) {
+  if (askedActions.has(r.id)) return;
+  askedActions.add(r.id);
+  const until = new Date(r.expiresAt);
+  osNotify(`${r.cli} asks to run something · ${p.name}`, shown(r.text, 160));
+  void approvals?.request({ projectId: p.id, projectName: p.name, title: `${r.cli} asks to run an action the guard could not verify`, message: `${r.tool ?? "Tool"} in ${r.cwd}\n\n${r.text.slice(0, 1500)}\n\nRefused automatically at ${until.toLocaleTimeString()} without an answer.`, actions: ["allow-action", "refuse-action"], target: `action:${r.id}`, expiresAt: until.getTime() });
+  const controller = new AbortController();
+  actionDialogs.set(r.id, controller);
+  const timer = setTimeout(() => controller.abort(), Math.max(0, until.getTime() - Date.now()));
+  actionQueue = actionQueue.then(async () => {
+    if (controller.signal.aborted) return;
+    const options: Electron.MessageBoxOptions = {
+      type: "warning", buttons: ["Refuse", "Allow once"], defaultId: 0, cancelId: 0, signal: controller.signal,
+      title: `${r.cli} asks to run an action`,
+      message: `${r.cli} wants to run an action Agent Dock's guard could not verify (${p.name}).`,
+      detail: `${r.tool ?? "Tool"} in ${shown(r.cwd, 200)}${r.taskId ? `\nTask ${shown(r.taskId, 80)}` : ""}\n\n${shown(r.text, 1500)}\n\nWhy it was stopped: ${shown(r.reason, 300)}\n\nAllowed, it runs once, as you${store.data.settings.safety.sandboxAgents === true ? " (inside the sandbox for agents' commands)" : ""}. Without an answer by ${until.toLocaleTimeString()} it is refused.`,
+    };
+    const { response } = await (win?.isVisible() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)).catch(() => ({ response: -1 }));
+    if (controller.signal.aborted || response < 0) return;
+    if (await engine.decideAction(p, r.id, response === 1 ? "allow" : "deny", "app")) {
+      await engine.recordEvent(p, { type: "action-decision", id: r.id, decision: response === 1 ? "allow" : "deny", cli: r.cli, source: "app" }).catch(() => undefined);
+    }
+  }).finally(() => { clearTimeout(timer); actionDialogs.delete(r.id); });
+}
+
+/** Approve each task: a notification and Telegram buttons; the answer itself comes from the Overview card or Telegram. */
+function offerTaskApproval(p: Project, t: TaskApprovalRequest) {
+  osNotify(`Approve the next task? · ${p.name}`, `${t.taskId}: ${t.name}`.slice(0, 180));
+  void approvals?.request({ projectId: p.id, projectName: p.name, title: "Approve the next task?", message: `${t.taskId} · ${t.name}\n\n${t.objective.slice(0, 1200)}\n\nFiles: ${t.allowedPaths.join(", ").slice(0, 400)}\nCheck: ${t.qaCommand}`, actions: ["approve-task", "reject-task", "stop"], target: `task:${t.taskId}` });
 }
 
 // ---------- status polling, notifications and app-enforced workflow rules ----------
@@ -548,6 +602,9 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");
     }
   }
+  for (const request of next.actionRequests ?? []) askAction(p, request);
+  for (const id of actionDialogs.keys()) if (!(next.actionRequests ?? []).some((r) => r.id === id) && prev?.actionRequests?.some((r) => r.id === id)) closeActionDialog(id);
+  if (next.taskApproval && next.taskApproval.taskId !== prev?.taskApproval?.taskId) offerTaskApproval(p, next.taskApproval);
   if (approvals && prev && (prev.runState !== next.runState || prev.task?.id !== next.task?.id)) {
     const ask = stateApproval(next);
     if (ask) void approvals.request({ projectId: p.id, projectName: p.name, ...ask });
@@ -869,6 +926,30 @@ async function confirmWeakening(labels: string[]): Promise<boolean> {
 async function ask(options: Electron.MessageBoxOptions): Promise<number> {
   const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
   return response;
+}
+
+/**
+ * Settings › Safety level: the preset's plain toggles in one save (a weakening among them needs the usual native
+ * confirmation, and nothing changes when it is declined), then each sandbox through its own setup and self-test.
+ */
+async function applySafetyPreset(name: SafetyPresetName): Promise<{ ok: boolean; problems: string[] }> {
+  const preset = SAFETY_PRESETS[name];
+  if (!preset) throw new Error("Unknown safety level");
+  const before = store.data.settings;
+  const next = structuredClone(before);
+  next.workflow = { ...next.workflow, toolGuard: preset.toolGuard, approveTasks: preset.approveTasks };
+  next.safety = { ...next.safety, checksTrusted: preset.checksTrusted, askMinutes: preset.askMinutes };
+  const weaker = weakenings(before, next);
+  if (weaker.length && !(await confirmWeakening(weaker.map((w) => w.label)))) return { ok: false, problems: ["Nothing was changed."] };
+  store.data.settings = next;
+  await store.saveSettings();
+  const problems: string[] = [];
+  for (const kind of ["sandboxChecks", "sandboxAgents"] as const) {
+    if ((store.data.settings.safety[kind] === true) === preset[kind]) continue;
+    const r = await setSandbox(kind, preset[kind]);
+    if (!r.ok || r.problem) problems.push(`${kind === "sandboxChecks" ? "Sandboxed checks" : "Sandboxed agent commands"}: ${r.problem ?? (r.cancelled ? "cancelled" : "not changed")}`);
+  }
+  return { ok: problems.length === 0, problems };
 }
 
 /**
@@ -1371,6 +1452,20 @@ function registerIpc() {
   handle("sandbox:status", () => engine.sandbox("status"));
   handle("sandbox:set", async (on: unknown) => setSandbox("sandboxChecks", on === true));
   handle("sandbox:setAgents", async (on: unknown) => setSandbox("sandboxAgents", on === true));
+  handle("safety:preset", async (name: unknown) => applySafetyPreset(String(name) as SafetyPresetName));
+  handle("task:decide", async (id: string, taskId: unknown, decision: unknown) => {
+    const done = await engine.decideTask(project(id), String(taskId), decision === "approve" ? "approve" : "reject", "app");
+    if (!done) throw new Error("That task is no longer waiting for an answer.");
+    return true;
+  });
+  // Refusing needs no confirmation; allowing an agent's action happens only in the native dialog (or on Telegram).
+  handle("action:refuse", async (id: string, requestId: unknown) => {
+    const p = project(id), rid = String(requestId);
+    const done = await engine.decideAction(p, rid, "deny", "app");
+    closeActionDialog(rid);
+    if (done) await engine.recordEvent(p, { type: "action-decision", id: rid, decision: "deny", source: "app" }).catch(() => undefined);
+    return done;
+  });
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {
     try { const r = await verifyLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }

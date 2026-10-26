@@ -41,6 +41,7 @@ export function sanitizeSettings(incoming: unknown, current: Settings): Settings
   // The sandbox for checks is turned on only after its setup and self-test pass (sandbox:set), and off only there.
   merged.safety.sandboxChecks = current.safety.sandboxChecks === true;
   merged.safety.sandboxAgents = current.safety.sandboxAgents === true;
+  merged.safety.askMinutes = Math.min(60, Math.max(0, Math.floor(Number(merged.safety.askMinutes)) || 0));
   return { ...merged, general: { ...merged.general, ...normalizeAppearance(merged.general) } };
 }
 

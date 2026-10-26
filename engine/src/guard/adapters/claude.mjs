@@ -54,11 +54,11 @@ const hookScript=fileURLToPath(new URL('../../claude-protection-hook.mjs',import
  */
 export const CLAUDE_SANDBOX=Object.freeze({enabled:true,failIfUnavailable:true,allowUnsandboxedCommands:false,network:{allowedDomains:[]}});
 
-export function claudeProtectionSettings({policyFile,logFile,fast=false,nodePath=process.execPath,sandbox=false}) {
+export function claudeProtectionSettings({policyFile,logFile,fast=false,nodePath=process.execPath,sandbox=false,timeout=30}) {
   // Native hooks run in a shell: reject characters that could alter the generated command.
   const parts=[nodePath,hookScript,policyFile,logFile];
   if(parts.some(p=>typeof p!=='string'||/["`$%\r\n]/.test(p)))throw Error('Unsafe path for Claude protection hook');
-  return {fastMode:fast,...(sandbox?{sandbox:CLAUDE_SANDBOX}:{}),hooks:{PreToolUse:[{matcher:'.*',hooks:[{type:'command',command:parts.map(p=>'"'+p+'"').join(' '),timeout:30}]}]}};
+  return {fastMode:fast,...(sandbox?{sandbox:CLAUDE_SANDBOX}:{}),hooks:{PreToolUse:[{matcher:'.*',hooks:[{type:'command',command:parts.map(p=>'"'+p+'"').join(' '),timeout:Math.round(timeout)}]}]}};
 }
 
 export default adapter;

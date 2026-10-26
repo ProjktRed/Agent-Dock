@@ -294,6 +294,8 @@ export class DashboardState {
     } else if (action === "stop") next.stopAfterSafePoint = true;
     // Picked up by the loop at its next boundary (no worker running): the task is set aside, its work stashed.
     else if (action === "defer") { next.deferGeneration = Number(current.deferGeneration ?? 0) + 1; next.deferReason = String(reason ?? "Deferred").slice(0, 400); }
+    // Approve each task: your answer for the task waiting before Implementation (reason carries its id).
+    else if (action === "approve-task" || action === "reject-task") next.taskDecision = { taskId: String(reason ?? ""), decision: action === "approve-task" ? "approve" : "reject", at: new Date().toISOString(), source: source ?? null };
     // Elevation for the failing task, taken up by the running loop when the task is waiting on a correction.
     else if (action === "request-elevation") next.elevateGeneration = Number(current.elevateGeneration ?? 0) + 1;
     else if(action==='retry-qa') {

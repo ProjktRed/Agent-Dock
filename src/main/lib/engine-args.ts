@@ -103,6 +103,8 @@ export function buildEngineArgs(input: {
   settings: Settings;
   roles?: WorkflowRole[];
   protectedRoots?: string[];
+  /** Telegram approvals are set up: an unattended run can still ask (Settings › Ask instead of refuse). */
+  remoteApprovals?: boolean;
 }): EngineLaunchPlan {
   const { project, agents, clis, settings, roles: workflowRoles = [] } = input;
   const problems: string[] = [];
@@ -313,7 +315,11 @@ ${project.objective}` : project.objective;
   // Parallel tasks. Unattended mode too: the run keeps one budget for all its tasks, whose engines run without
   // limits of their own. On a local model server (0.38) the engine runs at most as many tasks as the server
   // answers at once: llama.cpp's slots, or the requests at once set on the Ollama connection.
-  const parallel = Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  // Approve each task (not when unattended: nobody is there to answer) runs one task at a time.
+  const approveTasks = workflow.approveTasks === true && workflow.unattended !== true;
+  const parallel = approveTasks ? 1 : Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  if (approveTasks) args.push("--approve-tasks", "true");
+  if (approveTasks && Number(workflow.parallelTasks) > 1) warnings.push("Approve each task is on, so tasks run one at a time.");
   if (parallel > 1) {
     args.push("--parallel", String(parallel));
     const local = (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl?.provider !== "openai";
@@ -361,6 +367,9 @@ ${project.objective}` : project.objective;
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
   if (settings.safety?.sandboxChecks === true) args.push("--sandbox-checks", "true");
   if (settings.safety?.sandboxAgents === true) args.push("--sandbox-agents", "true");
+  // Ask instead of refuse: unattended, only where an answer can come (Telegram); otherwise refused at once as before.
+  const askMinutes = Math.min(60, Math.max(0, Math.floor(Number(settings.safety?.askMinutes ?? 0)) || 0));
+  if (askMinutes > 0 && (workflow.unattended !== true || input.remoteApprovals === true)) args.push("--ask-minutes", String(askMinutes));
   const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...workflow.supervisor };
   const count = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
   args.push("--supervisor", ["off", "alert", "pause", "stop"].includes(sv.mode) ? sv.mode : "alert");

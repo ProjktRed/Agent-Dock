@@ -33,7 +33,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   solReassessmentEnabled=true,baseline=()=>captureGitBaseline(workspace),verify=verifyReview,
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
-  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
+  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,approveTasks=false,
   knowledgeFile,roles=[],runRole=null,fixWorkers={},
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
@@ -206,6 +206,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           r={version:1,baselineSha:sha,attempt:correctionResume?.attempt??pending?.attempt??1,phase:resumeQa?'qa':'worker',
             prompt:correctionResume?.prompt??buildInitialPrompt(task,{workspace}),history:correctionResume?.history??pending?.context?.history??[],
             correctionCount:0,correctionHistory:[],elevations:[],lastElevationCount:0,userAttention:false,lastAppliedOperationId:assessmentOperationId,stopAfterTask,deferGeneration:deferBase,
+            // Settings › Approve each task: a new task waits for you before Implementation starts.
+            ...(approveTasks&&!resumeQa&&!correctionResume?{awaitingApproval:true}:{}),
             ...(resumeQa?{qaPacket:pending.inputs,workerResult:{exitCode:pending.inputs.clineSummary?.exitCode??pending.inputs.workerResult?.exitCode??0}}:{})};
           if(correctionResume){await reconcile(task,sha);r.currentCorrection=correctionResume.currentCorrection??{id:randomUUID(),source:'elevation',prompt:r.prompt,attempted:false};}
           if(!resumeQa&&!correctionResume)await onTask(task);
@@ -213,6 +215,25 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         }
         for(;;) {
           if(await stopped())return{status:'stopped'};
+          if(r.awaitingApproval) {
+            if(!r.approvalRequestedAt){
+              r.approvalRequestedAt=new Date().toISOString();
+              await emit('task-approval-requested',{taskId:task.id,name:task.name??task.id,objective:String(task.objective??task.prompt??'').slice(0,1500),allowedPaths:task.allowedPaths??[],qaCommand:task.qaCommand??''});
+              await save();
+            }
+            const decision=(await readControl()).taskDecision;
+            if(decision?.taskId===task.id&&String(decision.at)>=r.approvalRequestedAt) {
+              if(decision.decision==='approve'){r.awaitingApproval=false;await emit('task-approved',{taskId:task.id,source:decision.source??null});await save();continue;}
+              // Set aside: the task is deferred untouched (no Implementation ran) and Assessment chooses again.
+              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:'Set aside by you before implementation'});
+              if(deferred.blocked)return block(deferred.blocked);
+              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+              await emit('task-deferred',{taskId:task.id,reason:deferred.entry.reason,stash:deferred.entry.stash?.message??null});
+              return{status:'deferred'};
+            }
+            await new Promise(resolve=>setTimeout(resolve,pollMs));
+            continue;
+          }
           const boundaryControl=await readControl();
           // Defer (Supervisor, when allowed): only between steps, with no worker or model call running.
           if(r.deferGeneration===undefined)r.deferGeneration=Number(boundaryControl.deferGeneration??0);

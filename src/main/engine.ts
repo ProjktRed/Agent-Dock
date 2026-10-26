@@ -10,7 +10,8 @@ import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
 import { gitInfo, run } from "./lib/git";
 import { readPlan } from "./lib/plan";
-import { buildStatus, parallelRound, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
+import { buildStatus, parallelRound, pendingTaskApproval, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
+import { decideActionRequest, readActionRequests } from "./lib/action-requests";
 import { readActivity } from "./lib/usage";
 import { buildTaskBoard, writeTaskBoard } from "./lib/task-board";
 
@@ -263,6 +264,20 @@ export class EngineManager {
     });
   }
 
+  /** Approve each task: your answer for the task waiting before Implementation; false when it is not the one waiting. */
+  async decideTask(project: Project, taskId: string, decision: "approve" | "reject", source = "app"): Promise<boolean> {
+    if (!(await this.refreshAlive(project))) return false;
+    const events = await readActivity(project.stateDir, 200).catch(() => []);
+    if (pendingTaskApproval(events, true)?.taskId !== taskId) return false;
+    await (await this.state(project)).setControl(decision === "approve" ? "approve-task" : "reject-task", { source, reason: taskId });
+    return true;
+  }
+
+  /** Ask instead of refuse: answers one waiting agent action (first answer wins). */
+  decideAction(project: Project, id: string, decision: "allow" | "deny", by: string): Promise<boolean> {
+    return decideActionRequest(project.stateDir, id, decision, by);
+  }
+
   /** expect: the newest entry the app recorded earlier (kept outside the state folder); the log must still contain it unchanged. */
   async verifyActionLog(project: Project, expect: { seq: number; head: string } | null = null): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; lastSeq?: number; brokenAt?: number; reason?: string; signed?: number; unsigned?: number }> {
     return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir, { expect });
@@ -380,7 +395,8 @@ export class EngineManager {
     }
     const board = await buildTaskBoard(project.stateDir, plan, live, Boolean(record)).catch(() => undefined);
     const parallel = await this.parallelRound(project, Boolean(record)).catch(() => null);
-    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}) };
+    const actionRequests = record ? await readActionRequests(project.stateDir).catch(() => []) : [];
+    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}), taskApproval: pendingTaskApproval(events, Boolean(record)), actionRequests };
   }
 
   /** A parallel round in progress: each task's live state from its engine's folder (<state>/parallel/<task>/live.json). */

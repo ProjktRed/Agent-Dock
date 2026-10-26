@@ -87,6 +87,62 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
   );
 }
 
+/** Approve each task (Settings › Execution & safety): the new task waits here before Implementation starts. */
+function TaskApprovalPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
+  const { toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const t = s.taskApproval;
+  if (!t) return null;
+  const decide = (decision: "approve" | "reject") => {
+    setBusy(true);
+    void window.api.decideTask(projectId, t.taskId, decision)
+      .then(() => toast("success", decision === "approve" ? `Task ${t.taskId} approved: Implementation starts.` : `Task ${t.taskId} set aside: Assessment chooses again.`), (error) => toast("error", (error as Error).message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <section className="banner attnb fade-in" role="alert" style={{ padding: 18 }}>
+      <Icon name="check" className="attn" />
+      <div className="grow stack" style={{ gap: 10 }}>
+        <div style={{ fontWeight: 600, color: "var(--t)" }}>Approve the next task? <span className="mono sub">{t.taskId}</span></div>
+        <div style={{ fontWeight: 600 }}>{t.name}</div>
+        {t.objective && <div className="mono log" style={{ maxHeight: 160 }}>{t.objective}</div>}
+        <div className="sub">Files it may change: <span className="mono">{t.allowedPaths.join(", ") || "none listed"}</span></div>
+        <div className="sub">Check: <span className="mono">{t.qaCommand || "none"}</span></div>
+        <div className="row wrap" style={{ gap: 10 }}>
+          <button className="btn primary sm" disabled={busy} onClick={() => decide("approve")}>Approve</button>
+          <button className="btn sm" disabled={busy} title="Nothing was changed yet; the task is listed as deferred and Assessment chooses another" onClick={() => decide("reject")}>Set aside</button>
+          <span className="sub">Nothing runs until you answer. Also on Telegram when remote approvals are on.</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Ask instead of refuse: actions waiting in the native dialog. Refuse here; allow only in the dialog (or on Telegram). */
+function ActionRequestsPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
+  const { toast } = useApp();
+  const list = s.actionRequests ?? [];
+  if (!list.length) return null;
+  return (
+    <section className="banner warnb fade-in" role="alert" style={{ padding: 18 }}>
+      <Icon name="lock" className="attn" />
+      <div className="grow stack" style={{ gap: 10 }}>
+        <div style={{ fontWeight: 600, color: "var(--t)" }}>{plural(list.length, "agent action")} waiting for your answer</div>
+        {list.map((r) => (
+          <div key={r.id} className="well pad stack" style={{ gap: 6 }}>
+            <div className="sub">{r.cli} · {r.tool ?? "tool"} · refused at {clock(r.expiresAt)} without an answer</div>
+            <div className="mono log" style={{ maxHeight: 100 }}>{r.text}</div>
+            <div className="row wrap" style={{ gap: 10 }}>
+              <button className="btn sm" onClick={() => void window.api.refuseAction(projectId, r.id).then((done) => toast(done ? "success" : "info", done ? "Refused." : "That action was already answered or expired."), (error) => toast("error", (error as Error).message))}>Refuse</button>
+              <span className="sub">To allow it, use the Agent Dock dialog (or Telegram): allowing is never a click in this window.</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Supervisor-proposed plan edits: nothing changes until you approve; approved ones are committed between tasks. */
 function PlanProposals({ projectId, refreshKey }: { projectId: string; refreshKey: string }) {
   const { toast } = useApp();
@@ -275,6 +331,8 @@ export function ProgressTab() {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
+      <TaskApprovalPanel s={s} projectId={activeProject.id} />
+      <ActionRequestsPanel s={s} projectId={activeProject.id} />
       <AttentionPanel s={s} projectId={activeProject.id} />
       <PlanProposals projectId={activeProject.id} refreshKey={`${s.events.length}:${s.events.at(-1)?.timestamp ?? ""}`} />
 

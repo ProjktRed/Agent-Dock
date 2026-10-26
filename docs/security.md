@@ -67,6 +67,23 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with
   it before it loads or starts the engine, and refuses changed, missing or added files. A file the
   watch cannot read or put back counts as changed.
+- **Ask instead of refuse** (Settings › Execution & safety › Safety level, "When the guard cannot verify an
+  action"; Standard: ask, wait 10 minutes). A Codex or Claude Code tool call that the guard refuses only because
+  it cannot prove it safe (an unknown tool, a shell command it cannot read) is put to you instead of refused. The
+  question appears as an Agent Dock dialog that shows the exact command, and as Telegram buttons when remote
+  approvals are on; email can only refuse. The hook waits, and with no answer before the time limit the call is
+  refused as before. Allowing is never a click in the app window: only the native dialog or a signed Telegram
+  button counts, and the first answer wins. Anything that names a protected path or runs in one, and any edit,
+  is refused outright and never asked. The request lives in the project's state folder, which agents cannot
+  read or write, under a random id they never see. An allowed call runs once, as you (inside the sandbox for
+  agents' commands when that is on). Unattended runs ask only when Telegram approvals are set up. Cline and
+  OpenCode keep refusing (their guard runs inside the CLI and cannot wait).
+- **Approve each task** (same place; on in Strict). Each task Assessment chooses waits for your Approve or Set
+  aside, on the Overview page or on Telegram, before Implementation starts. Set aside defers the untouched
+  task and Assessment chooses again. It runs one task at a time and is off in unattended mode.
+- **Safety level** (Strict, Standard, Trusted) sets the tool guard, trusted checks, ask instead of refuse,
+  approve each task and the two sandbox settings together. A level that weakens something asks for the same
+  native confirmation as the toggle itself, and a sandbox turns on only after its setup and self-test.
 - These guards do not defend against a compromised CLI, concurrent filesystem races, or a process
   already running as your user. CLI startup configuration/automatic context loading is also outside
   tool-hook mediation.

@@ -1,4 +1,4 @@
-import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState } from "@shared/types";
+import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState, TaskApprovalRequest } from "@shared/types";
 
 /** Shape of the engine's live.json (engine/src/dashboard-state.mjs). Only fields the app reads. */
 export interface EngineLive {
@@ -204,4 +204,17 @@ export function interruptedWork(status: Pick<ProjectStatus, "processAlive" | "ru
  */
 export function skipPoll(input: { active: boolean; alive: boolean; last: Pick<ProjectStatus, "processAlive"> | undefined }): boolean {
   return !input.active && !input.alive && input.last !== undefined && !input.last.processAlive;
+}
+
+/** Approve each task: the newest request still unanswered (no approval, set-aside or stop after it), while the engine runs. */
+export function pendingTaskApproval(events: EngineEvent[], processAlive: boolean): TaskApprovalRequest | null {
+  if (!processAlive) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as EngineEvent & Record<string, unknown>;
+    if (["task-approved", "task-deferred", "stopped", "blocked", "loop-complete"].includes(e.type)) return null;
+    if (e.type === "task-approval-requested" && typeof e.taskId === "string") {
+      return { taskId: e.taskId, name: String(e.name ?? e.taskId), objective: String(e.objective ?? ""), allowedPaths: Array.isArray(e.allowedPaths) ? e.allowedPaths.map(String) : [], qaCommand: String(e.qaCommand ?? ""), requestedAt: e.timestamp };
+    }
+  }
+  return null;
 }

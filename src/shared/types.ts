@@ -189,6 +189,8 @@ export interface WorkflowSettings {
   stopAfterCurrentTask: boolean;
   /** Unattended mode: guards locked on, automatic continuation, and run-wide limits the engine enforces. */
   unattended: boolean;
+  /** Each new task waits for your Approve (or Set aside) before Implementation starts; runs one task at a time. Off when unattended. */
+  approveTasks?: boolean;
   /** 0 = no limit, except corrections, which always need a limit when unattended. Token budgets are in millions;
    *  spend budgets in USD count what the CLIs report, plus estimates from `prices` for CLIs that report none (Codex). */
   unattendedLimits: {
@@ -295,6 +297,12 @@ export interface Settings {
     sandboxChecks?: boolean;
     /** Experimental: Codex's and Claude Code's own shell commands run sandboxed. Set like sandboxChecks. */
     sandboxAgents?: boolean;
+    /**
+     * Ask instead of refuse: minutes a Codex or Claude Code action the guard cannot verify waits for your answer
+     * (native dialog, Telegram) before it is refused; 0 refuses at once. Unattended runs ask only when Telegram
+     * approvals are set up.
+     */
+    askMinutes?: number;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
@@ -619,6 +627,10 @@ export interface ProjectStatus {
   board?: TaskBoard;
   /** The parallel round in progress (engine --parallel): each task with its live stage. Absent outside a round. */
   parallel?: ParallelRound;
+  /** Approve each task: the task waiting for your answer before Implementation starts. */
+  taskApproval?: TaskApprovalRequest | null;
+  /** Ask instead of refuse: agent actions waiting for your answer. */
+  actionRequests?: ActionRequest[];
   updatedAt: string | null;
 }
 
@@ -782,4 +794,27 @@ export interface SandboxResult {
   cancelled?: boolean;
   problem?: string | null;
   results?: { name: string; ok: boolean; detail: string }[];
+}
+
+/** A new task waiting for Approve / Set aside (engine event task-approval-requested). */
+export interface TaskApprovalRequest {
+  taskId: string;
+  name: string;
+  objective: string;
+  allowedPaths: string[];
+  qaCommand: string;
+  requestedAt: string;
+}
+
+/** A Codex or Claude Code action the guard could not verify, waiting for your answer (engine guard/ask.mjs). */
+export interface ActionRequest {
+  id: string;
+  cli: string;
+  tool: string | null;
+  text: string;
+  reason: string;
+  cwd: string;
+  taskId: string | null;
+  createdAt: string;
+  expiresAt: string;
 }

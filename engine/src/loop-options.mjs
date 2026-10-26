@@ -123,6 +123,10 @@ export function parseLoopOptions(argv) {
     // Settings › Experimental: project checks run in the sandbox (sandbox.mjs).
     sandboxChecks: booleanOption(options["sandbox-checks"], "sandbox-checks", false),
     sandboxAgents: booleanOption(options["sandbox-agents"], "sandbox-agents", false),
+    // Ask instead of refuse (guard/ask.mjs): minutes to wait for your answer; 0 refuses at once.
+    askMinutes: options["ask-minutes"] === undefined ? 0 : Math.min(60, Math.max(0, Number(options["ask-minutes"]) || 0)),
+    // Approve each task before Implementation starts.
+    approveTasks: booleanOption(options["approve-tasks"], "approve-tasks", false),
     roleOverrides: parseRoleOverrides(options),
     roleBackups: parseRoleBackups(options),
     clineThinking: clineThinking(options["cline-thinking"]),

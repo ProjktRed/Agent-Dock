@@ -98,7 +98,7 @@ function safeRead(policy,file,cwd) {
   return true;
 }
 
-function pathsIn(input,out=[]) {
+export function pathsIn(input,out=[]) {
   if(!input||typeof input!=='object')return out;
   for(const [key,value] of Object.entries(input)) {
     if(/^(?:path|file_path|filePath|filepath|directory|dir|cwd|workdir|target_path)$/.test(key)&&typeof value==='string')out.push(value);

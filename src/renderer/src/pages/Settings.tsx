@@ -3,6 +3,7 @@ import { takeSettingsSection, type SettingsSection } from "../lib/nav";
 import { openDoc } from "../lib/open-doc";
 import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo, UiStyle } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
+import { currentSafetyPreset, SAFETY_PRESETS, type SafetyPresetName } from "@shared/safety-presets";
 import { STYLE_ACCENTS, styleAccent, withStyleAccent } from "@shared/appearance";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
@@ -517,6 +518,45 @@ function Context() {
   );
 }
 
+/** One choice for the safety toggles (shared/safety-presets.ts), plus the two controls they add: ask instead of refuse, approve each task. */
+function SafetyLevelCard() {
+  const { snap, toast, refresh } = useApp();
+  const patch = useSettingsPatch();
+  const [busy, setBusy] = useState(false);
+  const level = currentSafetyPreset(snap.settings);
+  const ask = Math.max(0, Number(snap.settings.safety.askMinutes ?? 0) || 0);
+  const apply = async (name: SafetyPresetName) => {
+    setBusy(true);
+    try {
+      const r = await window.api.applySafetyPreset(name);
+      if (r.ok) toast("success", `Safety level: ${SAFETY_PRESETS[name].label}. Runs use it from their next start.`);
+      else toast("info", r.problems.join(" "));
+      await refresh();
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Safety level</h2>
+      <div className="row wrap" style={{ gap: 8 }} role="radiogroup" aria-label="Safety level">
+        {(Object.keys(SAFETY_PRESETS) as SafetyPresetName[]).map((name) => (
+          <button key={name} role="radio" aria-checked={level === name} className={`btn sm ${level === name ? "primary" : ""}`} disabled={busy} onClick={() => void apply(name)}>{SAFETY_PRESETS[name].label}</button>
+        ))}
+        <span className="sub">{level ? SAFETY_PRESETS[level].summary : "Custom: the toggles below differ from every level."}</span>
+      </div>
+      <SetRow title="When the guard cannot verify an action" desc="Codex and Claude Code only. An unknown tool or a shell command the guard cannot read is put to you (an Agent Dock dialog, and Telegram when remote approvals are on) instead of being refused; with no answer in time it is refused. Anything naming a protected path, and any edit outside the task's files, is always refused. Unattended runs ask only when Telegram approvals are set up." support="engine">
+        <select className="input" style={{ width: 200 }} value={String(ask)} aria-label="When the guard cannot verify an action" onChange={(e) => patch("safety", { askMinutes: Number(e.target.value) })}>
+          <option value="0">Refuse at once</option>
+          {[2, 5, 10, 30].map((m) => <option key={m} value={String(m)}>Ask me, wait {m} min</option>)}
+        </select>
+      </SetRow>
+      <SetRow title="Approve each task" desc="Each task Assessment chooses waits for your Approve (or Set aside) before Implementation starts, on the Overview page or on Telegram. Runs one task at a time; not in unattended mode." support="engine">
+        <Toggle on={snap.settings.workflow.approveTasks === true} onChange={(v) => patch("workflow", { approveTasks: v })} label="Approve each task" />
+      </SetRow>
+    </section>
+  );
+}
+
 function Safety() {
   const { snap } = useApp();
   const w = snap.settings.workflow;
@@ -526,6 +566,7 @@ function Safety() {
   const checksTrusted = snap.settings.safety.checksTrusted === true;
   return (
     <div className="stack" style={{ gap: 20 }}>
+      <SafetyLevelCard />
       {!w.toolGuard && (
         <div className="banner fade-in" role="status"><Icon name="lock" className="info" /><div className="grow"><div style={{ fontWeight: 600 }}>Protected-path checks stay on</div><div className="sub">Turning off the optional tool guard does not allow protected paths, interpreters or arbitrary shell scripts. Cline and OpenCode still use restricted tools to enforce this boundary. Loop-limit settings are independent.</div></div></div>
       )}

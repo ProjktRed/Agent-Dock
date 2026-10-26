@@ -80,6 +80,9 @@ export function describeEvent(e: EngineEvent): string {
     case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
     case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
+    case "task-approval-requested": return `Task ${e.taskId ?? ""} is waiting for your approval before Implementation starts.`;
+    case "task-approved": return `Task ${e.taskId ?? ""} approved${String(e.source ?? "").startsWith("remote:") ? " remotely" : ""}: Implementation starts.`;
+    case "action-decision": return `You ${e.decision === "allow" ? "allowed" : "refused"} an action ${e.cli ?? "the agent"} asked about.`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;
     case "parallel-round": return `Parallel round ${e.round ?? ""}: ${Array.isArray(e.tasks) ? (e.tasks as { id: string; name: string }[]).map((t) => t.name || t.id).join(", ") : ""}`;
     case "parallel-task-started": return `Task ${e.taskId ?? ""} started in its own worktree (branch ${e.branch ?? ""})`;

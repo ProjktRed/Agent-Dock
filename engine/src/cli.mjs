@@ -16,6 +16,7 @@ import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs"
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { sandboxProblem, useSandboxedAgents, useSandboxedChecks } from "./sandbox.mjs";
+import { useActionAsk } from "./guard/ask.mjs";
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
@@ -45,6 +46,7 @@ const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
 useSandboxedChecks(options.sandboxChecks);
 useSandboxedAgents(options.sandboxAgents);
+useActionAsk({ stateDir: options["ask-state-dir"] ?? stateDir, minutes: options.askMinutes });
 if (options.sandboxChecks || options.sandboxAgents) {
   // Fail closed: a run set to sandbox checks or agents' commands never starts with them running as you.
   const problem = await sandboxProblem();
@@ -198,6 +200,7 @@ try {
     workspace, stateDir, objective: options.objective, initialTask, codex, worker, maxAttempts, pollMs,
     solReassessmentEnabled: options.solReassessment,
     manualResolver: options['resolve-block']==='true',
+    approveTasks: options.approveTasks,
     betweenTasks, stopAfterTask: singleTask,
     onTask: async (task) => { await state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }); await superviseTask(task).catch(() => {}); await saveTaskDefinition(stateDir, task); },
     onEvent: loopEvent,
