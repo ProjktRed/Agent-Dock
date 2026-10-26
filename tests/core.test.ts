@@ -559,14 +559,12 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(fixer.roles[0].fix).toBe(true);
   });
 
-  it("passes loop limits only with guardrails off, and only those that differ from the engine defaults", () => {
+  it("never passes loop limits: the engine's own apply (settings saved by 0.38 lose them)", () => {
     const s = settings();
-    s.tuning = { ...s.tuning, elevationAfter: 5, maxCorrections: 8, taskMaxFiles: 1 };
-    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args).not.toContain("--elevation-after");
     s.advanced.engineGuardrails = false;
+    (s as unknown as { tuning: Record<string, unknown> }).tuning = { ...s.tuning, elevationAfter: 5, maxCorrections: 8, taskMaxFiles: 4 };
     const args = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
-    expect([flag(args, "--elevation-after"), flag(args, "--max-corrections")]).toEqual(["5", "8"]);
-    expect(args).not.toContain("--task-max-files");
+    for (const f of ["--elevation-after", "--max-corrections", "--resolver-max-strategies", "--task-max-files"]) expect(args).not.toContain(f);
   });
 
   it("passes per-run CLI settings for the CLIs a run uses, checked", () => {
@@ -616,7 +614,6 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(eco).not.toContain("--task-mode");
     s.workflow.taskMode = "standard";
     s.advanced.engineGuardrails = false;
-    s.tuning = { ...s.tuning, taskMaxFiles: 3 };
     const standard = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
     expect(flag(standard, "--task-mode")).toBe("standard");
     expect(standard).not.toContain("--task-max-files");

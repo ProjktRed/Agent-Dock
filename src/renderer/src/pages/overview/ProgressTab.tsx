@@ -326,7 +326,6 @@ export function ProgressTab() {
   const implCli = snap.clis.find((c) => c.id === impl?.cliId);
   const providerName = impl?.providerCliId ? snap.clis.find((c) => c.id === impl.providerCliId)?.name : impl?.provider === "ollama" ? "Ollama" : impl?.provider === "openai" ? "OpenAI-compatible" : "llama.cpp";
   const implLabel = !impl ? "No agent assigned" : implCli?.kind === "cline" || implCli?.kind === "opencode" ? `${implCli.name} · ${providerName ?? "provider"}${impl.model ? ` · ${impl.model}` : ""}` : `${implCli?.name ?? "CLI"} · ${impl.model || "CLI default"}`;
-  const elevationAfter = snap.settings.advanced.engineGuardrails === false ? snap.settings.tuning.elevationAfter : 3;
   const [log, setLog] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunReport[]>([]);
   const [records, setRecords] = useState<EstimateRecord[]>([]);
@@ -488,7 +487,7 @@ export function ProgressTab() {
         </div>
         <div>
           <div className="loop" aria-hidden="true" />
-          <div className="loop-l">A failed QA returns a bounded correction to Implementation; after {elevationAfter} correction{elevationAfter === 1 ? "" : "s"} without success, Elevation reassesses the strategy</div>
+          <div className="loop-l">A failed QA returns a bounded correction to Implementation; after 3 corrections without success, Elevation reassesses the strategy</div>
         </div>
         <div className="well row wrap" style={{ padding: "12px 14px", gap: 20, fontSize: 12.5, borderRadius: "var(--radius-well-sm, 12px)" }}>
           <span><span className="sub">Stage</span> {round ? parallelRoundSummary(round) : engineStageLabel(s.stage)}</span>

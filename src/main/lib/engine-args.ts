@@ -1,4 +1,4 @@
-import type { Agent, CliConnection, EngineTuning, Project, Role, Settings, WorkflowRole, WorkflowSettings } from "@shared/types";
+import type { Agent, CliConnection, Project, Role, Settings, WorkflowRole, WorkflowSettings } from "@shared/types";
 import path from "node:path";
 import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
@@ -56,16 +56,6 @@ function opencodeConsoleBaseUrl(location: string): string | null {
     return null;
   }
 }
-
-/** Engine flags for loop limits that differ from the engine defaults (passed only with guardrails off). */
-export const TUNING_FLAGS: [keyof EngineTuning, string][] = [
-  ["elevationAfter", "--elevation-after"],
-  ["resolverMaxStrategies", "--resolver-max-strategies"],
-  ["maxCorrections", "--max-corrections"],
-  ["taskMaxFiles", "--task-max-files"],
-  ["taskMaxNewLines", "--task-max-new-lines"],
-  ["taskMaxReadFiles", "--task-max-read-files"],
-];
 
 /** The agent running a workflow role: an enabled agent with role "custom" whose customRole is the role's id (or its name). */
 export function agentForWorkflowRole(role: WorkflowRole, agents: Agent[]): Agent | null {
@@ -329,7 +319,7 @@ ${project.objective}` : project.objective;
       if (at < parallel) warnings.push(`Ollama answers ${at} request${at === 1 ? "" : "s"} at once as set on its connection (CLIs › Ollama, OLLAMA_NUM_PARALLEL), so at most ${at} task${at === 1 ? " runs" : "s run"} at once.`);
     }
   }
-  // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
+  // Task size: eco and standard use the engine's own sizing; max only the limits you set.
   const taskMode = taskModeOf(workflow);
   if (taskMode !== "eco") args.push("--task-mode", taskMode);
   if (taskMode !== "eco" && workflow.stepDown === false) args.push("--step-down", "false");
@@ -341,14 +331,6 @@ ${project.objective}` : project.objective;
     // Max limits' timeout replaces the Implementation agent's own.
     const at = args.indexOf("--timeout-seconds");
     if (max.timeoutMinutes && at >= 0) args[at + 1] = String(max.timeoutMinutes * 60);
-  }
-  // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
-  if (!guarded) {
-    for (const [key, flag] of TUNING_FLAGS) {
-      if (taskMode !== "eco" && key.startsWith("taskMax")) continue;
-      const value = settings.tuning?.[key];
-      if (typeof value === "number" && value !== DEFAULT_SETTINGS.tuning[key]) args.push(flag, String(value));
-    }
   }
   // Custom executable locations for every orchestrator CLI in use.
   for (const [kind, conn] of usedConnections) {

@@ -98,7 +98,7 @@ function useSettingsPatch() {
 }
 
 /**
- * A loop limit the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
+ * A default the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
  * Off: editable; saved on blur. Null-able values (engine defaults) clear to the default when emptied.
  */
 function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof EngineTuning; min: number; max: number; unit?: string; zeroLabel?: string; fallback?: number; label: string }) {
@@ -421,7 +421,6 @@ function Workflow() {
       <TaskModeCard />
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
-        <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
         <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. On a local model server, at most as many tasks as it answers at once (llama.cpp slots, or the Ollama connection's requests at once). In Unattended mode the run limits count all tasks together." support="engine">
           <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
@@ -429,9 +428,6 @@ function Workflow() {
           </select>
         </SetRow>
         <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
-        <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
-        <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>
-        <SetRow title="Resolver strategies" desc="Blocked cases: the read-only Resolver runs once all workers are idle. Distinct recovery strategies per task before human review." support="engine"><Tunable k="resolverMaxStrategies" min={1} max={20} unit="per task" label="Resolver strategies per task" /></SetRow>
         <SetRow title="After the app restarts" desc="When a project was mid-task and its engine is no longer running" support="app">
           <select className="sel" value={w.resumeAfterRestart} onChange={(e) => patch("workflow", { resumeAfterRestart: e.target.value as typeof w.resumeAfterRestart })} aria-label="Resume behaviour">
             <option value="ask">Show a notice</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
@@ -478,9 +474,6 @@ function Context() {
           <span className="tnum" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Files per task" desc="Eco mode: Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
-        <SetRow title="New file size" desc="Eco mode: Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
-        <SetRow title="Files to read" desc="Eco mode: Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>

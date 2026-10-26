@@ -708,15 +708,11 @@ export interface WorkflowRole {
   warnings: string[];
 }
 
-/** Loop limits that are fixed with engine guardrails on. Defaults equal the engine's built-in values. */
+/**
+ * Defaults for new Implementation agents on Cline, fixed with engine guardrails on. Loop limits and Eco task sizing
+ * are the engine's own (task size presets choose between them); the engine's flags remain for command-line use.
+ */
 export interface EngineTuning {
-  elevationAfter: number;
-  resolverMaxStrategies: number;
-  /** 0 = no limit. */
-  maxCorrections: number;
-  taskMaxFiles: number;
-  taskMaxNewLines: number;
-  taskMaxReadFiles: number;
   /** Used for new Implementation agents; null = the engine default. */
   defaultContextTokens: number | null;
   defaultMaxOutputTokens: number | null;

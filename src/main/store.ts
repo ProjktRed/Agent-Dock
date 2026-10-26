@@ -27,7 +27,8 @@ function mergeSettings(saved: Partial<Settings> | null): Settings {
     skills: { ...DEFAULT_SETTINGS.skills, ...(s.skills ?? {}) },
     // The source repository was briefly named Agent-Dock-Dev; a source saved then points back at its real name.
     updates: { ...DEFAULT_SETTINGS.updates, ...(s.updates ?? {}), ...(FORMER_SOURCE.test(s.updates?.source ?? "") ? { source: SOURCE_URL } : {}) },
-    tuning: { ...DEFAULT_SETTINGS.tuning, ...(s.tuning ?? {}) },
+    // Loop limits saved by 0.38 and earlier are dropped: the engine's own values apply.
+    tuning: { defaultContextTokens: s.tuning?.defaultContextTokens ?? null, defaultMaxOutputTokens: s.tuning?.defaultMaxOutputTokens ?? null },
   };
 }
 

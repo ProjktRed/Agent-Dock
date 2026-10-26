@@ -108,11 +108,11 @@ finished; Overview's estimate compares the sizes this project has run in.
 
 ## Loop limits
 
-Editable with guardrails off; the defaults are the engine's built-in values: automatic Elevation
-after 3 attempted corrections; no correction limit (with one, the loop stops for you after that many
-corrections on a task, and Resume allows another round); 3 Resolver strategies per task;
-Eco's task sizing for the worker (1 file per task, new files under about 200 lines, at most 3
-files to read); default context and output for new Cline agents.
+Fixed by the engine: automatic Elevation after 3 attempted corrections; no correction limit;
+3 Resolver strategies per task; Eco's task sizing for the worker (1 file per task, new files under
+about 200 lines, at most 3 files to read). The task size (Eco, Standard, Max) is the setting to change;
+Max takes its own limits. The engine's flags remain for command-line runs. With guardrails off you can
+set the default context and output for new Cline agents.
 
 ## Implementation on any CLI
 
