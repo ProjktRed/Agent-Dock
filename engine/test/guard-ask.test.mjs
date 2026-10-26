@@ -84,3 +84,32 @@ test("the request carries what you need to decide, never more than 2000 characte
   assert.equal(hookTimeoutSeconds({ timeoutMs: 600_000 }), 630);
   assert.equal(hookTimeoutSeconds(null), 30);
 });
+
+test("Allow for this run: the same action is allowed without asking until the run ends; anything different still asks", async () => {
+  const { dir, policyPath, logPath, workspace, policy } = setup();
+  const run = async (command) => {
+    const result = await runHook(codex, { policyPath, logPath, input: bash(command, workspace) });
+    return { exitCode: result.exitCode, asked: JSON.parse(readFileSync(logPath, "utf8").trim().split("\n").at(-1)).asked };
+  };
+  try {
+    // The app's "Allow for this run" button writes the decision with remember: true.
+    const remember = setInterval(() => {
+      for (const f of (() => { try { return readdirSync(dir); } catch { return []; } })().filter((x) => x.endsWith(".request.json"))) {
+        const r = JSON.parse(readFileSync(path.join(dir, f), "utf8"));
+        try { writeFileSync(path.join(dir, `${r.id}.decision.json`), JSON.stringify({ id: r.id, decision: "allow", remember: true }), { flag: "wx" }); } catch { /* answered */ }
+      }
+    }, 20);
+    try { assert.deepEqual(await run("rg --files"), { exitCode: 0, asked: "allow-run" }); } finally { clearInterval(remember); }
+    assert.deepEqual(await run("rg --files"), { exitCode: 0, asked: "remembered" });
+    assert.deepEqual(await run("git ls-files | head -5"), { exitCode: 2, asked: "timeout" }, "a different command asks again");
+    const { useActionAsk, startAskRun } = await import("../src/guard/ask.mjs");
+    useActionAsk({ stateDir: path.dirname(dir), minutes: 1 });
+    await startAskRun();
+    useActionAsk({});
+    assert.deepEqual(await run("rg --files"), { exitCode: 2, asked: "timeout" }, "a new run forgets it");
+    // A remembered entry never covers a protected path: those are refused before the list is read.
+    mkdirSync(path.join(dir, "allowed-for-run"), { recursive: true });
+    assert.match(JSON.stringify(await runHook(codex, { policyPath, logPath, input: bash("cat .env", workspace) })), /Protected-path policy refused/);
+    assert.equal(policy.ask.dir, dir);
+  } finally { /* nothing left running */ }
+});

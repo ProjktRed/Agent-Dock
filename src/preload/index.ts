@@ -48,7 +48,7 @@ const api: DesktopApi = {
   setSandboxAgents: invoke("sandbox:setAgents") as DesktopApi["setSandboxAgents"],
   decideTask: invoke("task:decide") as DesktopApi["decideTask"],
   applySafetyPreset: invoke("safety:preset") as DesktopApi["applySafetyPreset"],
-  refuseAction: invoke("action:refuse") as DesktopApi["refuseAction"],
+  decideAction: invoke("action:decide") as DesktopApi["decideAction"],
   planProposals: invoke("plan:proposals") as DesktopApi["planProposals"],
   runs: invoke("project:runs") as DesktopApi["runs"],
   rerunTask: invoke("project:rerunTask") as DesktopApi["rerunTask"],

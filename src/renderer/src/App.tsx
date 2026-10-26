@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { useApp } from "./store";
 import { Sidebar, StatusBar, TitleBar, Toasts } from "./components/Shell";
 import { OverviewPage } from "./pages/overview/Overview";
+import { ActionPrompt } from "./components/ActionPrompt";
 
 // Overview opens first; the other pages load when first visited.
 const TaskBoardPage = lazy(() => import("./pages/TaskBoard").then((m) => ({ default: m.TaskBoardPage })));
@@ -71,6 +72,7 @@ export function App() {
         </main>
       </div>
       <StatusBar />
+      <ActionPrompt />
       <Toasts />
     </div>
   );

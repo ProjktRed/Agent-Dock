@@ -16,7 +16,7 @@ import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs"
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { sandboxProblem, useSandboxedAgents, useSandboxedChecks } from "./sandbox.mjs";
-import { useActionAsk } from "./guard/ask.mjs";
+import { startAskRun, useActionAsk } from "./guard/ask.mjs";
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
@@ -47,6 +47,8 @@ configureProtection({workspace,stateDir,paths:options['protected-paths']});
 useSandboxedChecks(options.sandboxChecks);
 useSandboxedAgents(options.sandboxAgents);
 useActionAsk({ stateDir: options["ask-state-dir"] ?? stateDir, minutes: options.askMinutes });
+// "Allow for this run" lasts one run: the top engine forgets the last run's (a parallel child shares its parent's).
+if (!options["ask-state-dir"]) await startAskRun();
 if (options.sandboxChecks || options.sandboxAgents) {
   // Fail closed: a run set to sandbox checks or agents' commands never starts with them running as you.
   const problem = await sandboxProblem();

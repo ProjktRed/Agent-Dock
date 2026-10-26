@@ -79,4 +79,14 @@ describe("ask instead of refuse: requests", () => {
     expect(await decideActionRequest(state, "../../x", "allow", "app")).toBe(false);
     expect(await readActionRequests(state)).toEqual([]);
   });
+  it("Allow for this run is an allow the engine remembers; a refusal never carries it", async () => {
+    const state = mkdtempSync(join(tmpdir(), "dock-ask-")), dir = join(state, "approvals");
+    mkdirSync(dir);
+    const a = "d".repeat(32), b = "e".repeat(32);
+    request(dir, a); request(dir, b);
+    expect(await decideActionRequest(state, a, "allow", "app", true)).toBe(true);
+    expect(await decideActionRequest(state, b, "deny", "app", true)).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, `${a}.decision.json`), "utf8"))).toMatchObject({ decision: "allow", remember: true });
+    expect(JSON.parse(readFileSync(join(dir, `${b}.decision.json`), "utf8")).remember).toBeUndefined();
+  });
 });

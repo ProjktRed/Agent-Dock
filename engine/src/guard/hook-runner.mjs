@@ -1,7 +1,7 @@
 import {readFile,appendFile} from 'node:fs/promises';
 import {decide} from './decide.mjs';
 import {OVERSIZED_HOOK_INPUT} from './reasons.mjs';
-import {askable,askUser} from './ask.mjs';
+import {askable,askUser,askAllowed} from './ask.mjs';
 
 /** Decode one stdin event and encode the adapter's decision without owning process exit. */
 export async function runHook(adapter,{policyPath,logPath,input,handleEvent}={}){
@@ -29,7 +29,7 @@ export async function runHook(adapter,{policyPath,logPath,input,handleEvent}={})
   // Unverified (not certainly protected) and Settings say ask: the app puts it to you; no answer refuses it.
   if(askable(policy,action,decision,adapter)){
    asked=await askUser(policy,action,decision.reason,adapter);
-   decision=asked==='allow'?{effect:'allow'}:{effect:'stop',reason:`${decision.reason} (${asked==='deny'?'you refused it':'no answer in time'})`};
+   decision=askAllowed(asked)?{effect:'allow'}:{effect:'stop',reason:`${decision.reason} (${asked==='deny'?'you refused it':'no answer in time'})`};
   }
  }catch(error){decision={effect:'stop',reason:adapter.reasons.hookError(error)};}
  try{await appendFile(logPath,JSON.stringify({at:new Date().toISOString(),tool,allowed:decision.effect==='allow',reason:decision.reason??null,...(asked?{asked}:{})})+'\n');}catch{/* Decision logging remains best effort. */}

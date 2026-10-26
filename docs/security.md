@@ -70,13 +70,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Ask instead of refuse** (Settings › Execution & safety › Safety level, "When the guard cannot verify an
   action"; Standard: ask, wait 10 minutes). A Codex or Claude Code tool call that the guard refuses only because
   it cannot prove it safe (an unknown tool, a shell command it cannot read) is put to you instead of refused. The
-  question appears as an Agent Dock dialog that shows the exact command, and as Telegram buttons when remote
-  approvals are on; email can only refuse. The hook waits, and with no answer before the time limit the call is
-  refused as before. Allowing is never a click in the app window: only the native dialog or a signed Telegram
-  button counts, and the first answer wins. Anything that names a protected path or runs in one, and any edit,
-  is refused outright and never asked. The request lives in the project's state folder, which agents cannot
-  read or write, under a random id they never see. An allowed call runs once, as you (inside the sandbox for
-  agents' commands when that is on). Unattended runs ask only when Telegram approvals are set up. Cline and
+  question appears in the Agent Dock window (a prompt over any page, and on the project's Overview) with the
+  exact command, and as Telegram buttons when remote approvals are on; email can only refuse. The hook waits,
+  and with no answer before the time limit the call is refused as before. The first answer wins. Anything that
+  names a protected path or runs in one, and any edit, is refused outright and never asked. The request lives
+  in the project's state folder, which agents cannot read or write, under a random id they never see. "Allow
+  once" runs the call once, as you (inside the sandbox for agents' commands when that is on). "Allow for this
+  run" also lets that exact call (same CLI, tool, folder and text) through without asking until the engine run
+  ends; anything different still asks, and the next run starts with nothing remembered. Unattended runs ask only when Telegram approvals are set up. Cline and
   OpenCode keep refusing (their guard runs inside the CLI and cannot wait).
 - **Approve each task** (same place; on in Strict). Each task Assessment chooses waits for your Approve or Set
   aside, on the Overview page or on Telegram, before Implementation starts. Set aside defers the untouched

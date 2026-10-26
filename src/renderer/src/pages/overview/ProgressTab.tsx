@@ -9,6 +9,7 @@ import { agentForRoleClient } from "../../lib/agents";
 import { PARALLEL_STAGE_LABEL, parallelCycleKeys, parallelRoundSummary, planItemActive } from "../../lib/parallel-round";
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
+import { ActionRequestCard } from "../../components/ActionPrompt";
 
 const CYCLE = [
   { key: "assessment", name: "Assessment", agent: "Plans one bounded task" },
@@ -118,9 +119,8 @@ function TaskApprovalPanel({ s, projectId }: { s: ProjectStatus; projectId: stri
   );
 }
 
-/** Ask instead of refuse: actions waiting in the native dialog. Refuse here; allow only in the dialog (or on Telegram). */
+/** Ask instead of refuse: every action still waiting, also the ones put off with "Later" in the prompt. */
 function ActionRequestsPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
-  const { toast } = useApp();
   const list = s.actionRequests ?? [];
   if (!list.length) return null;
   return (
@@ -128,16 +128,7 @@ function ActionRequestsPanel({ s, projectId }: { s: ProjectStatus; projectId: st
       <Icon name="lock" className="attn" />
       <div className="grow stack" style={{ gap: 10 }}>
         <div style={{ fontWeight: 600, color: "var(--t)" }}>{plural(list.length, "agent action")} waiting for your answer</div>
-        {list.map((r) => (
-          <div key={r.id} className="well pad stack" style={{ gap: 6 }}>
-            <div className="sub">{r.cli} · {r.tool ?? "tool"} · refused at {clock(r.expiresAt)} without an answer</div>
-            <div className="mono log" style={{ maxHeight: 100 }}>{r.text}</div>
-            <div className="row wrap" style={{ gap: 10 }}>
-              <button className="btn sm" onClick={() => void window.api.refuseAction(projectId, r.id).then((done) => toast(done ? "success" : "info", done ? "Refused." : "That action was already answered or expired."), (error) => toast("error", (error as Error).message))}>Refuse</button>
-              <span className="sub">To allow it, use the Agent Dock dialog (or Telegram): allowing is never a click in this window.</span>
-            </div>
-          </div>
-        ))}
+        {list.map((r) => <ActionRequestCard key={r.id} projectId={projectId} request={r} />)}
       </div>
     </section>
   );

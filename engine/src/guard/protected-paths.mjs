@@ -189,6 +189,26 @@ function readCommandSafe(policy,command,words,cwd) {
   return targets.every(file=>safeRead(policy,file,cwd));
 }
 
+// PowerShell reads "a, b" as a list. A file read may name several files that way (each is checked like a
+// single file); a comma inside quotes, or in any other command, is still refused below.
+const LIST_READS=new Set(['get-content','gc','cat','type']);
+function fileList(script) {
+  if(process.platform!=='win32'||!script.includes(',')||script.includes('&')||!LIST_READS.has(script.trim().split(/\s+/)[0].toLowerCase()))return script;
+  let out='',quote=null;
+  for(let i=0;i<script.length;i++) {
+    const c=script[i];
+    if(quote){if(c===quote)quote=null;else if(c===',')return script;out+=c;continue;}
+    if(c==='"'||c==="'"){quote=c;out+=c;continue;}
+    // Every item is a file: "a,-Raw" is a file named -Raw to PowerShell, so an item like an option is refused.
+    if(c===','){out=out.trimEnd();while(script[i+1]===' ')i++;if(/(?:^|\s)-\S*$/.test(out)||script[i+1]==='-'||!script[i+1])return script;out+=' ';continue;}
+    out+=c;
+  }
+  return out;
+}
+// Version and location of an installed tool: prints a line, changes nothing. Found by the shell on PATH, never
+// a file in the project (PowerShell and POSIX shells do not run programs from the current folder by name).
+const VERSION_TOOLS=new Set(['node','rustc','cargo','python','python3','go','dotnet','deno','bun','pnpm','yarn','tsc']);
+
 function commandSafe(policy,script,cwd) {
   script=stripCheckOutputFilter(script);
   if(typeof script==='string'&&/\bgit\s+commit\b/.test(script))script=quotedMessages(script);
@@ -202,6 +222,7 @@ function commandSafe(policy,script,cwd) {
     if(parts.at(-1)==='')parts.pop();
     return parts.length>1&&parts.every(p=>p&&commandSafe(policy,p,cwd));
   }
+  if(typeof script==='string')script=fileList(script);
   // PowerShell also reads an en dash, em dash or horizontal bar as the "-" of a parameter, curly quotes
   // (U+2018-U+201F) as quotes, and a,b as two arguments (a commit message's commas are masked above).
   if(typeof script!=='string'||/[\r\n`$%^<>;|\x00(){}\[\]!*?,\u2013\u2014\u2015\u2018-\u201f]/.test(script))return false;
@@ -213,6 +234,8 @@ function commandSafe(policy,script,cwd) {
   while(token.lastIndex<text.length){const match=token.exec(text);if(!match)return false;parts.push(match[0].trim());}
   const words=parts.map(p=>p.replace(/^(['"])(.*)\1$/,'$2'));
   const command=words.shift()?.toLowerCase();if(!command)return false;
+  if(words.length===1&&words[0]==='--version'&&VERSION_TOOLS.has(command.replace(/\.exe$/,'')))return true;
+  if(['where.exe','get-command','gcm'].includes(command))return words.length===1&&/^[\w.-]{1,64}$/.test(words[0])&&!words[0].startsWith('-');
   // Approved project checks execute trusted project code, not arbitrary model-written shell.
   if(['npm','npm.cmd','npx','npx.cmd'].includes(command)) {
     if(command.startsWith('npm')&&!((words[0]==='run'&&/^[\w:-]+$/.test(words[1]??'')&&!words[1].startsWith('-'))||words[0]==='test'))return false;
@@ -236,7 +259,9 @@ function commandSafe(policy,script,cwd) {
     if(words.some(w=>/^(?:-c|--git-dir|--work-tree|--exec-path|--no-index|--output|--ext-diff|--textconv)/.test(w)))return false;
     if(words.length===1&&words[0]==='--version')return true;
     if(['status','rev-parse','ls-files'].includes(words[0]))return words.every(w=>!w.includes('/')&&!w.includes('\\')&&!w.startsWith('.')||!isProtectedPath(policy,w,cwd));
-    if(words[0]==='diff'&&words.length===2&&['--check','--stat','--numstat','--name-only'].includes(words[1]))return true;
+    // Which files changed (worktree, staged, or against HEAD), never their content.
+    const SUMMARY=['--check','--stat','--numstat','--name-only','--name-status'];
+    if(words[0]==='diff'&&words.slice(1).some(w=>SUMMARY.includes(w))&&words.slice(1).every(w=>SUMMARY.includes(w)||['HEAD','--cached','--staged','--no-color','--no-ext-diff'].includes(w)))return true;
     if(words[0]==='branch'&&words[1]==='--show-current'&&words.length===2)return true;
     // Names of stashed work (a task set aside); never the stashed content.
     if(words[0]==='stash'&&words[1]==='list'&&words.length===2)return true;

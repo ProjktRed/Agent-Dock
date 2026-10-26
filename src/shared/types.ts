@@ -818,3 +818,6 @@ export interface ActionRequest {
   createdAt: string;
   expiresAt: string;
 }
+
+/** Your answer to an ActionRequest: once, this exact action for the rest of the run, or no. */
+export type ActionDecision = "allow" | "allow-run" | "deny";

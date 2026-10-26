@@ -524,7 +524,6 @@ async function startApprovals() {
         result = !done ? "that task is no longer waiting" : action === "approve-task" ? "task approved; Implementation starts" : "task set aside; Assessment chooses again";
       } else if (action === "allow-action" || action === "refuse-action") {
         const done = await engine.decideAction(p, r.target.slice(7), action === "allow-action" ? "allow" : "deny", source);
-        closeActionDialog(r.target.slice(7));
         result = !done ? "that action was already answered or expired" : action === "allow-action" ? "allowed once" : "refused";
       } else {
         await runControl(r.projectId, action, source);
@@ -540,38 +539,19 @@ async function startApprovals() {
 // ---------- ask instead of refuse; approve each task ----------
 
 /**
- * An agent action the guard could not verify (engine guard/ask.mjs) is put to you in a native dialog the window
- * cannot answer, one at a time, and on Telegram. The first answer wins; the dialog closes when Telegram answered
- * or the time ran out (the engine then refuses it).
+ * An agent action the guard could not verify (engine guard/ask.mjs) is put to you in the app window (a prompt
+ * over every page, answered through action:decide) and on Telegram. Here: a notification, the taskbar button
+ * flashes, and Telegram gets its buttons. The first answer wins; without one the engine refuses it.
  */
 const askedActions = new Set<string>();
-const actionDialogs = new Map<string, AbortController>();
-let actionQueue: Promise<void> = Promise.resolve();
-function closeActionDialog(id: string) { actionDialogs.get(id)?.abort(); }
 
 function askAction(p: Project, r: ActionRequest) {
   if (askedActions.has(r.id)) return;
   askedActions.add(r.id);
   const until = new Date(r.expiresAt);
   osNotify(`${r.cli} asks to run something · ${p.name}`, shown(r.text, 160));
+  if (win && !win.isFocused()) win.flashFrame(true);
   void approvals?.request({ projectId: p.id, projectName: p.name, title: `${r.cli} asks to run an action the guard could not verify`, message: `${r.tool ?? "Tool"} in ${r.cwd}\n\n${r.text.slice(0, 1500)}\n\nRefused automatically at ${until.toLocaleTimeString()} without an answer.`, actions: ["allow-action", "refuse-action"], target: `action:${r.id}`, expiresAt: until.getTime() });
-  const controller = new AbortController();
-  actionDialogs.set(r.id, controller);
-  const timer = setTimeout(() => controller.abort(), Math.max(0, until.getTime() - Date.now()));
-  actionQueue = actionQueue.then(async () => {
-    if (controller.signal.aborted) return;
-    const options: Electron.MessageBoxOptions = {
-      type: "warning", buttons: ["Refuse", "Allow once"], defaultId: 0, cancelId: 0, signal: controller.signal,
-      title: `${r.cli} asks to run an action`,
-      message: `${r.cli} wants to run an action Agent Dock's guard could not verify (${p.name}).`,
-      detail: `${r.tool ?? "Tool"} in ${shown(r.cwd, 200)}${r.taskId ? `\nTask ${shown(r.taskId, 80)}` : ""}\n\n${shown(r.text, 1500)}\n\nWhy it was stopped: ${shown(r.reason, 300)}\n\nAllowed, it runs once, as you${store.data.settings.safety.sandboxAgents === true ? " (inside the sandbox for agents' commands)" : ""}. Without an answer by ${until.toLocaleTimeString()} it is refused.`,
-    };
-    const { response } = await (win?.isVisible() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)).catch(() => ({ response: -1 }));
-    if (controller.signal.aborted || response < 0) return;
-    if (await engine.decideAction(p, r.id, response === 1 ? "allow" : "deny", "app")) {
-      await engine.recordEvent(p, { type: "action-decision", id: r.id, decision: response === 1 ? "allow" : "deny", cli: r.cli, source: "app" }).catch(() => undefined);
-    }
-  }).finally(() => { clearTimeout(timer); actionDialogs.delete(r.id); });
 }
 
 /** Approve each task: a notification and Telegram buttons; the answer itself comes from the Overview card or Telegram. */
@@ -603,7 +583,6 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
     }
   }
   for (const request of next.actionRequests ?? []) askAction(p, request);
-  for (const id of actionDialogs.keys()) if (!(next.actionRequests ?? []).some((r) => r.id === id) && prev?.actionRequests?.some((r) => r.id === id)) closeActionDialog(id);
   if (next.taskApproval && next.taskApproval.taskId !== prev?.taskApproval?.taskId) offerTaskApproval(p, next.taskApproval);
   if (approvals && prev && (prev.runState !== next.runState || prev.task?.id !== next.task?.id)) {
     const ask = stateApproval(next);
@@ -1458,12 +1437,14 @@ function registerIpc() {
     if (!done) throw new Error("That task is no longer waiting for an answer.");
     return true;
   });
-  // Refusing needs no confirmation; allowing an agent's action happens only in the native dialog (or on Telegram).
-  handle("action:refuse", async (id: string, requestId: unknown) => {
-    const p = project(id), rid = String(requestId);
-    const done = await engine.decideAction(p, rid, "deny", "app");
-    closeActionDialog(rid);
-    if (done) await engine.recordEvent(p, { type: "action-decision", id: rid, decision: "deny", source: "app" }).catch(() => undefined);
+  // The in-app prompt's answer: allow once, allow this exact action for the rest of the run, or refuse.
+  handle("action:decide", async (id: string, requestId: unknown, decision: unknown) => {
+    const p = project(id), rid = String(requestId), answer = String(decision);
+    if (!["allow", "allow-run", "deny"].includes(answer)) throw new Error("Unknown answer");
+    const cli = (await engine.status(p)).actionRequests?.find((r) => r.id === rid)?.cli;
+    const done = await engine.decideAction(p, rid, answer === "deny" ? "deny" : "allow", "app", answer === "allow-run");
+    if (done) await engine.recordEvent(p, { type: "action-decision", id: rid, decision: answer, ...(cli ? { cli } : {}), source: "app" }).catch(() => undefined);
+    if (win && !(await engine.status(p)).actionRequests?.length) win.flashFrame(false);
     return done;
   });
   handle("engine:verifyLogs", async () => Promise.all(store.data.projects.filter((p) => !p.archived).map(async (p) => {

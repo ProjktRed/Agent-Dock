@@ -25,13 +25,13 @@ export async function readActionRequests(stateDir: string, now = Date.now()): Pr
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, 20);
 }
 
-/** Answers a request once: false when it is gone, expired or already answered. */
-export async function decideActionRequest(stateDir: string, id: string, decision: "allow" | "deny", by: string): Promise<boolean> {
+/** Answers a request once: false when it is gone, expired or already answered. remember: allowed for the rest of the run. */
+export async function decideActionRequest(stateDir: string, id: string, decision: "allow" | "deny", by: string, remember = false): Promise<boolean> {
   if (!ID.test(id)) return false;
   if (!(await readActionRequests(stateDir)).some((r) => r.id === id)) return false;
   // Created exclusively: the first answer (dialog or Telegram) wins; a later one finds the file and changes nothing.
   try {
-    await writeFile(path.join(approvalsDir(stateDir), `${id}.decision.json`), JSON.stringify({ id, decision, by, at: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
+    await writeFile(path.join(approvalsDir(stateDir), `${id}.decision.json`), JSON.stringify({ id, decision, by, at: new Date().toISOString(), ...(decision === "allow" && remember ? { remember: true } : {}) }), { mode: 0o600, flag: "wx" });
     return true;
   } catch { return false; }
 }

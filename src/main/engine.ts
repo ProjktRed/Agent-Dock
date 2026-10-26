@@ -274,8 +274,8 @@ export class EngineManager {
   }
 
   /** Ask instead of refuse: answers one waiting agent action (first answer wins). */
-  decideAction(project: Project, id: string, decision: "allow" | "deny", by: string): Promise<boolean> {
-    return decideActionRequest(project.stateDir, id, decision, by);
+  decideAction(project: Project, id: string, decision: "allow" | "deny", by: string, remember = false): Promise<boolean> {
+    return decideActionRequest(project.stateDir, id, decision, by, remember);
   }
 
   /** expect: the newest entry the app recorded earlier (kept outside the state folder); the log must still contain it unchanged. */

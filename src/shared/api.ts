@@ -1,4 +1,5 @@
 import type {
+  ActionDecision,
   AddProjectRequest,
   Agent,
   AppSnapshot,
@@ -158,7 +159,7 @@ export interface DesktopApi {
   /** Settings › Safety level: applies a preset (native confirmations and sandbox setup as for each toggle). */
   applySafetyPreset(name: "strict" | "standard" | "trusted"): Promise<{ ok: boolean; problems: string[] }>;
   /** Ask instead of refuse: refuses a waiting agent action (allowing is only possible in the native dialog or on Telegram). */
-  refuseAction(projectId: string, requestId: string): Promise<boolean>;
+  decideAction(projectId: string, requestId: string, decision: ActionDecision): Promise<boolean>;
   verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number | null; unsigned?: number }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */

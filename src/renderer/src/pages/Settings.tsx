@@ -544,7 +544,7 @@ function SafetyLevelCard() {
         ))}
         <span className="sub">{level ? SAFETY_PRESETS[level].summary : "Custom: the toggles below differ from every level."}</span>
       </div>
-      <SetRow title="When the guard cannot verify an action" desc="Codex and Claude Code only. An unknown tool or a shell command the guard cannot read is put to you (an Agent Dock dialog, and Telegram when remote approvals are on) instead of being refused; with no answer in time it is refused. Anything naming a protected path, and any edit outside the task's files, is always refused. Unattended runs ask only when Telegram approvals are set up." support="engine">
+      <SetRow title="When the guard cannot verify an action" desc="Codex and Claude Code only. An unknown tool or a shell command the guard cannot read is put to you (in the Agent Dock window, and on Telegram when remote approvals are on) instead of being refused; Allow for this run stops that exact command asking again until the run ends; with no answer in time it is refused. Anything naming a protected path, and any edit outside the task's files, is always refused. Unattended runs ask only when Telegram approvals are set up." support="engine">
         <select className="input" style={{ width: 200 }} value={String(ask)} aria-label="When the guard cannot verify an action" onChange={(e) => patch("safety", { askMinutes: Number(e.target.value) })}>
           <option value="0">Refuse at once</option>
           {[2, 5, 10, 30].map((m) => <option key={m} value={String(m)}>Ask me, wait {m} min</option>)}

@@ -76,3 +76,16 @@ test('Codex patch scope compares real paths, by case where the file system does'
   await mkdir(path.join(root,'outside'));await symlink(path.join(root,'outside'),path.join(dir,'src','link'),'junction');
   assert.equal(codex.approvedPath(policy,'src/link/a.ts'),false);
 });
+
+// Smoke run (0.39.0): with "ask instead of refuse" on, these plainly read-only commands asked eight times in one task.
+test('a read may list several files, changed-file summaries chain, and tool versions are readable',async t=>{
+  const {policy}=await workspace(t);
+  const win=process.platform==='win32';
+  for(const command of ['Get-Content -LiteralPath package.json,README.md,src/Example.ts','Get-Content -LiteralPath package.json, README.md','gc "package.json", "README.md" -TotalCount 5'])assert.equal(ok(policy,command),win,command);
+  for(const command of ['git rev-parse HEAD; git status --short; git diff --name-only; git diff --cached --name-only','git rev-parse HEAD; git status --short; git diff --stat; git diff --cached --stat',
+    'git diff HEAD --name-status','git diff --staged --numstat','where.exe cargo','Get-Command cargo','rustc --version','cargo --version','node --version'])assert.equal(ok(policy,command),true,command);
+  // Each listed file is checked; a comma anywhere else, inside quotes or next to an option is still refused.
+  for(const command of ['Get-Content package.json,.env','Get-Content README.md, secrets/config.json','Get-Content "README.md,.env"','Get-Content README.md,-Stream','Get-Content -Raw,README.md',
+    'Get-Content README.md,','Get-Content README.md,src && npx eslint src,README.md','Get-ChildItem src,secrets','npx eslint src,README.md','git diff --cached -- .env','git diff --cached HEAD~1',
+    'git diff --stat --output=x','where.exe -R secrets x','where.exe a,b','Get-Command -Module x','rustc --version x','python -c x','cargo build --version','./node --version'])assert.equal(ok(policy,command),false,command);
+});

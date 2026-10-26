@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isProtectedPath, pathsIn } from "./protected-paths.mjs";
@@ -7,9 +7,10 @@ import { isProtectedPath, pathsIn } from "./protected-paths.mjs";
  * Ask instead of refuse (Settings › Execution & safety, "When the guard cannot verify an action"). A Codex or
  * Claude Code tool call the guard refuses only because it cannot prove the call safe (an unknown tool, a shell
  * command it cannot parse) is put to you instead: the hook writes a request into the project's state folder,
- * the app asks you (a native dialog, Telegram), and the hook waits for the answer or the time limit (then it
- * is refused, as before). The state folder is protected from agents, and a request's random id never reaches
- * the agent, so only the app can answer.
+ * the app asks you (in its window, Telegram), and the hook waits for the answer or the time limit (then it is
+ * refused, as before). The state folder is protected from agents, and a request's random id never reaches the
+ * agent, so only the app can answer. "Allow for this run" remembers that exact action (same CLI, tool, folder
+ * and text) until the engine run ends; the next identical one is allowed without asking.
  *
  * Never askable: anything that names a protected path (or runs in one), and edits (outside the task's paths
  * they would fail its scope check anyway).
@@ -47,16 +48,35 @@ export function askable(policy, action, decision, adapter) {
   return decision?.effect === "stop" && Boolean(policy.ask?.dir) && Number(policy.ask?.timeoutMs) > 0 && ASK_ADAPTERS.has(adapter?.id) && !definitelyRefused(policy, action);
 }
 
-/** Writes the request and waits for the app's decision file; resolves "allow", "deny" or "timeout". */
+// Actions allowed for this run: one file per action, named by the hash of what it is (no shared file to race on).
+const rememberedDir = (dir) => path.join(dir, "allowed-for-run");
+function remembered(dir, adapter, action, cwd) {
+  const what = { cli: adapter.label, tool: action.tool ?? null, cwd, text: commandText(action) };
+  return { what, file: path.join(rememberedDir(dir), `${createHash("sha256").update(JSON.stringify(what)).digest("hex")}.json`) };
+}
+
+/** A new engine run forgets what the last one allowed (parallel children share the parent's run). */
+export async function startAskRun() {
+  if (configured) await rm(rememberedDir(configured.dir), { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * Writes the request and waits for the app's decision file. Resolves "allow", "allow-run" (allowed, and
+ * remembered for this run), "remembered" (allowed earlier in this run), "deny" or "timeout".
+ */
 export async function askUser(policy, action, reason, adapter, { now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 500 } = {}) {
   const { dir, timeoutMs } = policy.ask;
+  const cwd = action.cwd || policy.workspace;
+  const memory = remembered(dir, adapter, action, cwd);
+  const earlier = await readFile(memory.file, "utf8").then(JSON.parse, () => null);
+  if (earlier && JSON.stringify(earlier.what) === JSON.stringify(memory.what)) return "remembered";
   await mkdir(dir, { recursive: true });
   const id = randomBytes(16).toString("hex");
   const createdAt = now();
   const request = {
     id, cli: adapter.label, tool: action.tool ?? null, kind: action.kind,
     text: commandText(action).slice(0, TEXT_LIMIT), reason: String(reason ?? "").slice(0, 500),
-    cwd: action.cwd || policy.workspace, taskId: policy.taskId ?? null,
+    cwd, taskId: policy.taskId ?? null,
     createdAt: new Date(createdAt).toISOString(), expiresAt: new Date(createdAt + timeoutMs).toISOString(),
   };
   const requestFile = path.join(dir, `${id}.request.json`), decisionFile = path.join(dir, `${id}.decision.json`);
@@ -66,7 +86,7 @@ export async function askUser(policy, action, reason, adapter, { now = Date.now,
   try {
     while (now() - createdAt < timeoutMs) {
       const decision = await readFile(decisionFile, "utf8").then(JSON.parse, () => null);
-      if (decision?.id === id && (decision.decision === "allow" || decision.decision === "deny")) { outcome = decision.decision; break; }
+      if (decision?.id === id && (decision.decision === "allow" || decision.decision === "deny")) { outcome = decision.decision === "allow" && decision.remember === true ? "allow-run" : decision.decision; break; }
       await sleep(pollMs);
     }
   } finally {
@@ -74,8 +94,14 @@ export async function askUser(policy, action, reason, adapter, { now = Date.now,
     await writeFile(path.join(dir, `${id}.done.json`), JSON.stringify({ id, outcome, at: new Date(now()).toISOString() })).catch(() => {});
     await rm(requestFile, { force: true }).catch(() => {});
   }
+  if (outcome === "allow-run") {
+    await mkdir(rememberedDir(dir), { recursive: true });
+    await writeFile(memory.file, JSON.stringify({ what: memory.what, id, at: new Date(now()).toISOString() }), { mode: 0o600 }).catch(() => {});
+  }
   return outcome;
 }
+
+export const askAllowed = (outcome) => outcome === "allow" || outcome === "allow-run" || outcome === "remembered";
 
 // Set once per engine (--ask-minutes): the run's own state folder, which the app watches.
 let configured = null;
