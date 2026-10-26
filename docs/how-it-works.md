@@ -160,22 +160,12 @@ All per project in Projects › Workflow, unless noted.
 - **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
   open. A start missed by more than 30 minutes (the app was closed) is skipped; the 30 minutes run
   past midnight (a 23:50 start checked at 00:05 is on time). Pair with Unattended
-  mode for overnight runs. **Also when closed** (Windows) adds a per-user task in the "Agent Dock" folder of
-  Task Scheduler that launches Agent Dock minimized at that time; the app then starts what is due, so
-  a run never starts twice. No admin rights; it runs only while you are signed in. Turning the option
-  or the schedule off, or removing the project, removes the task. The task is created from an XML
-  definition: it starts on battery and keeps going if the PC goes on battery, a start missed while the
-  PC was off or asleep runs as soon as it can (still subject to the 30 minutes), it has no time limit,
-  a second start while the app it launched is open is ignored (the open app handles it), and
-  On Linux the AppImage uses a systemd user timer per project instead (`agent-dock-run-<id>.timer` and
-  `.service` in `~/.config/systemd/user`, `Persistent=true`, the session's DISPLAY/WAYLAND_DISPLAY
-  captured at each launch); a timer whose service starts another existing AppImage is left alone.
-  **Wake to run** (off by default, Windows) lets it wake the PC from sleep. If Task Scheduler refuses the XML,
-  the task is created the old way with default settings and a warning says so. A scheduled start that
-  could not start, or (with Also when closed) was missed, goes to the saved notification channels,
-  email included, and a Windows notification (with Settings › General › Notifications › **Usage
-  limits and engine exits** on); a start that went ahead shows in the app and goes to the channels
-  except email.
+  mode for overnight runs. The app must be open: it does not add Task Scheduler tasks or systemd timers.
+  (Versions 0.35 to 0.38 could, with **Also when closed**; on the first launch of 0.39 the app removes
+  the tasks and timers it made, leaving another install's alone.) A scheduled start that could not start
+  goes to the saved notification channels, email included, and a Windows notification (with Settings ›
+  General › Notifications › **Usage limits and engine exits** on); a start that went ahead shows in the
+  app and goes to the channels except email.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.

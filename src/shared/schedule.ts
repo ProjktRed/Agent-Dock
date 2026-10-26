@@ -1,7 +1,7 @@
 import type { ProjectSchedule } from "@shared/types";
 
 // Scheduled runs: the app starts a project's automation at a set local time on chosen weekdays,
-// while Agent Dock is open (or, on Windows, when Task Scheduler launches it). A start missed by more
+// while Agent Dock is open. A start missed by more
 // than the grace period (the app was closed, or the PC off or asleep) is skipped rather than run late.
 
 export const SCHEDULE_GRACE_MINUTES = 30;
@@ -43,16 +43,6 @@ export function lastPassedSlot(schedule: ProjectSchedule | undefined, now: Date)
     if (minutesLate(now, slot) > SCHEDULE_GRACE_MINUTES && schedule.days.includes(slot.getDay())) return slot.toISOString();
   }
   return null;
-}
-
-/**
- * A scheduled start that was missed: its grace period ran out and it never started (the PC was off or
- * asleep, or Task Scheduler launched the app too late). Only slots after `lastStart` count, and none
- * while lastStart is unset, so each miss is reported once and a new schedule reports nothing old.
- */
-export function missedScheduledStart(schedule: ProjectSchedule | undefined, now: Date, lastStart?: string | null): string | null {
-  const slot = lastPassedSlot(schedule, now);
-  return slot && lastStart && Date.parse(slot) > Date.parse(lastStart) ? slot : null;
 }
 
 /** Plain-language summary, e.g. "Weekdays at 02:30". */

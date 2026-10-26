@@ -21,10 +21,10 @@ import { agentForRole, buildEngineArgs } from "./lib/engine-args";
 import { isCompactionDone } from "./lib/usage";
 import { RemoteApprovals, type ApprovalAction, type EmailChannel, type TelegramChannel } from "./lib/remote-approvals";
 import { countCompactions, implementationUsage, readActivity, readOrchestratorUsage } from "./lib/usage";
-import { dueScheduledStart, lastPassedSlot, missedScheduledStart, SCHEDULE_GRACE_MINUTES } from "@shared/schedule";
+import { dueScheduledStart, lastPassedSlot } from "@shared/schedule";
 import { normalizeAppearance, STYLE_BACKGROUNDS, styleAccent } from "@shared/appearance";
-import { SCHEDULED_RUN_FLAG, syncOsSchedules } from "./lib/os-schedule";
-import { syncLinuxSchedules } from "./lib/linux-schedule";
+import { removeOsSchedules } from "./lib/os-schedule";
+import { removeLinuxSchedules } from "./lib/linux-schedule";
 import { ensureRunBranch, openPullRequest } from "./lib/pull-request";
 import { isOpenRouter, openRouterKeyLimit } from "./lib/key-limit";
 import { estimateRecord, ESTIMATES_FILE, ESTIMATES_KEPT, type EstimateRecord } from "@shared/estimate";
@@ -356,45 +356,41 @@ async function warnUncappedKey(p: Project) {
 }
 
 /**
- * Keeps the OS in step with the schedules marked "also when closed" (packaged builds only): Task Scheduler
- * on Windows, systemd user timers for the AppImage on Linux (its path is in $APPIMAGE).
+ * Scheduled runs happen only while the app is open (from 0.39). A project that was scheduled "also when
+ * closed" by an earlier version had a Windows Task Scheduler task or a systemd user timer (AppImage): remove
+ * it, then forget the setting. If removing fails, the setting stays and the next launch tries again.
  */
-async function syncWindowsSchedulesNow() {
-  if (!app.isPackaged) return;
-  // The projects as they are when this sync runs, not when it was asked for.
-  if (process.platform === "win32") {
-    const problems = await syncOsSchedules(store.data.projects, process.execPath, undefined, undefined, undefined, (message) => console.warn(`[schedule] ${message}`));
-    if (problems.length) notice({ kind: "warning", message: `Windows Task Scheduler: ${problems.join(" ")}` });
-  } else if (process.platform === "linux") {
-    const wanted = store.data.projects.some((p) => p.schedule?.whenClosed);
-    if (!process.env.APPIMAGE) { if (wanted) notice({ kind: "warning", message: "Scheduled runs while Agent Dock is closed need the AppImage build on Linux." }); return; }
-    const problems = await syncLinuxSchedules(store.data.projects, process.env.APPIMAGE);
-    if (problems.length) notice({ kind: "warning", message: `systemd user timers: ${problems.join(" ")}` });
+async function removeOldOsSchedules() {
+  const old = store.data.projects.filter((p) => p.schedule && ("whenClosed" in p.schedule || "wakeToRun" in p.schedule));
+  if (!old.length) return;
+  if (app.isPackaged && old.some((p) => (p.schedule as { whenClosed?: boolean }).whenClosed)) {
+    const problems = process.platform === "win32" ? await removeOsSchedules(process.execPath)
+      : process.platform === "linux" && process.env.APPIMAGE ? await removeLinuxSchedules(process.env.APPIMAGE) : [];
+    if (problems.length) {
+      notice({ kind: "warning", message: `Scheduled runs now happen only while Agent Dock is open, but the old ${process.platform === "win32" ? "Task Scheduler tasks" : "systemd timers"} could not all be removed: ${problems.join(" ")}` });
+      return;
+    }
+    notice({ kind: "info", message: "Scheduled runs now happen only while Agent Dock is open. The tasks that launched it when closed were removed." });
   }
-}
-// Syncs run one at a time, so an older one never undoes a newer one. A sync that is queued but not yet
-// running already reads the latest projects, so further requests join it instead of queueing more.
-let scheduleSyncChain: Promise<void> = Promise.resolve();
-let scheduleSyncQueued: Promise<void> | null = null;
-function syncWindowsSchedules(): Promise<void> {
-  if (scheduleSyncQueued) return scheduleSyncQueued;
-  const next = scheduleSyncChain.then(() => { scheduleSyncQueued = null; return syncWindowsSchedulesNow(); });
-  scheduleSyncQueued = next;
-  scheduleSyncChain = next.catch(() => {});
-  return next;
+  store.data.projects = store.data.projects.map((p) => {
+    if (!p.schedule) return p;
+    const { whenClosed: _closed, wakeToRun: _wake, ...schedule } = p.schedule as typeof p.schedule & { whenClosed?: boolean; wakeToRun?: boolean };
+    return { ...p, schedule };
+  });
+  await store.saveProjects();
 }
 
-type ScheduleEvent = "started" | "failed" | "missed";
+type ScheduleEvent = "started" | "failed";
 /**
  * Tells you about a scheduled start beyond the in-app notice: a Windows notification (per the
- * notification settings) and the saved remote channels, which matter most when Task Scheduler launched
- * the app minimized and nobody is watching. A start is informational and never emailed; a failed or
- * missed one needs you and also goes to email. Send failures are logged, never thrown.
+ * notification settings) and the saved remote channels, which matter most on an overnight run nobody
+ * is watching. A start is informational and never emailed; a failed one needs you and also goes to
+ * email. Send failures are logged, never thrown.
  */
 async function reportScheduledRun(p: Project, event: ScheduleEvent, message: string) {
-  const title = { started: "Scheduled run started", failed: "Scheduled run could not start", missed: "Scheduled run missed" }[event];
+  const title = { started: "Scheduled run started", failed: "Scheduled run could not start" }[event];
   const urgent = event !== "started";
-  notice({ kind: event === "started" ? "info" : event === "failed" ? "error" : "warning", message: `${title} on ${p.name}${message ? `: ${message}` : "."}` });
+  notice({ kind: event === "started" ? "info" : "error", message: `${title} on ${p.name}${message ? `: ${message}` : "."}` });
   const general = store.data.settings.general;
   if (urgent ? general.notifyErrors : general.notifyInfo) osNotify(`${title} · ${p.name}`, message.slice(0, 180) || title);
   const channels = NOTIFY_CHANNELS.map((kind) => [kind, notifyChannel(kind)] as const).filter(([kind, value]) => value && (urgent || kind !== "email"));
@@ -407,18 +403,11 @@ async function reportScheduledRun(p: Project, event: ScheduleEvent, message: str
 /** Scheduled runs: once a minute, start each project whose scheduled slot is due and that is not running. */
 async function runSchedules(now = new Date()) {
   for (const p of store.data.projects.filter((x) => !x.archived && x.schedule?.enabled)) {
+    // A start missed by more than the grace period (the app was closed, the PC asleep) is skipped.
     const slot = dueScheduledStart(p.schedule, now, p.lastScheduledStart);
-    // A start missed beyond the grace period (the PC was off or asleep, or Task Scheduler launched the app
-    // too late) is skipped, and reported once. Only for "also when closed" schedules: with the app-only
-    // kind, a start skipped while the app was closed is the documented behaviour, not news.
-    const missed = !slot && p.schedule?.whenClosed ? missedScheduledStart(p.schedule, now, p.lastScheduledStart) : null;
-    if (!slot && !missed) continue;
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot ?? missed } : x));
+    if (!slot) continue;
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...x, lastScheduledStart: slot } : x));
     await store.saveProjects();
-    if (missed) {
-      void reportScheduledRun(p, "missed", `The ${new Date(missed).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} start was more than ${SCHEDULE_GRACE_MINUTES} minutes late (the PC was off or asleep, or Agent Dock could not start), so it was skipped.`).catch(() => {});
-      continue;
-    }
     if (engine.isAlive(p.id)) continue;
     try {
       await runControl(p.id, "start", "schedule");
@@ -1226,13 +1215,12 @@ function registerIpc() {
       p = { ...p, workflowOverrides: overrides };
     }
     // The scheduler owns lastScheduledStart; a window's older copy never resets it. A changed schedule
-    // counts its slots already past as handled, so they are never reported as missed starts.
+    // counts its slots already past as handled, so a slot from before the change never starts.
     const passed = JSON.stringify(before?.schedule) !== JSON.stringify(p.schedule) ? lastPassedSlot(p.schedule, new Date()) : null;
     const handled = (last?: string | null) => (passed && (!last || Date.parse(passed) > Date.parse(last)) ? passed : last ?? null);
     // The project folder and its state folder are set when the project is added, never by a window.
     store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart), ci: x.ci ?? null } : x));
     await store.saveProjects();
-    if (JSON.stringify([before?.schedule, before?.archived]) !== JSON.stringify([p.schedule, p.archived])) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:remove", async (id: string, deleteHistory: boolean) => {
@@ -1245,7 +1233,6 @@ function registerIpc() {
     const managed = managedProjectFolder(stateRoot, p.stateDir);
     if (deleteHistory && managed) await rm(managed, { recursive: true, force: true });
     lastStatus.delete(id);
-    if (p.schedule?.whenClosed) void syncWindowsSchedules().catch(() => {});
     return store.data.projects;
   });
   handle("project:activate", async (id: string | null) => {
@@ -1459,11 +1446,7 @@ async function resumeAfterRestart() {
   }
 }
 
-// Task Scheduler starts a second copy with --scheduled-run while the app is open: run the due schedules instead of showing the window.
-app.on("second-instance", (_event, argv) => {
-  if (argv.includes(SCHEDULED_RUN_FLAG)) void runSchedules().catch(() => {});
-  else showWindow();
-});
+app.on("second-instance", () => showWindow());
 
 app.on("before-quit", (event) => {
   if (quitting) return;
@@ -1545,9 +1528,7 @@ app.whenReady().then(async () => {
   setTimeout(() => limits.schedule(store.data.settings), 3000);
   setInterval(() => void runSchedules().catch(() => {}), 60_000);
   setInterval(() => void checkIntegrity().catch((error) => console.error("Integrity check failed", error)), 3_000);
-  // Launched by Task Scheduler: start what is due once the app is ready, then keep checking as usual.
-  if (process.argv.includes(SCHEDULED_RUN_FLAG)) setTimeout(() => void runSchedules().catch(() => {}), 5000);
-  if (store.data.projects.some((p) => p.schedule?.whenClosed)) setTimeout(() => void syncWindowsSchedules().catch(() => {}), 8000);
+  setTimeout(() => void removeOldOsSchedules().catch((error: Error) => console.warn(`[schedule] ${error.message}`)), 8000);
   // Model lists are free to read; refresh once a day or when missing.
   setTimeout(() => void models.refreshStale(24 * 60 * 60_000), 6000);
 });

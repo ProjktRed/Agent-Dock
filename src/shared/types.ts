@@ -74,10 +74,6 @@ export interface ProjectSchedule {
   time: string;
   /** 0 = Sunday … 6 = Saturday. */
   days: number[];
-  /** Windows: also start while Agent Dock is closed (a per-user Task Scheduler task launches it). */
-  whenClosed?: boolean;
-  /** Windows, with whenClosed: Task Scheduler may wake the PC from sleep for the start. Off by default. */
-  wakeToRun?: boolean;
 }
 
 export interface Agent {
