@@ -131,5 +131,6 @@ export const DEFAULT_SETTINGS: Settings = {
 export function upgradeSafety(saved: Partial<Settings["safety"]> | undefined): Settings["safety"] {
   if (!saved) return structuredClone(DEFAULT_SETTINGS.safety);
   const paths = Array.isArray(saved.protectedPaths) ? saved.protectedPaths : DEFAULT_SETTINGS.safety.protectedPaths;
-  return { ...saved, protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true };
+  // Settings saved by an older version get each newer field's default (0.39: askMinutes, the sandbox settings).
+  return { ...DEFAULT_SETTINGS.safety, ...saved, protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true };
 }

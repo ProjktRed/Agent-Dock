@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent, Project, Settings } from "@shared/types";
 import { currentSafetyPreset, SAFETY_PRESETS } from "../src/shared/safety-presets";
+import { upgradeSafety } from "../src/shared/defaults";
 import { buildEngineArgs } from "../src/main/lib/engine-args";
 import { DEFAULT_CLIS, DEFAULT_SETTINGS, defaultAgents } from "../src/main/defaults";
 import { sanitizeSettings } from "../src/main/settings-validate";
@@ -23,6 +24,11 @@ describe("safety levels", () => {
     expect(currentSafetyPreset(settings((s) => { s.safety.checksTrusted = true; }))).toBe("trusted");
     expect(SAFETY_PRESETS.strict).toMatchObject({ toolGuard: true, approveTasks: true, sandboxChecks: true, sandboxAgents: true, askMinutes: 0 });
     for (const preset of Object.values(SAFETY_PRESETS)) expect(preset.toolGuard).toBe(true);
+  });
+  it("settings saved by 0.38 get the new fields' defaults, so they read Standard, not Custom", () => {
+    const old = upgradeSafety({ protectedPaths: [".git/"], toolConfigPathsAdded: true, checksTrusted: false });
+    expect(old).toMatchObject({ askMinutes: 10, sandboxChecks: false, sandboxAgents: false, protectedPaths: [".git/"] });
+    expect(currentSafetyPreset({ ...structuredClone(DEFAULT_SETTINGS), safety: old })).toBe("standard");
   });
 });
 
