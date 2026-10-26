@@ -137,42 +137,21 @@ waits (Waiting: usage limit) with those changes kept. Resume starts a fresh atte
 review and finish them; in Unattended mode the engine also tries again by itself every 30 minutes
 (engine flag `--limit-retry-minutes`, 0 = wait for Resume). Stop and restart keep the wait.
 
-## Workflow roles
+## Second review
 
-Workflow tab: your own roles at three points in the loop. Roles review read-only; only a fixer edits, under the guard.
-
-- **Before implementation**: runs once per task; its guidance is added to every worker prompt for
-  that task.
-- **Before QA**: reviews each finished attempt; QA and Assessment read its findings. As a **gate**,
-  "changes needed" sends the attempt back for correction instead of to QA, and a gate that cannot run
-  blocks the task rather than letting the change through unreviewed. A gate can also be a
-  **fixer**: when it finds problems, it fixes them itself once per attempt, then reviews the result
-  again. The fix runs on the role's CLI with the tool guard always on, may edit only the task's
-  approved files and never commits; the engine's evidence and scope checks run again afterwards. If
-  problems remain, the attempt goes back for correction as usual.
-- **After QA passes**: writes a report to `role-reports.ndjson` in the project's state folder.
-
-Each role is a `ROLE.md` (frontmatter `name`, `description`, `stage`, `gate`, `fix`, `enabled`, then the
-instructions) under `%APPDATA%\Agent Dock\roles\<id>`; import a folder of them from the Workflow
-tab. A role runs on the agent assigned to it: an agent with the role "Workflow role" on Codex CLI or
-Claude Code, with its own model, effort and speed. Roles go through the orchestrator lock, are
-checkpointed like other engine operations (a resumed run never repeats a finished role), wait on
-usage limits like QA, and never commit or change HEAD; only a fixer gate edits files, and only the
-task's approved ones. A role without an enabled agent
-is skipped, with a warning at start.
-
-## Second-opinion QA
-
-Workflow › Templates: create this optional gate, then choose **New agent** to use the other CLI from
-the project's primary QA, or assign an existing workflow agent on that CLI. An enabled second
-opinion requires an agent and blocks launch if incomplete. It reviews the scoped diff and engine
-evidence before QA; only QA accepts and commits. Before-QA receipts are bound to the evidence they
-reviewed, so changing the code invalidates their cached verdicts. A QA usage-limit backup may share
-the second-opinion reviewer's CLI.
+Workflow tab: one optional review before QA, on its own agent. Turn it on, then choose **New agent**
+to use the other CLI from the project's QA (it must differ), or assign an existing agent with the role
+"Workflow role" on Codex CLI or Claude Code. It reads each finished attempt, the scoped diff and the
+engine's check results, read-only; QA and Assessment read its findings. "Changes needed" sends the
+attempt back for correction instead of to QA, and a review that cannot run blocks the task rather than
+letting the change through unreviewed. Only QA accepts and commits. Its verdict is bound to the
+evidence it reviewed, so changed code is reviewed again. It is saved as a `ROLE.md` under
+`%APPDATA%\Agent Dock\roles\second-opinion-qa`. Custom roles from versions before 0.39 (planners,
+after-pass reports, other reviews, fixers) are no longer run; their folders are kept.
 
 ## QA evidence reuse
 
-Engine check results are shared with workflow reviewers and QA. Automatic QA environment retries
+Engine check results are shared with the Second review and QA. Automatic QA environment retries
 reuse passing checks only for the same task, criteria, command, attempt, baseline and repository
 content. Failed or inconclusive evidence reruns. Changed content or HEAD blocks use of a stale
 packet. **Retry QA** explicitly collects fresh checks and reruns before-QA gates. Fingerprints cover
@@ -259,9 +238,7 @@ All per project in Projects › Workflow, unless noted.
 
 ## Known limitations
 
-- Workflow roles review read-only, except a **fixer** gate (Before QA), which edits the task's
-  approved files under the tool guard, once per attempt, and never commits. Roles run only on Codex
-  CLI or Claude Code.
+- The Second review is read-only and runs only on Codex CLI or Claude Code.
 - Parallel tasks on a local model server run only as many at once as it answers (see above). A task's tokens and spend count toward the run's budgets while it works (checked every few
   seconds, so a limit can be passed by what the tasks use in that time and until their next safe
   point); its per-role usage reaches Overview when its engine finishes. The Elevation limit is shared:

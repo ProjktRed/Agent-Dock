@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { runNodeLoop } from '../src/node-loop.mjs';
 import { DashboardState } from '../src/dashboard-state.mjs';
-import { buildRolePrompt, parseRoleResult, parseRoles, roleGuidanceText } from '../src/workflow-roles.mjs';
+import { buildRolePrompt, parseRoleResult, parseRoles } from '../src/workflow-roles.mjs';
 import { DEFAULT_TUNING, TUNING, parseTuning, taskSizingText, useTuning } from '../src/engine-tuning.mjs';
 import { CloudImplementationWorker, buildImplementationArgs, claudeImplementationTools } from '../src/cloud-impl-worker.mjs';
 import { parseImplementation } from '../src/loop-options.mjs';
@@ -27,74 +27,55 @@ const baseLoop = (root, state, extra) => ({ workspace:root, stateDir:root, initi
   baseline:async()=>({head:'base'}), verify:async()=>{}, reconcile:async()=>{}, prepareQa:async input=>packet(input),
   readControl:()=>state.readControl(), onEvent:e=>state.record(e), pollMs:1, ...extra });
 
-test('roles file validation: ids, stages, CLIs; gate only applies before QA; disabled roles dropped', () => {
-  const parsed = parseRoles([role({ gate:true }), role({ id:'r2', stage:'after-pass', gate:true }), role({ id:'r3', enabled:false })]);
-  assert.equal(parsed.length, 2);
+test('second review validation: ids and CLIs; it always runs before QA and can send work back; disabled is dropped', () => {
+  const parsed = parseRoles([role({ gate:false }), role({ id:'r3', enabled:false })]);
+  assert.equal(parsed.length, 1);
   assert.equal(parsed[0].gate, true);
-  assert.equal(parsed[1].gate, false);
-  assert.throws(() => parseRoles([role({ stage:'whenever' })]), /stage must be/);
+  assert.equal('fix' in parsed[0], false, 'no self-fixing');
+  for (const stage of ['before-implementation', 'after-pass', 'whenever']) assert.throws(() => parseRoles([role({ stage })]), /stage must be/);
   assert.throws(() => parseRoles([role({ cli:'cline' })]), /cli must be codex or claude/);
   assert.throws(() => parseRoles([role(), role()]), /duplicate id/);
   assert.throws(() => parseRoles([role({ instructions:' ' })]), /instructions are required/);
   assert.throws(() => parseRoleResult('{"verdict":"maybe","summary":"","findings":[],"guidance":""}'), /verdict/);
 });
 
-test('role prompt is read-only and carries the user instructions and input', () => {
-  const text = buildRolePrompt(parseRoles([role({ gate:true })])[0], { task });
-  assert.match(text, /You are Reviewer, a custom workflow role/);
+test('review prompt is read-only and carries the user instructions and input', () => {
+  const text = buildRolePrompt(parseRoles([role()])[0], { task });
+  assert.match(text, /You are Reviewer, the second reviewer/);
   assert.match(text, /read-only: do not edit/);
   assert.match(text, /Return changes-needed only for concrete/);
   assert.match(text, /Check naming\./);
   assert.match(text, /INPUT: \{"task"/);
-  assert.equal(roleGuidanceText([{ name:'A', result:{ guidance:'' } }]), '');
 });
 
-test('guidance before implementation reaches every worker prompt; a gate sends work back before QA; reports are written after pass', async t => {
+test('the second review sends work back before QA; QA reads its verdict', async t => {
   const { root, state } = await setup(t);
-  const roles = parseRoles([
-    role({ id:'plan', name:'Planner', stage:'before-implementation' }),
-    role({ id:'gate', name:'Gatekeeper', stage:'before-qa', gate:true }),
-    role({ id:'notes', name:'Notes', stage:'after-pass' }),
-  ]);
-  const calls = [], prompts = []; let qaCalls = 0, assessments = 0, gateCalls = 0;
-  const runRole = async (r, input) => {
+  const roles = parseRoles([role({ id:'gate', name:'Gatekeeper' })]);
+  const calls = []; let qaCalls = 0, assessments = 0, gateCalls = 0;
+  const runRole = async (r) => {
     calls.push(r.id);
-    if (r.id === 'plan') return { verdict:'pass', summary:'', findings:[], guidance:'Export x as a named function.' };
-    if (r.id === 'gate') return ++gateCalls === 1
+    return ++gateCalls === 1
       ? { verdict:'changes-needed', summary:'x is unexported', findings:['src/x.js: export x'], guidance:'' }
       : { verdict:'pass', summary:'ok', findings:[], guidance:'' };
-    assert.equal(input.commit, 'abc');
-    return { verdict:'pass', summary:'Added x.', findings:[], guidance:'' };
   };
   const result = await runNodeLoop(baseLoop(root, state, { roles, runRole,
-    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ prompts.push(prompt); assert.equal(hooks.task.id,'W'); await hooks.onStart({pid:1}); return { exitCode:0 }; } },
+    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ assert.equal(hooks.task.id,'W'); await hooks.onStart({pid:1}); return { exitCode:0 }; } },
     review:async input=>{ qaCalls++; assert.equal(input.roleReviews[0].role,'Gatekeeper'); return { status:'pass', output:'verified', commit:'abc' }; },
     assessCorrection:async input=>{ assessments++; assert.match(input.failure.reason, /Gatekeeper requested changes/); return correction(1); },
     elevate:()=>assert.fail('no elevation'),
   }));
   assert.equal(result.status, 'passed');
-  assert.deepEqual(calls, ['plan','gate','gate','notes']);
-  assert.equal(qaCalls, 1, 'QA is skipped for the attempt the gate rejected');
+  assert.deepEqual(calls, ['gate','gate']);
+  assert.equal(qaCalls, 1, 'QA is skipped for the attempt the review rejected');
   assert.equal(assessments, 1);
-  assert.equal(prompts.length, 2);
-  for (const p of prompts) assert.match(p, /Planner: Export x as a named function\./);
-  const reports = (await readFile(path.join(root, 'role-reports.ndjson'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.equal(reports[0].role, 'Notes'); assert.equal(reports[0].summary, 'Added x.');
 });
 
-test('an advisory role that fails is recorded and skipped; a gate that fails blocks', async t => {
+test('a second review that cannot run blocks: the change would go unreviewed', async t => {
   const { root, state } = await setup(t);
-  const run = roles => runNodeLoop(baseLoop(root, state, { roles, runRole:async()=>{ throw new Error('CLI missing'); },
-    worker:{ withExclusive:fn=>fn(), run:async()=>({ exitCode:0 }) },
-    review:async()=>({ status:'pass', output:'ok', commit:'c' }), assessCorrection:()=>assert.fail(), elevate:()=>assert.fail() }));
-  assert.equal((await run(parseRoles([role({ stage:'before-implementation' })]))).status, 'passed');
-  const errors = (await state.readLive()).roleResults.filter(r => r.error);
-  assert.equal(errors.length, 1);
-  const { root: root2, state: state2 } = await setup(t);
-  const blocked = await runNodeLoop(baseLoop(root2, state2, { roles:parseRoles([role({ gate:true })]), runRole:async()=>{ throw new Error('CLI missing'); },
+  const blocked = await runNodeLoop(baseLoop(root, state, { roles:parseRoles([role()]), runRole:async()=>{ throw new Error('CLI missing'); },
     worker:{ withExclusive:fn=>fn(), run:async()=>({ exitCode:0 }) }, review:()=>assert.fail('unreviewed change reached QA'), assessCorrection:()=>assert.fail(), elevate:()=>assert.fail() }));
   assert.equal(blocked.status, 'blocked');
-  assert.match(blocked.output, /Gatekeeper|Reviewer could not run/);
+  assert.match(blocked.output, /Reviewer could not run/);
 });
 
 test('Retry QA after changed evidence reruns its second-opinion gate for the same attempt', async t => {
@@ -325,49 +306,4 @@ test('Retry after a blocked Assessment runs a fresh Assessment instead of replay
   assert.equal((await state.readLive()).codexOperation ?? null, null, 'the blocked receipt is consumed');
   const second = await run();
   assert.equal(second.output, 'fresh verdict 2', 'every Retry asks Assessment again');
-});
-
-test('a fixer makes its own requested fix once per attempt under the guard, and the fix is reviewed again before QA', async t => {
-  const { root, state } = await setup(t);
-  const roles = parseRoles([role({ id:'fixer', name:'Fixer', gate:true, fix:true }), role({ id:'plain', name:'Plain', stage:'after-pass', gate:true, fix:true })]);
-  assert.deepEqual(roles.map(r => r.fix), [true, false], 'only a before-QA gate can fix');
-  let gateCalls = 0, workerRuns = 0, qaCalls = 0; const fixPrompts = [];
-  const runRole = async (r) => {
-    if (r.id === 'plain') return { verdict:'pass', summary:'', findings:[], guidance:'' };
-    return ++gateCalls === 1 ? { verdict:'changes-needed', summary:'x is unexported', findings:['src/x.js: export x'], guidance:'' } : { verdict:'pass', summary:'ok', findings:[], guidance:'' };
-  };
-  const fixWorkers = { fixer:{ run:async (prompt, hooks) => { fixPrompts.push(prompt); assert.equal(hooks.task.id, 'W'); await hooks.onEvent({ type:'implementation-cli-ready', cli:'claude' }); return { exitCode:0 }; } } };
-  const result = await runNodeLoop(baseLoop(root, state, { roles, runRole, fixWorkers,
-    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ workerRuns++; await hooks.onStart({pid:1}); return { exitCode:0 }; } },
-    review:async () => { qaCalls++; return { status:'pass', output:'verified', commit:'abc' }; },
-    assessCorrection:()=>assert.fail('the fixer handles it, no correction'), elevate:()=>assert.fail('no elevation'),
-  }));
-  assert.equal(result.status, 'passed');
-  assert.equal(workerRuns, 1, 'the implementation worker is not relaunched');
-  assert.equal(fixPrompts.length, 1);
-  assert.match(fixPrompts[0], /requested by the workflow role Fixer/);
-  assert.match(fixPrompts[0], /src\/x\.js: export x/);
-  assert.match(fixPrompts[0], /Change only these approved paths: src\/x\.js/);
-  assert.match(fixPrompts[0], /Do not commit/);
-  assert.equal(gateCalls, 2, 'the fixed change is reviewed again');
-  assert.equal(qaCalls, 1);
-  const types = (await readFile(path.join(root, 'activity.ndjson'), 'utf8')).trim().split('\n').map(l => JSON.parse(l).type);
-  assert.ok(types.indexOf('role-fix-started') < types.indexOf('role-fix-finished'));
-});
-
-test('a fixer gets one try per attempt; a second rejection goes back to correction', async t => {
-  const { root, state } = await setup(t);
-  const roles = parseRoles([role({ id:'fixer', name:'Fixer', gate:true, fix:true })]);
-  let gateCalls = 0, fixes = 0, assessments = 0;
-  const runRole = async () => ++gateCalls <= 2 ? { verdict:'changes-needed', summary:'still wrong', findings:['src/x.js: fix'], guidance:'' } : { verdict:'pass', summary:'ok', findings:[], guidance:'' };
-  const result = await runNodeLoop(baseLoop(root, state, { roles, runRole,
-    fixWorkers:{ fixer:{ run:async () => { fixes++; throw new Error('usage limit'); } } },
-    worker:{ withExclusive:fn=>fn(), run:async(prompt,hooks)=>{ await hooks.onStart({pid:1}); return { exitCode:0 }; } },
-    review:async () => ({ status:'pass', output:'verified', commit:'abc' }),
-    assessCorrection:async input=>{ assessments++; assert.match(input.failure.reason, /Fixer requested changes/); return correction(1); },
-    elevate:()=>assert.fail('no elevation'),
-  }));
-  assert.equal(result.status, 'passed');
-  assert.equal(fixes, 1, 'a failed fix is not retried for the same attempt');
-  assert.equal(assessments, 1);
 });

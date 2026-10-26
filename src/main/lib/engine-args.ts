@@ -255,21 +255,19 @@ ${project.objective}` : project.objective;
       }
     }
   }
-  // Workflow roles: read-only reviews run by the agent assigned to each role (Codex or Claude Code).
+  // Second review (Workflow): one read-only review before QA, run by the agent assigned to it (Codex or Claude Code).
+  // Custom roles from earlier versions (planners, after-pass reports, other reviews) are not run any more.
   const roleEntries: EngineRoleEntry[] = [];
-  for (const role of workflowRoles.filter((r) => r.enabled)) {
-    const secondOpinion = role.id === SECOND_OPINION_ROLE_ID;
-    if (secondOpinion && (role.stage !== "before-qa" || !role.gate || !role.instructions.trim())) {
-      problems.push("Second-opinion QA must be a before-QA gate with review instructions.");
-      continue;
-    }
-    const roleProblem = (message: string) => (secondOpinion ? problems : warnings).push(message);
-    if (!role.instructions.trim()) { warnings.push(`Workflow role “${role.name}” has no instructions and is skipped.`); continue; }
+  const retired = workflowRoles.filter((r) => r.enabled && r.id !== SECOND_OPINION_ROLE_ID);
+  if (retired.length) warnings.push(`Custom workflow roles are no longer run: ${retired.map((r) => r.name).join(", ")}. Workflow has one Second review before QA.`);
+  for (const role of workflowRoles.filter((r) => r.enabled && r.id === SECOND_OPINION_ROLE_ID)) {
+    const roleProblem = (message: string) => problems.push(message);
+    if (!role.instructions.trim()) { problems.push("The Second review needs instructions (Workflow)."); continue; }
     const agent = agentForWorkflowRole(role, agents);
     const kind = orchestratorKind(agent);
-    if (!agent) { roleProblem(`Workflow role “${role.name}” has no enabled agent (Workflow › ${role.name} › Runs on).`); continue; }
-    if (!kind) { roleProblem(`Workflow role “${role.name}”: agent “${agent.name}” must use Codex CLI or Claude Code.`); continue; }
-    if (secondOpinion && kind === orchestrator) { problems.push("Second-opinion QA must use a different CLI from the QA agent."); continue; }
+    if (!agent) { roleProblem("The Second review has no enabled agent (Workflow › Runs on)."); continue; }
+    if (!kind) { roleProblem(`The Second review's agent “${agent.name}” must use Codex CLI or Claude Code.`); continue; }
+    if (kind === orchestrator) { problems.push("The Second review must use a different CLI from the QA agent."); continue; }
     const model = agent.model.trim();
     if (model && wrongProviderModel(kind, model)) {
       guard(`${agent.name}: “${model}” is not a ${kind === "claude" ? "Claude Code" : "Codex"} model.`);
@@ -277,7 +275,7 @@ ${project.objective}` : project.objective;
     }
     usedKinds.add(kind);
     useConnection(agent, role.name);
-    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, ...(role.stage === "before-qa" && role.gate && role.fix ? { fix: true } : {}), cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
+    roleEntries.push({ id: role.id, name: role.name, stage: "before-qa", gate: true, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
   // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.

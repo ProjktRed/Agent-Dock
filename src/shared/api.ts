@@ -194,8 +194,6 @@ export interface DesktopApi {
   installSkillImport(token: string, names: string[]): Promise<SkillInfo[]>;
   roles(): Promise<WorkflowRole[]>;
   saveRole(role: RoleDraft): Promise<WorkflowRole[]>;
-  deleteRole(id: string): Promise<WorkflowRole[]>;
-  importRoleFolder(): Promise<{ roles: WorkflowRole[]; imported: number }>;
   /** "" when the path opened, otherwise why not (missing, no app for the file type). Throws for a path the app may not open. */
   openPath(target: string): Promise<string>;
   limits(): Promise<LimitsState>;

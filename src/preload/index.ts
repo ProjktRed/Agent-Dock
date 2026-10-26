@@ -79,8 +79,6 @@ const api: DesktopApi = {
   installSkillImport: invoke("skills:installLibrary") as DesktopApi["installSkillImport"],
   roles: invoke("roles:list") as DesktopApi["roles"],
   saveRole: invoke("roles:save") as DesktopApi["saveRole"],
-  deleteRole: invoke("roles:delete") as DesktopApi["deleteRole"],
-  importRoleFolder: invoke("roles:import") as DesktopApi["importRoleFolder"],
   openPath: invoke("shell:open") as DesktopApi["openPath"],
   limits: invoke("limits:get") as DesktopApi["limits"],
   refreshLimits: invoke("limits:refresh") as DesktopApi["refreshLimits"],

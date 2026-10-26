@@ -536,18 +536,19 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(wrong.problems.join(" ")).toMatch(/not a Claude Code model/);
   });
 
-  it("passes enabled roles with an agent as a roles file and skips the rest with a warning", () => {
-    const list: Agent[] = [...agents(), { ...agents().find((a) => a.role === "qa")!, id: "sec", name: "Security agent", role: "custom", customRole: "security-review", model: "gpt-6.1-sol", reasoning: "high" }];
-    const roles = [role(), role({ id: "docs", name: "Docs", stage: "after-pass", gate: false }), role({ id: "off", name: "Off", enabled: false })];
+  it("passes only the Second review as a roles file; custom roles from earlier versions are not run", () => {
+    const qaKind = clis().find((c) => c.id === agents().find((a) => a.role === "qa")!.cliId)!.kind;
+    const other = clis().find((c) => c.kind === (qaKind === "codex" ? "claude" : "codex"))!;
+    const list: Agent[] = [...agents(), { ...agents().find((a) => a.role === "qa")!, id: "sec", name: "Review agent", role: "custom", customRole: "second-opinion-qa", cliId: other.id, model: "", reasoning: "high" }];
+    const roles = [role({ id: "second-opinion-qa", name: "Second review" }), role({ id: "docs", name: "Docs", stage: "after-pass", gate: false }), role({ id: "off", name: "Off", enabled: false })];
     const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles });
-    expect(plan.roles).toEqual([{ id: "security-review", name: "Security review", stage: "before-qa", gate: true, cli: "codex", model: "gpt-6.1-sol", effort: "high", fast: false, instructions: "Look for injection." }]);
+    expect(plan.roles).toMatchObject([{ id: "second-opinion-qa", name: "Second review", stage: "before-qa", gate: true, cli: other.kind, effort: "high", instructions: "Look for injection." }]);
+    expect("fix" in plan.roles[0]).toBe(false);
     expect(flag(plan.args, "--roles-file")).toBe(path.join("C:\\state\\p1", "workflow-roles.json"));
-    expect(plan.warnings.join(" ")).toMatch(/“Docs” has no enabled agent/);
+    expect(plan.warnings.join(" ")).toMatch(/Custom workflow roles are no longer run: Docs/);
     expect(plan.problems).toEqual([]);
     const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings(), roles: [] });
     expect(none.args).not.toContain("--roles-file");
-    const fixer = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles: [role({ fix: true })] });
-    expect(fixer.roles[0].fix).toBe(true);
   });
 
   it("never passes loop limits: the engine's own apply (settings saved by 0.38 lose them)", () => {

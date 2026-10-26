@@ -110,7 +110,7 @@ const mixed = isMixed(clis);
 if (mixed) useMixedDefaults(clis);
 useRoleOverrides(options.roleOverrides);
 console.log(JSON.stringify({ orchestratorRoles: Object.fromEntries(Object.keys(ROLE_EFFORT).map((role) => [role, { cli: clis[role], model: roleModel(role), effort: ROLE_EFFORT[role], fast: ROLE_FAST[role] }])) }));
-const { roles, runRole, fixWorkers } = await createRoles(options, { stateDir, workspace });
+const { roles, runRole } = await createRoles(options, { stateDir, workspace });
 if (roles.length) console.log(JSON.stringify({ workflowRoles: roles.map(({ instructions: _text, ...role }) => role) }));
 const state = new DashboardState({ stateDir });
 const worker = implementation.worker;
@@ -203,7 +203,7 @@ try {
     onTask: async (task) => { await state.initialize({ task, workspace, maxAttempts, contextTokens: options.clineContextTokens, timeoutSeconds: options.timeoutSeconds, model, provider }); await superviseTask(task).catch(() => {}); await saveTaskDefinition(stateDir, task); },
     onEvent: loopEvent,
     readControl: () => state.readControl(), pendingCodex,
-    roles, runRole, fixWorkers,
+    roles, runRole,
   });
   await atomicWriteJson(path.join(stateDir, "loop-result.json"), result);
   await writeRunReport(stateDir, { ...result, supervisorAlerts: supervisorAlerts().length });

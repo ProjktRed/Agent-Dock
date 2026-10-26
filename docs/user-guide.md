@@ -138,9 +138,8 @@ trusting checks, unprotecting a path or changing a program Agent Dock runs asks 
 
 ## Your own review steps
 
-The **Workflow** page adds roles at three points: before implementation (guidance), before QA (a
-review, optionally a **gate** that sends work back, or a **fixer** that fixes small problems itself),
-and after QA passes (a report). Templates include a second-opinion QA on the other CLI.
+The **Workflow** page has one optional **Second review** before QA, on an agent using the other CLI
+from QA. When it finds a concrete problem, the attempt goes back for correction instead of to QA.
 
 ## Troubleshooting
 

@@ -1455,12 +1455,6 @@ function registerIpc() {
   });
   handle("roles:list", () => roles.load());
   handle("roles:save", (role: Parameters<RolesService["save"]>[0]) => roles.save(role));
-  handle("roles:delete", (id: string) => roles.remove(id));
-  handle("roles:import", async () => {
-    const result = await dialog.showOpenDialog(win!, { title: "Import workflow role (folder with ROLE.md)", properties: ["openDirectory"] });
-    if (result.canceled) return { roles: roles.roles, imported: 0 };
-    return roles.importFolder(result.filePaths[0]);
-  });
   handle("limits:get", () => limits.state);
   handle("limits:refresh", (provider: "codex" | "claude") => limits.refresh(provider, true));
   handle("models:get", () => models.state);

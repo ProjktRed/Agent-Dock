@@ -47,8 +47,8 @@ flowchart TD
 Assessment reads the plan and the code and chooses the next task, with the files it may touch and a
 check command. Implementation makes the change inside those files only. QA runs the check, reviews
 the diff and commits it, or sends it back with what to fix. When a task keeps failing, a stronger
-model (Elevation) revises the strategy, and Resolver helps with blocked tasks. You can add your own
-review steps (workflow roles), such as a second-opinion QA on another CLI.
+model (Elevation) revises the strategy, and Resolver helps with blocked tasks. You can add a second
+review before QA, on another CLI.
 
 ## Install
 

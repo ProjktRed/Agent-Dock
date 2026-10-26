@@ -15,7 +15,7 @@ import {TUNING,stepDown,noteStepDownApproval} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
 import {objectiveWithPriority} from './task-priority.mjs';
-import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
+import {gateFailureText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
 import {missingTools as findMissingTools} from './tool-check.mjs';
@@ -35,7 +35,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
   readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,missingTools=findMissingTools,toolPollMs=10_000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,approveTasks=false,
-  knowledgeFile,roles=[],runRole=null,fixWorkers={},
+  knowledgeFile,roles=[],runRole=null,
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
   const stageRoles=stage=>runRole?roles.filter(role=>role.stage===stage):[];
@@ -269,12 +269,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             if(!r.elevations.includes(r.elevationFingerprint)){r.phase='elevation';r.elevationAutomatic=false;await save();}
           }
           if(r.phase==='passed') {
-            if(!r.afterPassDone&&stageRoles('after-pass').length) {
-              const reports=await runStageRoles('after-pass',{task,commit:r.failure?.commit??null,qaOutput:r.failure?.output??'',attempts:r.attempt,changedFiles:r.qaPacket?.changedFiles??[]});
-              if(reports.stopped)return{status:'stopped'};
-              for(const report of reports.results)await appendFile(path.join(stateDir,'role-reports.ndjson'),JSON.stringify({at:new Date().toISOString(),taskId:task.id,role:report.name,...report.result})+'\n');
-              r.afterPassDone=true;await save();
-            }
             return{status:'passed',attempts:r.attempt,qa:r.failure,history:r.history};
           }
           if(r.phase==='worker-limit') {
@@ -290,16 +284,13 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             continue;
           }
           if(r.phase==='worker') {
-            const guidance=await runStageRoles('before-implementation',{objective,task,fileStatus:describeAllowedPaths(task,workspace)});
-            if(guidance.stopped)return{status:'stopped'};
             if(codex.activeCount!==0)throw new Error('Cannot launch local worker while Codex is alive');
             await codex.assertIdle?.();
             // Kept across a usage-limit retry, so files the stopped run created still count as the worker's own.
             r.scratchBaseline??=await captureScratchBaseline(workspace);await save();
             const knowledge=await selectKnowledge(knowledgeFile,task.prompt+' '+(r.failure?.output??''));
             await emit('known-issues-selected',{knownIssues:[...knowledge.matchAll(/^## (.+)$/gm)].map(m=>m[1])});
-            const roleText=roleGuidanceText(guidance.results);
-            r.promptWithKnowledge=r.prompt+(roleText?'\n\n'+roleText:'')+(knowledge?'\n\n'+knowledge:'');
+            r.promptWithKnowledge=r.prompt+(knowledge?'\n\n'+knowledge:'');
             r.phase='worker-launching';await save();
             const started=Date.now();await emit('cline-started',{attempt:r.attempt,startedAt:new Date(started).toISOString()});
             let workerResult;
@@ -339,11 +330,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             // Reviews travel with the packet: QA and Assessment read them.
             r.qaPacket.roleReviews=reviews.results.map(x=>({role:x.name,gate:x.gate,...x.result}));
             const gate=reviews.results.find(x=>x.gate&&x.result.verdict==='changes-needed');
-            // A fixer makes its own requested fix once per attempt; the result goes through evidence and review again.
-            if(gate&&roles.find(role=>role.id===gate.id)?.fix&&fixWorkers[gate.id]&&!r.fixes?.[r.attempt]) {
-              (r.fixes??={})[r.attempt]={attempt:r.attempt,roleId:gate.id,roleName:gate.name,text:gateFailureText(gate),started:false};
-              r.phase='fixing';await save();continue;
-            }
             if(gate) {
               r.failure={status:'fail',output:gateFailureText(gate),correction:'',commit:'',manualReviewCause:null,gateRole:gate.name};
               await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
@@ -351,20 +337,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
               r.phase='decision';await save();await emit('role-gate-failed',{attempt:r.attempt,roleName:gate.name,qa:r.failure.output});
             } else {r.phase='qa';await save();}
           }
-          if(r.phase==='fixing') {
-            const fix=r.fixes[r.attempt],fixer=fixWorkers[fix.roleId];
-            // Resumed after a crash mid-fix: never rerun it; whatever it left is checked like any change.
-            if(!fix.started&&fixer) {
-              if(codex.activeCount!==0)throw new Error('Cannot launch the fixer while Codex is alive');
-              await codex.assertIdle?.();
-              fix.started=true;await save();
-              const started=Date.now();await emit('role-fix-started',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName});
-              try{const result=await fixer.run(fixPromptText(task,fix,{workspace}),{task,onEvent:async({type,...event})=>{await emit(type,{...event,attempt:r.attempt});}});fix.exitCode=result.exitCode;}
-              catch(error){fix.error=String(error?.message??error).slice(0,500);}
-              await emit('role-fix-finished',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName,exitCode:fix.exitCode??null,error:fix.error??null,durationMs:Date.now()-started});
-            }
-            r.forceFreshQa=true;r.phase='evidence';await save();continue;
-          }
+          // A state saved by 0.38 mid-fix (the removed self-fixing review): whatever the fix left is checked like any change.
+          if(r.phase==='fixing'){r.forceFreshQa=true;r.phase='evidence';await save();continue;}
           if(r.phase==='qa') {
             if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');
             const op=await operation('qa',r.qaPacket,review);if(op.stopped)return{status:'stopped'};

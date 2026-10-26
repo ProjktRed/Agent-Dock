@@ -14,7 +14,7 @@ src/main/        Electron main process (Node)
   store.ts       JSON config in %APPDATA%\Agent Dock\config, secrets via safeStorage (DPAPI)
   discovery.ts   first-run discovery of the CLIs and local model servers on this computer
   projects.ts    register / clone / create workspaces, task history from activity.ndjson
-  roles.ts       workflow roles: ROLE.md files under %APPDATA%\Agent Dock\roles
+  roles.ts       the Second review: a ROLE.md under %APPDATA%\Agent Dock\roles
   lib/           pure logic: engine-args, status mapping, plan parser, git, CLI checks, usage
 src/preload/     contextBridge API (window.api), typed by src/shared/api.ts
 src/renderer/    React UI: Overview (Progress, Usage limits, Token consumption), Projects,
@@ -32,7 +32,7 @@ tests/           vitest unit tests for the main-process logic
 | Implementation agent: provider, model, context, max output, timeout | `--provider`, `--model`, `--cline-context-tokens`, `--cline-max-output-tokens`, `--timeout-seconds` |
 | Implementation agent: thinking (Cline `--thinking`) | `--cline-thinking none\|low\|medium\|high\|xhigh` |
 | Implementation agent on Codex CLI or Claude Code: model, effort, speed, timeout | `--implementation-cli codex\|claude`, `--implementation-model`, `--implementation-effort`, `--implementation-fast`, `--timeout-seconds` |
-| Workflow roles (Workflow tab) with an enabled agent | `--roles-file <state>\workflow-roles.json` (written at start) |
+| Second review (Workflow tab) with an enabled agent | `--roles-file <state>\workflow-roles.json` (written at start) |
 | Engine guardrails off: loop limits (Settings › Workflow rules, Context limits) that differ from the defaults | `--elevation-after`, `--max-corrections`, `--resolver-max-strategies`, `--task-max-files`, `--task-max-new-lines`, `--task-max-read-files` |
 | llama.cpp / Ollama connection address (CLIs) | `--llamacpp-url`, `--ollama-url` |
 | llama.cpp models folder (CLIs › Models, router mode) | `--llamacpp-models-dir` |
