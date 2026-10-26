@@ -8,9 +8,9 @@ import { readJson, writeJson } from "./json-file";
 // only, until it expires, and only while the state it was issued for still holds. The app must be
 // running (it can sit in the tray); it re-checks everything before acting, exactly like a click.
 
-export type ApprovalAction = "approve-plan" | "dismiss-plan" | "resume" | "elevate" | "resolve" | "retry-qa" | "stop" | "approve-task" | "reject-task" | "allow-action" | "refuse-action";
+export type ApprovalAction = "resume" | "elevate" | "resolve" | "retry-qa" | "stop" | "approve-task" | "reject-task" | "allow-action" | "refuse-action";
 export const ACTION_LABELS: Record<ApprovalAction, string> = {
-  "approve-plan": "Approve", "dismiss-plan": "Dismiss", resume: "Resume", elevate: "Elevate", resolve: "Resolve block", "retry-qa": "Retry QA", stop: "Stop",
+  resume: "Resume", elevate: "Elevate", resolve: "Resolve block", "retry-qa": "Retry QA", stop: "Stop",
   "approve-task": "Approve task", "reject-task": "Set aside", "allow-action": "Allow once", "refuse-action": "Refuse",
 };
 const TTL_MS = 12 * 60 * 60_000;
@@ -18,7 +18,7 @@ const TTL_MS = 12 * 60 * 60_000;
  * Email cannot prove who sent a reply (AgentMail reports no SPF/DKIM result, and a From: line is easy to
  * forge), and its codes travel in plain text: email may only stop a run or dismiss a plan change, within an hour.
  */
-export const EMAIL_ACTIONS: ReadonlySet<ApprovalAction> = new Set(["stop", "dismiss-plan", "reject-task", "refuse-action"]);
+export const EMAIL_ACTIONS: ReadonlySet<ApprovalAction> = new Set(["stop", "reject-task", "refuse-action"]);
 const EMAIL_TTL_MS = 60 * 60_000;
 const MAX_WRONG = 5;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -30,7 +30,7 @@ export interface ApprovalRequest {
   title: string;
   message: string;
   actions: ApprovalAction[];
-  /** What the request is about (plan:<proposal id> or state:<runState>:<task>:<reason>); re-checked before acting. */
+  /** What the request is about (task:<id>, action:<id> or state:<runState>:<task>:<reason>); re-checked before acting. */
   target: string;
   createdAt: number;
   expiresAt: number;

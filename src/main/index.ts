@@ -506,7 +506,6 @@ async function startApprovals() {
     stillValid: async (r, action) => {
       const p = store.data.projects.find((x) => x.id === r.projectId && !x.archived);
       if (!p) return false;
-      if (r.target.startsWith("plan:")) return (await engine.planProposals(p)).some((x) => x.id === r.target.slice(5) && x.status === "pending" && x.applies !== false);
       const status = await engine.status(p);
       if (r.target.startsWith("task:")) return (action === "approve-task" || action === "reject-task") && status.taskApproval?.taskId === r.target.slice(5);
       if (r.target.startsWith("action:")) return (action === "allow-action" || action === "refuse-action") && Boolean(status.actionRequests?.some((x) => x.id === r.target.slice(7)));
@@ -516,11 +515,7 @@ async function startApprovals() {
     execute: async (r, action, via) => {
       const p = project(r.projectId), source = `remote:${via}`;
       let result: string;
-      if (action === "approve-plan" || action === "dismiss-plan") {
-        const list = await engine.decidePlanProposal(p, r.target.slice(5), action === "approve-plan" ? "approve" : "dismiss", source);
-        const proposal = list.find((x) => x.id === r.target.slice(5));
-        result = action === "dismiss-plan" ? "plan change dismissed" : proposal?.status === "applied" ? `plan change committed (${proposal.commit?.slice(0, 7)})` : "plan change approved; it is committed between tasks";
-      } else if (action === "approve-task" || action === "reject-task") {
+      if (action === "approve-task" || action === "reject-task") {
         const done = await engine.decideTask(p, r.target.slice(5), action === "approve-task" ? "approve" : "reject", source);
         result = !done ? "that task is no longer waiting" : action === "approve-task" ? "task approved; Implementation starts" : "task set aside; Assessment chooses again";
       } else if (action === "allow-action" || action === "refuse-action") {
@@ -575,9 +570,6 @@ async function handleTransitions(p: Project, prev: ProjectStatus | undefined, ne
       if (settings.general.notifyCompleted) osNotify(`Task approved · ${p.name}`, `${event.taskId ?? "Task"} passed QA${typeof event.attempt === "number" ? ` after ${event.attempt} attempt${event.attempt === 1 ? "" : "s"}` : ""}.`);
       // The engine records automatic Pause before QA PASS; polling must not race
       // the next Assessment or re-pause after the user's Resume.
-    }
-    if (event.type === "plan-proposal" && approvals && typeof event.id === "string") {
-      void approvals.request({ projectId: p.id, projectName: p.name, title: "Supervisor plan change", message: `${String(event.message ?? "")}\n${String(event.preview ?? "")}`, actions: ["approve-plan", "dismiss-plan"], target: `plan:${event.id}` });
     }
     if (isCompactionDone(event) && settings.attention.informational === "windows") {
       osNotify(`Context compacted · ${p.name}`, "The implementation agent's history was compacted.");
@@ -1433,13 +1425,11 @@ function registerIpc() {
     try { const r = await verifyLog(p); return { project: p.name, ok: r.ok, entries: r.entries, lastAt: r.lastAt, brokenAt: r.brokenAt, reason: r.reason, signed: r.signed ?? null, unsigned: r.unsigned ?? 0 }; }
     catch (error) { return { project: p.name, ok: false, entries: 0, lastAt: null, reason: (error as Error).message }; }
   })));
-  handle("plan:proposals", (id: string) => engine.planProposals(project(id)));
   handle("project:runs", (id: string) => engine.runs(project(id)));
   handle("project:exportRun", (id: string, startedAt: string, format: "md" | "html") => exportRunReport(id, String(startedAt), format === "html" ? "html" : "md"));
   handle("diagnostics:export", exportDiagnostics);
   handle("settings:export", exportSettingsFile);
   handle("settings:import", importSettingsFile);
-  handle("plan:decide", (id: string, proposalId: string, decision: "approve" | "dismiss") => engine.decidePlanProposal(project(id), proposalId, decision === "approve" ? "approve" : "dismiss"));
   handle("taskBoard:get", (id: string) => engine.taskBoard(project(id)));
   handle("taskBoard:set", async (id: string, update: unknown) => { const r = await engine.setTaskBoard(project(id), sanitizeTaskBoardUpdate(update)); void pollOnce(); return r; });
   handle("usage", (id: string | null) => usage(id));

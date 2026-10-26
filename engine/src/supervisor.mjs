@@ -1,10 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readImplementationProgress } from "./implementation-progress.mjs";
 import { RUN, runTokens } from "./run-budget.mjs";
 import { notify } from "./notify.mjs";
-import { applyReviewAction, buildReviewPrompt, readDeferred } from "./supervisor-review.mjs";
-import { PLAN_FILE, proposePlanChange } from "./plan-stewardship.mjs";
 import { redactText } from "./redact.mjs";
 import { actionLogHead } from "./action-log.mjs";
 
@@ -14,12 +12,7 @@ import { actionLogHead } from "./action-log.mjs";
 export const SUPERVISOR = {
   mode: "alert", // off | alert | pause | stop
   stallMinutes: 30, repeatFailures: 3, refusals: 5, tokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0,
-  // v2: a model reviews each alert (off | propose | act); defer needs mayDefer; at most reviewMax reviews per run, 10 min apart.
-  review: "off", mayDefer: false, reviewMax: 6,
-  // 0.19.4: the review may also propose IMPLEMENTATION_PLAN.md edits (always proposals; you approve each).
-  planProposals: true,
 };
-const REVIEW_GAP_MS = 10 * 60_000;
 const DEFAULTS = { ...SUPERVISOR };
 const REFUSAL_WINDOW_MS = 10 * 60_000;
 const MODES = new Set(["off", "alert", "pause", "stop"]);
@@ -40,21 +33,14 @@ export function parseSupervisorOptions(options) {
   if (!MODES.has(mode)) throw new Error("--supervisor must be off, alert, pause or stop");
   const read = { stallMinutes: whole(options["sv-stall-minutes"], "sv-stall-minutes", { decimal: true }), repeatFailures: whole(options["sv-repeat-failures"], "sv-repeat-failures"),
     refusals: whole(options["sv-refusals"], "sv-refusals"), tokensPerTask: whole(options["sv-tokens-per-task"], "sv-tokens-per-task"),
-    planDrift: whole(options["sv-plan-drift"], "sv-plan-drift"), scopePaths: whole(options["sv-scope-paths"], "sv-scope-paths"), digestHours: whole(options["sv-digest-hours"], "sv-digest-hours", { decimal: true }),
-    reviewMax: whole(options["sv-review-max"], "sv-review-max") };
-  const review = options["supervisor-review"] ?? DEFAULTS.review;
-  if (!["off", "propose", "act"].includes(review)) throw new Error("--supervisor-review must be off, propose or act");
-  const mayDefer = options["supervisor-may-defer"] === undefined ? false : options["supervisor-may-defer"] === "true" ? true : options["supervisor-may-defer"] === "false" ? false : (() => { throw new Error("--supervisor-may-defer must be true or false"); })();
-  const planOpt = options["sv-plan-proposals"];
-  if (planOpt !== undefined && !["true", "false"].includes(planOpt)) throw new Error("--sv-plan-proposals must be true or false");
-  const planProposals = planOpt === undefined ? DEFAULTS.planProposals : planOpt === "true";
-  return { ...DEFAULTS, ...Object.fromEntries(Object.entries(read).filter(([, v]) => v !== undefined)), mode, review, mayDefer, planProposals };
+    planDrift: whole(options["sv-plan-drift"], "sv-plan-drift"), scopePaths: whole(options["sv-scope-paths"], "sv-scope-paths"), digestHours: whole(options["sv-digest-hours"], "sv-digest-hours", { decimal: true }) };
+  return { ...DEFAULTS, ...Object.fromEntries(Object.entries(read).filter(([, v]) => v !== undefined)), mode };
 }
 
 /** Starts supervising this run. Returns a stop function that clears its timers. */
-export function startSupervisor(state, { workspace, stateDir, config = {}, now = Date.now, reviewer = null } = {}) {
+export function startSupervisor(state, { workspace, stateDir, config = {}, now = Date.now } = {}) {
   Object.assign(SUPERVISOR, DEFAULTS, config);
-  S = { reviewer, reviews: 0, lastReviewAt: -Infinity, reviewing: null, state, workspace, stateDir, now, lastEventAt: now(), stallAlerted: 0, taskId: state.live?.task?.id ?? null, failures: [], refusals: [],
+  S = { state, workspace, stateDir, now, lastEventAt: now(), stallAlerted: 0, taskId: state.live?.task?.id ?? null, failures: [], refusals: [],
     taskStartTokens: runTokens(), burnAlerted: false, passesSincePlanMove: 0, planCompleted: null, alerts: [], digestAt: now() };
   if (SUPERVISOR.mode === "off") return () => {};
   const timer = setInterval(() => void tick().catch(() => {}), 60_000);
@@ -71,46 +57,6 @@ async function alert(monitor, message, { act = false } = {}) {
   if (action) await S.state.setControl(action, { source: "supervisor" });
   await S.state.record({ type: "supervisor-alert", monitor, message, ...(action ? { action } : {}) });
   notify({ type: "supervisor-alert", title: `Supervisor: ${monitor}`, message: action ? `${message} Asked to ${action} at the next safe point.` : message, urgent: Boolean(action) });
-  queueReview(entry);
-}
-
-/** One model review at a time, at most reviewMax per run and 10 minutes apart; the loop never waits for it. */
-function queueReview(entry) {
-  if (!S.reviewer || SUPERVISOR.review === "off" || S.reviewing) return;
-  if (S.reviews >= SUPERVISOR.reviewMax || S.now() - S.lastReviewAt < REVIEW_GAP_MS) return;
-  S.reviews++; S.lastReviewAt = S.now();
-  const run = S;
-  S.reviewing = review(run, entry).catch(async (error) => {
-    await run.state.record({ type: "supervisor-review-failed", message: error.message }).catch(() => {});
-  }).finally(() => { run.reviewing = null; });
-}
-
-async function review(run, alertEntry) {
-  const live = await run.state.readLive().catch(() => null);
-  const events = (await run.state.readEvents(30).catch(() => [])).filter((e) => !/delta$|^cline-thinking/.test(e.type ?? ""));
-  const plan = run.workspace ? await readImplementationProgress(run.workspace, {}) : null;
-  const deferred = run.stateDir ? await readDeferred(run.stateDir) : [];
-  const planText = SUPERVISOR.planProposals && run.workspace ? await readFile(path.join(run.workspace, PLAN_FILE), "utf8").catch(() => null) : null;
-  const result = await run.reviewer(buildReviewPrompt({ alert: alertEntry, task: live?.task ?? null, events, plan, deferred, mayDefer: SUPERVISOR.mayDefer, planText, planProposals: SUPERVISOR.planProposals }));
-  const actions = [];
-  for (const action of result.actions) {
-    const outcome = SUPERVISOR.review === "act" ? await applyReviewAction(run.state, action, { mayDefer: SUPERVISOR.mayDefer }) : "proposed";
-    actions.push({ ...action, result: outcome });
-  }
-  await run.state.record({ type: "supervisor-review", mode: SUPERVISOR.review, monitor: alertEntry.monitor, message: result.summary, actions });
-  // Plan edits are never applied here: a valid set becomes a proposal you approve or dismiss in the app.
-  if (SUPERVISOR.planProposals && planText !== null && result.plan?.edits?.length && run.stateDir) {
-    const proposal = await proposePlanChange({ stateDir: run.stateDir, workspace: run.workspace, reason: result.plan.reason, edits: result.plan.edits, state: run.state });
-    if (proposal.errors) await run.state.record({ type: "plan-proposal-refused", message: proposal.errors.join("; ") });
-    else notify({ type: "plan-proposal", title: "Supervisor: plan change proposed", message: [proposal.reason || "Plan edit", proposal.preview, "Approve or dismiss it in Agent Dock (Overview → Progress)."].join("\n") });
-  }
-  const lines = actions.map((a) => `${a.action}${a.action === "tighten-cap" ? ` ${a.cap} → ${a.value}` : ""}: ${a.result}`);
-  notify({ type: "supervisor-review", title: "Supervisor review", message: [result.summary, ...lines].join("\n") });
-}
-
-/** Waits for a review still running (end of run). */
-export async function awaitSupervisorReview() {
-  await S?.reviewing;
 }
 
 /** Normalised first lines of a QA failure, so the same failure with other numbers still matches. */

@@ -35,14 +35,14 @@ const ask = { projectId: "p1", projectName: "Demo", title: "Needs your review", 
 
 describe("signed remote approvals", () => {
   it("codes are bound to the request, action, target and expiry", () => {
-    const r = { id: "0a1b2c3d", projectId: "p1", target: "plan:x", expiresAt: 5 };
-    const code = signApproval(key, r, "approve-plan");
+    const r = { id: "0a1b2c3d", projectId: "p1", target: "task:x", expiresAt: 5 };
+    const code = signApproval(key, r, "approve-task");
     expect(code).toMatch(/^[A-Z2-9]{10}$/);
-    expect(signApproval(key, r, "approve-plan")).toBe(code);
-    expect(signApproval(key, r, "dismiss-plan")).not.toBe(code);
-    expect(signApproval(key, { ...r, target: "plan:y" }, "approve-plan")).not.toBe(code);
-    expect(signApproval(key, { ...r, expiresAt: 6 }, "approve-plan")).not.toBe(code);
-    expect(signApproval(Buffer.alloc(32, 8), r, "approve-plan")).not.toBe(code);
+    expect(signApproval(key, r, "approve-task")).toBe(code);
+    expect(signApproval(key, r, "reject-task")).not.toBe(code);
+    expect(signApproval(key, { ...r, target: "task:y" }, "approve-task")).not.toBe(code);
+    expect(signApproval(key, { ...r, expiresAt: 6 }, "approve-task")).not.toBe(code);
+    expect(signApproval(Buffer.alloc(32, 8), r, "approve-task")).not.toBe(code);
   });
 
   it("email replies count only the code typed above the quoted original", () => {

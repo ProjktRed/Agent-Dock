@@ -22,7 +22,6 @@ import type {
   UsageSummary,
   LocalContext,
   NotifyChannel,
-  PlanProposal,
   RunReport,
   SandboxResult,
   WorkflowRole,
@@ -140,9 +139,7 @@ export interface DesktopApi {
   /** Saves one run's report as Markdown or HTML (save dialog); the path, or null when cancelled. */
   exportRun(projectId: string, startedAt: string, format: "md" | "html"): Promise<string | null>;
   /** Supervisor plan proposals for a project, newest last. */
-  planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */
-  decidePlanProposal(projectId: string, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]>;
   /** The Task board (Planned, In progress, Finished) with what is being worked on now. */
   taskBoard(projectId: string): Promise<TaskBoard>;
   /** Saves the priority order, a reset to plan order or the grouping; a reorder on a stale revision returns ok: false with the current board. */

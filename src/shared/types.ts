@@ -226,17 +226,6 @@ export interface SupervisorSettings {
   planDrift: number;
   scopePaths: number;
   digestHours: number;
-  /** v2: a model reviews each alert. propose: actions are suggestions; act: allowed actions are carried out. */
-  review?: "off" | "propose" | "act";
-  /** auto = the orchestrator's CLI (Codex or Claude Code). local = an OpenAI-compatible server at reviewerBaseUrl. */
-  reviewer?: "auto" | "codex" | "claude" | "local";
-  reviewerModel?: string;
-  reviewerBaseUrl?: string;
-  /** Owner's choice: the Supervisor may set a stuck task aside (its work stashed) and continue with another. */
-  mayDefer?: boolean;
-  reviewMax?: number;
-  /** The review may propose IMPLEMENTATION_PLAN.md edits; each one waits for your approval. */
-  planProposals?: boolean;
 }
 
 export interface AttentionPolicy {
@@ -456,7 +445,6 @@ export interface PlanTask {
   depth: number;
 }
 
-/** A Supervisor-proposed IMPLEMENTATION_PLAN.md change (engine/src/plan-stewardship.mjs). */
 /** One finished run (engine/src/run-budget.mjs writeRunReport). */
 export interface RunReport {
   unattended: boolean;
@@ -483,20 +471,6 @@ export interface RunReport {
 
 /** Remote notification channels the engine sends to (engine/src/notify.mjs). */
 export type NotifyChannel = "webhook" | "discord" | "slack" | "telegram" | "email";
-
-export interface PlanProposal {
-  id: string;
-  at: string;
-  source: string;
-  reason: string;
-  preview: string;
-  status: "pending" | "approved" | "applied" | "dismissed" | "failed";
-  /** Pending/approved only: whether it still fits today's plan, and why not. */
-  applies?: boolean;
-  problem?: string | null;
-  commit?: string;
-  decidedAt?: string;
-}
 
 export interface PlanPhase {
   number: number;

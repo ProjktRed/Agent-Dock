@@ -52,7 +52,7 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   environment of the sandbox account rather than yours on Windows; agents' own commands are covered by the
   next setting, not this one.
 - **Sandboxed agent commands (experimental, off by default)**, in the same place. Every Codex and Claude
-  Code call (orchestrator roles, Implementation, manual Elevation, the Supervisor's reviewer) runs its shell
+  Code call (orchestrator roles, Implementation, manual Elevation) runs its shell
   commands sandboxed. Claude Code gets its own sandbox in the settings Agent Dock passes (the same sandbox
   runtime; on Windows the `srt-sandbox` account): no network, writes only in the workspace, it fails instead
   of running a command unconfined, and a command cannot ask to leave it. Codex on Windows gets
@@ -131,7 +131,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   running as you, which can decrypt the key like any other saved secret (see above), and that includes
   a project check.
 - Remote approvals: Telegram buttons count only from your private chat. Email cannot prove who sent a
-  reply, so an email reply can only stop a run or dismiss a plan change, within an hour of the request.
+  reply, so an email reply can only stop a run, set a task aside or refuse an agent's action, within an hour
+  of the request.
 - llama-server started by Agent Dock listens on this computer only (127.0.0.1); it has no API key.
 - A Cline or OpenCode worker on a cloud provider never gets the provider key. The engine keeps it in memory
   and runs a key broker on 127.0.0.1 for the run: the worker is pointed at the broker and given a random

@@ -6,7 +6,6 @@ import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { readDeferred } from "./supervisor-review.mjs";
 import { STEP_DOWN } from "./engine-tuning.mjs";
 
 const exec = promisify(execFile);
@@ -62,6 +61,11 @@ async function stashWork(workspace, message, pathspec) {
  * ignored files) goes into a named git stash, so nothing is lost or reset; Agent Dock's own state
  * folder is excluded when it sits inside the workspace. Refuses when HEAD moved from the baseline.
  */
+/** Tasks set aside (by you, a missing tool, or a failed step-down), newest last. */
+export async function readDeferred(stateDir) {
+  try { const list = JSON.parse(await readFile(path.join(stateDir, "deferred-tasks.json"), "utf8")); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+
 export async function deferTask({ workspace, stateDir, task, baselineSha, reason, stepDown = null }) {
   const head = await git(workspace, ["rev-parse", "HEAD"]);
   if (baselineSha && head !== baselineSha) return { blocked: `Cannot defer ${task.id}: HEAD moved from the task's baseline` };

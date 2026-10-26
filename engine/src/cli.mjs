@@ -20,10 +20,9 @@ import { sandboxProblem, useSandboxedAgents, useSandboxedChecks } from "./sandbo
 import { startAskRun, useActionAsk } from "./guard/ask.mjs";
 import { parseRunLimits, startDeadline, useRunLimits, watchUsage, writeRunReport } from "./run-budget.mjs";
 import { saveTaskDefinition } from "./task-archive.mjs";
-import { applyApprovedPlanProposals, queuePlanTick } from "./plan-stewardship.mjs";
+import { applyPlanTicksBetweenTasks, queuePlanTick } from "./plan-stewardship.mjs";
 import { applyRetention } from "./retention.mjs";
-import { awaitSupervisorReview, digest, noteActivity, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
-import { createReviewer } from "./supervisor-review.mjs";
+import { digest, noteActivity, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
 import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./parallel-run.mjs";
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
@@ -155,18 +154,13 @@ notifyFromEnv(engineOnlyEnv());
 const supervisorConfig = parseSupervisorOptions(options);
 await watchUsage(state, stateDir);
 const deadline = startDeadline(state);
-// A reviewer that cannot be set up turns the review off for this run instead of failing the run.
-const reviewer = supervisorConfig.mode !== "off" && supervisorConfig.review !== "off"
-  ? await createReviewer({ kind: options["supervisor-reviewer"] ?? (useClaude ? "claude" : "codex"), model: options["supervisor-model"], baseUrl: options["supervisor-base-url"], stateDir, workspace, codexLauncher, options })
-    .catch(async (error) => { await state.record({ type: "supervisor-review-failed", message: `Supervisor review is off for this run: ${error.message}` }); return null; })
-  : null;
 // Retention: old per-call folders, Cline sessions and log archives go before the run adds new ones.
 const retentionDays = options["retention-days"] === undefined ? 30 : Number(options["retention-days"]);
 if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new Error("--retention-days must be a number of days, 0 to keep everything");
 const retention = await applyRetention(stateDir, { days: retentionDays }).catch(() => null);
 if (retention && (retention.calls || retention.sessions || retention.setAside || retention.activityTrimmed || retention.actionLogRotated || retention.actionLogPruned))
   await state.record({ type: "retention", days: retentionDays, ...retention });
-const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig, reviewer });
+const stopSupervisor = startSupervisor(state, { workspace, stateDir, config: supervisorConfig });
 // Parallel rounds start only from a task boundary: a task in progress finishes on its own first.
 const inProgress = await readFile(path.join(stateDir, "current-task.json"), "utf8").then((text) => JSON.parse(text)?.automation?.recovery?.phase !== "passed", () => false);
 // A fresh run: what happens before its first task (Assessment failing, a lane cap) is not the last run's task.
@@ -189,7 +183,7 @@ const loopEvent = async (event) => {
   await recordLoopEvent(state,event,options);
   if (!singleTask && event.type === "qa-pass" && Array.isArray(event.planItems)) for (const item of event.planItems) await queuePlanTick({ stateDir, taskId: event.taskId ?? state.live?.task?.id, item }).catch(() => {});
 };
-const betweenTasks = () => (singleTask ? Promise.resolve() : applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {}));
+const betweenTasks = () => (singleTask ? Promise.resolve() : applyPlanTicksBetweenTasks({ stateDir, workspace, state }).catch(() => {}));
 try {
   const result = parallel ? await runParallel({
     workspace, stateDir, objective: options.objective, lanes: capped.lanes, maxRounds,
@@ -228,9 +222,8 @@ try {
   // A run that ends right after an approval (a task limit, Stop) applies its plan check-offs and approved plan changes now (clean tree only).
   // Never while a task is in progress: an extra commit would move HEAD under its recovery.
   const current = await readFile(path.join(stateDir, "current-task.json"), "utf8").then(JSON.parse, () => null);
-  if (!singleTask && (!current || current.automation?.recovery?.phase === "passed")) await applyApprovedPlanProposals({ stateDir, workspace, state }).catch(() => {});
+  if (!singleTask && (!current || current.automation?.recovery?.phase === "passed")) await applyPlanTicksBetweenTasks({ stateDir, workspace, state }).catch(() => {});
   stopSupervisor();
-  await awaitSupervisorReview();
   await flushNotifications();
   await flushActionLog();
 }

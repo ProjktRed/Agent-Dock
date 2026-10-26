@@ -8,6 +8,7 @@ import { ACTION_LOG, pruneActionLog, rotateActionLog } from "./action-log.mjs";
 // anything older than the retention period goes, but the newest folders always stay (they are what
 // a crash or a question about the last run needs). 0 days keeps everything.
 export const RETENTION_DEFAULTS = { days: 30, keepCalls: 100, keepSessions: 20, keepRuns: 50, maxActivityBytes: 20 * 1024 * 1024, keepActivityLines: 5000, maxActionLogBytes: 20 * 1024 * 1024 };
+// supervisor-review/ is from runs before 0.39 (the Supervisor's model review); retention still clears it.
 const CALL_DIRS = ["codex", path.join("supervisor-review", "codex")];
 
 async function pruneFolders(dir, { keep, cutoff }) {

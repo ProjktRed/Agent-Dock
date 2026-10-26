@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { readImplementationProgress } from "./implementation-progress.mjs";
-import { readDeferred } from "./supervisor-review.mjs";
+import { readDeferred } from "./defer-task.mjs";
 
 /**
  * The Task board's priority order: <stateDir>/task-board.json, written by the app (src/main/lib/task-board.ts),

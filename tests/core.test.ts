@@ -115,16 +115,7 @@ describe("engine launch args", () => {
     const off = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, mode: "off" } } } });
     expect(off.args[off.args.indexOf("--supervisor") + 1]).toBe("off");
     expect(off.args).not.toContain("--sv-stall-minutes");
-    const review = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "act", reviewer: "local", reviewerModel: "qwen3", mayDefer: true } } } });
-    const rflag = (name: string) => review.args[review.args.indexOf(name) + 1];
-    expect([rflag("--supervisor-review"), rflag("--supervisor-reviewer"), rflag("--supervisor-model"), rflag("--supervisor-base-url"), rflag("--supervisor-may-defer")]).toEqual(["act", "local", "qwen3", "http://127.0.0.1:8080/v1", "true"]);
-    expect(rflag("--sv-plan-proposals")).toBe("true");
-    const noPlan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "propose", planProposals: false } } } });
-    expect(noPlan.args[noPlan.args.indexOf("--sv-plan-proposals") + 1]).toBe("false");
-    const noModel = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "propose", reviewer: "local" } } } });
-    expect(noModel.problems).toContain("The local Supervisor reviewer needs a model name.");
-    expect(plan.args[plan.args.indexOf("--supervisor-review") + 1]).toBe("off");
-    expect(plan.args).not.toContain("--supervisor-reviewer");
+    for (const f of ["--supervisor-review", "--supervisor-reviewer", "--sv-plan-proposals"]) expect(plan.args).not.toContain(f);
   });
   it("maps the default agents onto engine flags", () => {
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
