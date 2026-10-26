@@ -98,12 +98,7 @@ The scope guard, independent QA, QA-only commits and the spend budgets are the s
 Max, Team or API plan, or a local model with at least a 128K context; Eco otherwise). It never
 suggests Max and never changes the mode by itself.
 
-**Step down** (on by default): in Standard or Max, a task that fails review twice is set aside, its
-work kept in a named git stash, and redone one size smaller (Max to Standard, Standard to Eco).
-Assessment is told to redo that work now, starting with its first part. The configured size comes
-back once the set-aside task's plan items are checked off, or after 5 approved tasks. The
-step-down is saved in the run's state folder, so Stop/Run, an app restart or crash recovery keeps it;
-it is dropped if you change the task size or turn step-down off before running again. Run reports show the task size, step-downs and plan items
+The task size never changes by itself during a run. Run reports show the task size and plan items
 finished; Overview's estimate compares the sizes this project has run in.
 
 ## Loop limits
@@ -198,9 +193,7 @@ All per project in Projects › Workflow, unless noted.
 - **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
   round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
   (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>-<run>`)
-  on an `agent-dock/parallel-…` branch, at the same time. A task's engine does not step down (while the
-  run itself is stepped down, it works at the smaller size, and merged tasks count toward ending the
-  step-down); a task that is set aside ends there, is listed with the run's deferred tasks, and goes
+  on an `agent-dock/parallel-…` branch, at the same time. A task that is set aside ends there, is listed with the run's deferred tasks, and goes
   back to Assessment. The run then applies each approved change
   to your branch without committing, runs that task's check on the combined code, and commits only if
   it passes. A change that does not apply or fails stays on its branch and goes back to Assessment;

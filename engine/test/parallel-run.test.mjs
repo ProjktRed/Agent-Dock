@@ -5,10 +5,10 @@ import {mkdtemp,readFile,rm,stat,utimes,writeFile} from 'node:fs/promises';
 import {execFileSync,spawn} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {childArgs,childEnv,defaultRunCheck,shareElevations,endStepDown,forwardControl,freeWorktree,readChildRecord,runParallel,spawnChildEngine,stopOrphanChildren,worktreeFor,writeChildRecord} from '../src/parallel-run.mjs';
+import {childArgs,childEnv,defaultRunCheck,shareElevations,forwardControl,freeWorktree,readChildRecord,runParallel,spawnChildEngine,stopOrphanChildren,worktreeFor,writeChildRecord} from '../src/parallel-run.mjs';
 import {deferTask} from '../src/defer-task.mjs';
 import {DashboardState} from '../src/dashboard-state.mjs';
-import {STEP_DOWN,TUNING,loadStepDown,parseTuning,stepDown,useTuning} from '../src/engine-tuning.mjs';
+
 import {RUN,useRunLimits,watchUsage} from '../src/run-budget.mjs';
 
 async function repo(t){
@@ -28,9 +28,9 @@ const commitIn=async(git,{task,worktree})=>{
 const started=(events,id)=>events.find(e=>e.type==='parallel-task-started'&&e.taskId===id)?.worktree;
 const readJson=file=>readFile(file,'utf8').then(JSON.parse,()=>({}));
 
-test('child engines get the parent arguments for one task in its worktree, without step-down',()=>{
+test('child engines get the parent arguments for one task in its worktree',()=>{
  const args=childArgs(['--workspace','C:/p','--objective','Build','--parallel','3','--auto-continue','false','--step-down','true','--task','old.json'],{worktree:'C:/p-parallel/A',stateDir:'C:/s/A',taskFile:'C:/s/A/task.json'});
- assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
+ assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
  assert.equal(worktreeFor(path.join('C:','work','proj'),'T 1-2'),path.join('C:','work','proj-parallel','T_1-2'));
 });
 
@@ -269,31 +269,6 @@ test('a second unapproved check command in a row blocks the run',async t=>{
 });
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-test('a merged task ends a saved step-down, and while it lasts task engines work at the stepped-down size',async t=>{
- const {ws,stateDir,git}=await repo(t);
- t.after(()=>useTuning());
- mkdirSync(stateDir,{recursive:true});
- useTuning(parseTuning({'task-mode':'standard'}));
- await loadStepDown(stateDir);
- stepDown({id:'Big',name:'Big',planItems:['Add a']});await STEP_DOWN.saving;
- await writeFile(path.join(stateDir,'deferred-tasks.json'),JSON.stringify([{id:'Big',name:'Big',reason:'Failed review twice',stash:null,stepDown:{from:'standard',to:'eco'}}]));
- const sizing=STEP_DOWN.active?TUNING:null;
- assert.deepEqual(childArgs(['--objective','B','--task-mode','standard','--task-max-files','12'],{worktree:'W',stateDir:'S',taskFile:'T',sizing}),
-  ['--objective','B','--task-mode','eco','--task-max-files','1','--task-max-new-lines','200','--task-max-read-files','3','--workspace','W','--state-dir','S','--task','T','--single-task','true','--auto-continue','true','--step-down','false','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
- const objectives=[],events=[];let n=0;
- const onEvent=async e=>events.push(e);
- const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,
-  assess:async({objective})=>{objectives.push(objective);return ++n===1?{status:'task',task:task('A','a.txt',{planItems:['Add a']})}:{status:'done'};},
-  runChild:async run=>commitIn(git,run),runCheck:async()=>({exitCode:0,output:''}),onEvent,readControl:async()=>({}),onMerged:endStepDown(onEvent)});
- assert.equal(result.status,'done');
- assert.match(objectives[0],/Stepped down: Big/);
- assert.doesNotMatch(objectives[1],/Stepped down/,'the next round plans at the configured size again');
- assert.deepEqual(events.filter(e=>e.type==='task-mode-restored').map(({mode,from})=>({mode,from})),[{mode:'standard',from:'eco'}]);
- assert.equal(TUNING.taskMode,'standard');
- await STEP_DOWN.saving;
- assert.ok(!existsSync(path.join(stateDir,'step-down.json')));
-});
 
 test('Resume reaches a task engine waiting out a usage limit, and the run says once which task waits',async t=>{
  const {ws,stateDir,git}=await repo(t);

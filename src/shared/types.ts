@@ -199,8 +199,6 @@ export interface WorkflowSettings {
   /** Task size (engine --task-mode): eco splits plan items into small tasks, standard does one plan item per task,
    *  max has no fixed size apart from maxLimits. */
   taskMode?: TaskMode;
-  /** Standard or max: a task that fails review twice is set aside and redone one size smaller (default on). */
-  stepDown?: boolean;
   /** Max mode's own limits (Max limits in the sidebar); 0 = no limit. */
   maxLimits?: MaxLimits;
   /** Tasks run side by side in one run, each in its own git worktree (engine --parallel); 1 = one at a time. */
@@ -507,7 +505,7 @@ export type TaskBoardColumn = "planned" | "in-progress" | "finished";
 
 /** Who is working on an In progress item, or why a Planned one is set aside. */
 export interface TaskBoardActivity {
-  kind: "current" | "parallel" | "step-down" | "deferred";
+  kind: "current" | "parallel" | "deferred";
   taskId: string;
   name: string;
   /** Parallel: the task engine's lane folder. Deferred: the reason. */

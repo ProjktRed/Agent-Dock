@@ -610,11 +610,11 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(flag(standard, "--task-mode")).toBe("standard");
     expect(standard).not.toContain("--task-max-files");
     s.workflow.taskMode = "eco";
-    const p = project({ workflowOverrides: { taskMode: "max", stepDown: false } });
+    const p = project({ workflowOverrides: { taskMode: "max" } });
     s.workflow.maxLimits = { files: 25, newLines: 0, readFiles: 0, timeoutMinutes: 90 };
     const max = buildEngineArgs({ project: p, agents: agents(), clis: clis(), settings: s }).args;
     expect(flag(max, "--task-mode")).toBe("max");
-    expect(flag(max, "--step-down")).toBe("false");
+    expect(max).not.toContain("--step-down");
     expect(flag(max, "--task-max-files")).toBe("25");
     expect(max).not.toContain("--task-max-new-lines");
     expect(flag(max, "--timeout-seconds")).toBe("5400");

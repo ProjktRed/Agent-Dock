@@ -13,7 +13,6 @@ type Grouping = "phase" | "flat";
 function activityText(a: TaskBoardActivity): string {
   if (a.kind === "current") return `${a.taskId} · ${a.name}`;
   if (a.kind === "parallel") return `Parallel · ${a.taskId}${a.detail ? ` (${a.detail})` : ""}`;
-  if (a.kind === "step-down") return `Step-down redo · ${a.taskId}`;
   return `Deferred · ${a.taskId}`;
 }
 
@@ -260,7 +259,7 @@ export function TaskBoardPage() {
                   <span className="row wrap" style={{ gap: 6 }}>
                     <PhaseChip item={item} />
                     {item.activity.filter((a) => a.kind !== "deferred").map((a) => (
-                      <span key={`${a.kind}:${a.taskId}`} className={`chip ${a.kind === "parallel" ? "lav" : a.kind === "step-down" ? "warn" : "info"}`} title={a.name}>{activityText(a)}</span>
+                      <span key={`${a.kind}:${a.taskId}`} className={`chip ${a.kind === "parallel" ? "lav" : "info"}`} title={a.name}>{activityText(a)}</span>
                     ))}
                     <ItemBadges item={item} />
                   </span>

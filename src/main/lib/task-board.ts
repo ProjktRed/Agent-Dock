@@ -46,15 +46,14 @@ export async function readTaskBoardState(stateDir: string): Promise<TaskBoardSta
 }
 
 /** What is being worked on, from the engine's state folder. */
-export async function readBoardActivity(stateDir: string, live: { task?: BoardTask | null; stage?: string } | null, processAlive: boolean): Promise<Pick<BoardInputs, "current" | "parallel" | "stepDown" | "deferred">> {
+export async function readBoardActivity(stateDir: string, live: { task?: BoardTask | null; stage?: string } | null, processAlive: boolean): Promise<Pick<BoardInputs, "current" | "parallel" | "deferred">> {
   const read = <T>(file: string) => readJson<T | null>(path.join(stateDir, file), null).catch(() => null);
-  const [saved, stepDown, deferredRaw] = await Promise.all([
+  const [saved, deferredRaw] = await Promise.all([
     read<BoardTask & { automation?: { recovery?: { phase?: string } | null } }>("current-task.json"),
-    read<{ taskId: string; taskName?: string; items?: string[] }>("step-down.json"),
     read<BoardInputs["deferred"]>("deferred-tasks.json"),
   ]);
   const deferred = Array.isArray(deferredRaw) ? deferredRaw.filter((d) => d && typeof d.id === "string") : [];
-  const setAside = new Set(deferred.filter((d) => !d.stepDown).map((d) => d.id));
+  const setAside = new Set(deferred.map((d) => d.id));
   // The engine's task: the one live.json shows while it runs (a parallel round's placeholder names no items),
   // else a task it left unfinished (stopped, blocked, paused); an approved or set-aside task is not.
   let current: BoardTask | null = null;
@@ -76,7 +75,6 @@ export async function readBoardActivity(stateDir: string, live: { task?: BoardTa
   return {
     current,
     parallel,
-    stepDown: stepDown && typeof stepDown.taskId === "string" ? { taskId: stepDown.taskId, taskName: stepDown.taskName, items: Array.isArray(stepDown.items) ? stepDown.items : [] } : null,
     deferred,
   };
 }

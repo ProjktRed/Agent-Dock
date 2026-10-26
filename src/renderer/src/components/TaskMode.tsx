@@ -4,7 +4,7 @@ import { TASK_MODES, maxLimitsOf, suggestTaskMode, taskModeOf } from "@shared/ta
 import { useApp } from "../store";
 import { useLimits } from "../pages/overview/UsageTab";
 import { Icon } from "./Icon";
-import { Modal, Segmented, SetRow, Support, Toggle } from "./ui";
+import { Modal, Segmented, SetRow, Support } from "./ui";
 
 /** Asks before Max mode is turned on. */
 export function MaxModeConfirm({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) {
@@ -36,7 +36,7 @@ export function TaskModePicker({ value, onChange, label = "Task size" }: { value
   );
 }
 
-/** Settings › Workflow rules: the default task size, the step-down and a suggestion for the current agents. */
+/** Settings › Workflow rules: the default task size and a suggestion for the current agents. */
 export function TaskModeCard() {
   const { snap, saveSettings } = useApp();
   const limits = useLimits();
@@ -57,10 +57,7 @@ export function TaskModeCard() {
           ? <span className="chip ok">{TASK_MODES.find((m) => m.mode === suggestion.mode)!.label} (current)</span>
           : <button className="btn sm" onClick={() => set({ taskMode: suggestion.mode })}>Use {TASK_MODES.find((m) => m.mode === suggestion.mode)!.label}</button>}
       </SetRow>
-      <SetRow title="Step down on repeated failures" desc="Standard or Max: a task that fails review twice is set aside (its work kept in a git stash) and redone one size smaller, Max to Standard and Standard to Eco, until its plan items are done.">
-        <Toggle on={w.stepDown !== false} disabled={mode === "eco"} onChange={(stepDown) => set({ stepDown })} label="Step down on repeated failures" />
-      </SetRow>
-      <span className="hint">Projects can override the mode in Projects › Workflow. Eco's sizing can be tuned in Context limits with engine guardrails off.</span>
+      <span className="hint">Projects can override the mode in Projects › Workflow.</span>
     </section>
   );
 }

@@ -61,8 +61,7 @@ Settings › Workflow rules › **Task size**, or per project in Projects › Wo
 - **Max**: no size limits. Agent Dock asks before turning it on, and a **Max limits** button appears
   in the sidebar so you can set your own caps. Use it only when you know your model and plan can take it.
 
-**Suggested** shows which mode fits your Implementation agent. With **Step down** on, a large task
-that fails review twice is redone one size smaller, so a stuck run keeps moving.
+**Suggested** shows which mode fits your Implementation agent.
 
 ## Running unattended
 

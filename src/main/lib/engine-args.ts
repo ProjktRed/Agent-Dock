@@ -320,7 +320,6 @@ ${project.objective}` : project.objective;
   // Task size: eco and standard use the engine's own sizing; max only the limits you set.
   const taskMode = taskModeOf(workflow);
   if (taskMode !== "eco") args.push("--task-mode", taskMode);
-  if (taskMode !== "eco" && workflow.stepDown === false) args.push("--step-down", "false");
   if (taskMode === "max") {
     const max = maxLimitsOf(workflow);
     if (max.files) args.push("--task-max-files", String(max.files));

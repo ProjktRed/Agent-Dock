@@ -109,7 +109,6 @@ export const DEFAULT_SETTINGS: Settings = {
     unattended: false,
     approveTasks: false,
     taskMode: "eco",
-    stepDown: true,
     parallelTasks: 1,
     maxLimits: { files: 0, newLines: 0, readFiles: 0, timeoutMinutes: 0 },
     unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },

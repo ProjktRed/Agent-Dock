@@ -10,7 +10,6 @@ import { actionLogKeyHex } from "./action-log.mjs";
 import { mergeDeferred, objectiveWithDeferred } from "./defer-task.mjs";
 import { taskPrioritySection } from "./task-priority.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
-import { noteStepDownApproval } from "./engine-tuning.mjs";
 import { validateTask } from "./node-loop.mjs";
 import { runCheckCommand } from "./qa-runner.mjs";
 import { addRunElevations, addRunUsage, BUDGET_FLAGS, elevationBudget, RUN_USAGE_FILE } from "./run-budget.mjs";
@@ -61,8 +60,6 @@ async function removeWorktree(workspace, worktree) {
   await git(workspace, ["worktree", "remove", "--force", worktree]);
 }
 
-const SIZE_FLAGS = ["--task-mode", "--task-max-files", "--task-max-new-lines", "--task-max-read-files"];
-
 /** --supervisor, --supervisor-* and --sv-*: the parent's Supervisor watches the run; a task's engine runs none. */
 const supervisorFlag = (name) => name === "--supervisor" || name.startsWith("--supervisor-") || name.startsWith("--sv-");
 
@@ -79,8 +76,6 @@ function rebaseProtected(value, workspace, worktree) {
 }
 
 /** Child engine arguments: the parent's, for one task in its worktree with its own state folder.
- *  No step-down in a task's engine: the parent plans the next round. sizing (the parent's tuning while it is
- *  stepped down) replaces the configured task size, so the task's engine works at the size it was planned for.
  *  No Supervisor either (no alerts, model review or digests of its own): the parent supervises the whole run.
  *  No budget of its own (tokens, spend, tasks, hours): the parent counts its usage and stops it at the run's limits. */
 /**
@@ -94,9 +89,9 @@ export function shareElevations({ max = 0, used = 0 } = {}, count) {
   return Array.from({ length: count }, (_, i) => each + (i < extra ? 1 : 0));
 }
 
-export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, elevations = null }) {
+export function childArgs(argv, { worktree, stateDir, taskFile, elevations = null }) {
   const limited = Number.isInteger(elevations);
-  const drop = new Set(["--approve-tasks", "--ask-state-dir", "--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", "--local-server-managed", "--parallel-child", ...BUDGET_FLAGS, ...(sizing ? SIZE_FLAGS : []), ...(limited ? ["--max-elevations"] : []), ...(limited && elevations === 0 ? ["--sol-reassessment"] : [])]);
+  const drop = new Set(["--approve-tasks", "--ask-state-dir", "--workspace", "--state-dir", "--task", "--parallel", "--max-rounds", "--single-task", "--auto-continue", "--step-down", "--local-server-managed", "--parallel-child", ...BUDGET_FLAGS, ...(limited ? ["--max-elevations"] : []), ...(limited && elevations === 0 ? ["--sol-reassessment"] : [])]);
   let workspace = null, parentState = null, asks = false;
   for (let i = 0; i < argv.length; i += 2) {
     if (argv[i] === "--workspace") workspace = argv[i + 1];
@@ -108,12 +103,11 @@ export function childArgs(argv, { worktree, stateDir, taskFile, sizing = null, e
     if (drop.has(argv[i]) || supervisorFlag(argv[i])) continue;
     out.push(argv[i], argv[i] === "--protected-paths" ? rebaseProtected(argv[i + 1], workspace, worktree) : argv[i + 1]);
   }
-  const size = sizing ? ["--task-mode", sizing.taskMode, "--task-max-files", String(sizing.taskMaxFiles), "--task-max-new-lines", String(sizing.taskMaxNewLines), "--task-max-read-files", String(sizing.taskMaxReadFiles)] : [];
   const share = !limited ? [] : elevations > 0 ? ["--max-elevations", String(elevations)] : ["--sol-reassessment", "false"];
   // A task's questions (guard/ask.mjs) go where the app looks: the run's own state folder. Tasks were approved
   // when the run planned the round, so a task's engine never waits for that.
   const ask = asks && parentState ? ["--ask-state-dir", path.resolve(parentState)] : [];
-  return [...out, ...size, ...share, ...ask, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--step-down", "false", "--supervisor", "off", "--local-server-managed", "external", "--parallel-child", "true"];
+  return [...out, ...share, ...ask, "--workspace", worktree, "--state-dir", stateDir, "--task", taskFile, "--single-task", "true", "--auto-continue", "true", "--supervisor", "off", "--local-server-managed", "external", "--parallel-child", "true"];
 }
 
 /** A task engine's environment: the parent's without AGENT_DOCK_NOTIFY, so only the parent sends notifications. */
@@ -138,11 +132,6 @@ export function writeChildRecord(childState, fields) {
   return next;
 }
 
-/** onMerged for a run: a merged task counts toward ending a step-down, as an approved task does in the normal loop. */
-export const endStepDown = (onEvent) => async (task) => {
-  const restored = noteStepDownApproval(task);
-  if (restored) await onEvent({ type: "task-mode-restored", mode: restored.mode, from: restored.from });
-};
 
 /** Runs one child engine to the end of its task; resolves with its loop result, approved commit and usage. */
 export function spawnChildEngine({ cliPath, args, stateDir, env = process.env }) {

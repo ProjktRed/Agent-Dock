@@ -11,7 +11,7 @@ import {ELEVATE_MODEL} from './codex-worker.mjs';
 import {compactCorrections,correctionInstructions,correctionText,packetForPrompt,qaEnvironmentFailure,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
-import {TUNING,stepDown,noteStepDownApproval} from './engine-tuning.mjs';
+import {TUNING} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
 import {objectiveWithPriority} from './task-priority.mjs';
@@ -371,17 +371,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const control=await readControl();
             const manual=manualElevation || Number(control.elevateGeneration??0)>Number(r.elevateGeneration??0);
             if(manual)r.elevateGeneration=control.elevateGeneration;
-            // Step-down: a standard- or max-sized task that failed review twice is set aside (work stashed) and redone one size smaller.
-            const failedReviews=r.history.filter(h=>h.qa&&h.qa.status!=='pass').length;
-            if(!manual&&TUNING.stepDown&&TUNING.taskMode!=='eco'&&failedReviews>=2) {
-              const from=TUNING.taskMode,to=from==='max'?'standard':'eco',reason=`Stepped down from ${from} to ${to} size after ${failedReviews} failed reviews`;
-              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason,stepDown:{from,to}});
-              if(deferred.blocked)return block(deferred.blocked);
-              stepDown(task);
-              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
-              await emit('task-stepped-down',{taskId:task.id,from,to,reason,stash:deferred.entry.stash?.message??null});
-              return{status:'stepped-down',reason};
-            }
             const auto=solReassessmentEnabled&&elevationAllowed()&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
             // Optional correction limit: stop for the user; Resume grants another round of corrections.
             if(!manual&&!auto&&TUNING.maxCorrections>0&&r.correctionCount-(r.correctionLimitBase??0)>=TUNING.maxCorrections) {
@@ -432,11 +421,9 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(result.status==='resolver-ready')continue;
       // One task's engine (parallel run) never asks Assessment for another task: the parent plans the next round.
       // (A reassess comes only from this loop's own Assessment, which such an engine never runs.)
-      if(stopAfterTask&&['deferred','stepped-down'].includes(result.status))return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
+      if(stopAfterTask&&result.status==='deferred')return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
       if(result.status==='reassess'){previous={task:result.task,result:result.qa};task=null;continue;}
       if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
-      if(result.status==='stepped-down'){previous={task,result:result.reason};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
-      if(result.status==='passed'){const restored=noteStepDownApproval(task);if(restored)await emit('task-mode-restored',{mode:restored.mode,from:restored.from});}
       if(result.status!=='passed'||stopAfterTask)return result;
       previous={task,result:result.qa};task=null;r=null;saved=null;
     }

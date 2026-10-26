@@ -44,7 +44,6 @@ describe("column derivation", () => {
       groupByPhase: false,
       current: { id: "T7", name: "Login", planItems: ["Add login form"] },
       parallel: [{ id: "T8", name: "Tests", planItemIds: [list[3].id], lane: "T8-abc" }],
-      stepDown: null,
       deferred: [{ id: "T2", name: "Logout", reason: "stuck", planItems: ["Add logout"] }],
     });
     expect(titlesOf(columnItems(board, "finished"))).toEqual(["Set up project"]);
@@ -58,9 +57,11 @@ describe("column derivation", () => {
     expect(byTitle("Set up project").priority).toBeNull();
     expect(board.items.filter((i) => i.priority !== null).map((i) => i.priority)).toEqual([0, 1, 2, 3, 4]);
   });
-  it("counts a step-down redo as in progress and ignores finished items a task names", () => {
-    const board = deriveBoard({ items: items(), order: [], revision: 0, groupByPhase: true, current: { id: "T1", planItems: ["Set up project"] }, stepDown: { taskId: "T5", items: ["Add logout"] } });
-    expect(titlesOf(columnItems(board, "in-progress"))).toEqual(["Add logout"]);
+  it("lists a task set aside by an earlier version's step-down as deferred and ignores finished items a task names", () => {
+    const old = { id: "T5", name: "Whole item", planItems: ["Add logout"], stepDown: { from: "standard", to: "eco" } };
+    const board = deriveBoard({ items: items(), order: [], revision: 0, groupByPhase: true, current: { id: "T1", planItems: ["Set up project"] }, deferred: [old] });
+    expect(columnItems(board, "in-progress")).toEqual([]);
+    expect(board.items.find((i) => i.title === "Add logout")!.activity).toEqual([{ kind: "deferred", taskId: "T5", name: "Whole item" }]);
     expect(columnItems(board, "finished")[0].activity).toEqual([]);
   });
 });

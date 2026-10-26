@@ -12,7 +12,7 @@ import { readPendingCodex, runNodeLoop, validateTask } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
 import { setCliRunSettings } from "./cli-run-settings.mjs";
-import { STEP_DOWN, TUNING, loadStepDown, useTuning } from "./engine-tuning.mjs";
+import { TUNING, useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError, recordLoopEvent } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
 import { useWebAccess } from "./web-access.mjs";
@@ -23,7 +23,7 @@ import { saveTaskDefinition } from "./task-archive.mjs";
 import { applyPlanTicksBetweenTasks, queuePlanTick } from "./plan-stewardship.mjs";
 import { applyRetention } from "./retention.mjs";
 import { digest, noteActivity, parseSupervisorOptions, startSupervisor, superviseTask, supervisorAlerts } from "./supervisor.mjs";
-import { childArgs, endStepDown, runParallel, spawnChildEngine } from "./parallel-run.mjs";
+import { childArgs, runParallel, spawnChildEngine } from "./parallel-run.mjs";
 import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
@@ -66,7 +66,6 @@ const lanes = options.parallel === undefined ? 1 : Number(options.parallel);
 if (!Number.isInteger(lanes) || lanes < 1 || lanes > 8) throw new Error("--parallel must be a whole number from 1 to 8");
 if (initialTask) validateTask(initialTask);
 useTuning(options.tuning);
-await loadStepDown(stateDir);
 console.log(JSON.stringify({ tuning: TUNING }));
 const implementation = await createImplementationWorker(options, { stateDir, workspace });
 const provider = implementation.provider;
@@ -188,10 +187,8 @@ try {
   const result = parallel ? await runParallel({
     workspace, stateDir, objective: options.objective, lanes: capped.lanes, maxRounds,
     assess: (input) => codex.assess(input),
-    // While stepped down, a task's engine works at the smaller size its task was planned for.
-    runChild: ({ worktree, stateDir: childState, taskFile, elevations }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, sizing: STEP_DOWN.active ? TUNING : null, elevations }), stateDir: childState }),
+    runChild: ({ worktree, stateDir: childState, taskFile, elevations }) => spawnChildEngine({ cliPath: fileURLToPath(import.meta.url), args: childArgs(process.argv.slice(2), { worktree, stateDir: childState, taskFile, elevations }), stateDir: childState }),
     onEvent: loopEvent, readControl: () => state.readControl(), betweenTasks,
-    onMerged: endStepDown(loopEvent),
     // The task engines' own activity keeps the run's Supervisor from taking a long round for a stall.
     onChildActivity: async () => noteActivity(),
   }) : await runNodeLoop({

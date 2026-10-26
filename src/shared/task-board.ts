@@ -34,8 +34,7 @@ export interface BoardInputs {
   current?: BoardTask | null;
   /** Tasks of the parallel round running now, with their lane folder. */
   parallel?: (BoardTask & { lane: string })[];
-  stepDown?: { taskId: string; taskName?: string; items: string[] } | null;
-  deferred?: { id: string; name?: string; reason?: string; planItems?: string[]; stepDown?: unknown }[];
+  deferred?: { id: string; name?: string; reason?: string; planItems?: string[] }[];
 }
 
 export const normalizeTitle = (title: string) => String(title ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -71,7 +70,7 @@ export function itemsOfTask(items: KeyedPlanItem[], task: { planItems?: string[]
 
 /**
  * The three columns. Finished: checked in the plan. In progress: an open item the current task, a running
- * parallel task or a step-down redo works on. Planned: every other open item (deferred ones keep a badge).
+ * parallel task works on. Planned: every other open item (deferred ones keep a badge).
  */
 export function deriveBoard(input: BoardInputs): TaskBoard {
   const { items } = input;
@@ -90,9 +89,8 @@ export function deriveBoard(input: BoardInputs): TaskBoard {
   };
   if (input.current) work(itemsOfTask(items, input.current), { kind: "current", taskId: input.current.id, name: input.current.name ?? input.current.id });
   for (const t of input.parallel ?? []) work(itemsOfTask(items, t), { kind: "parallel", taskId: t.id, name: t.name ?? t.id, detail: t.lane });
-  if (input.stepDown) work(itemsOfTask(items, { planItems: input.stepDown.items }), { kind: "step-down", taskId: input.stepDown.taskId, name: input.stepDown.taskName ?? input.stepDown.taskId });
   for (const d of input.deferred ?? []) {
-    if (d.stepDown || !d.planItems?.length) continue;
+    if (!d.planItems?.length) continue;
     add(itemsOfTask(items, { planItems: d.planItems }).filter((i) => !i.completed), { kind: "deferred", taskId: d.id, name: d.name ?? d.id, ...(d.reason ? { detail: d.reason } : {}) });
   }
   const toItem = (i: KeyedPlanItem, priority: number | null): TaskBoardItem => ({
