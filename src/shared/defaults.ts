@@ -116,7 +116,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },
-  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true, checksTrusted: false, sandboxChecks: false, sandboxAgents: false, askMinutes: 10, webAccess: true },
+  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true, checksTrusted: false, sandboxChecks: false, sandboxAgents: false, askMinutes: 10, webAccess: false, webAccessReset: true },
   usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
@@ -131,5 +131,10 @@ export function upgradeSafety(saved: Partial<Settings["safety"]> | undefined): S
   if (!saved) return structuredClone(DEFAULT_SETTINGS.safety);
   const paths = Array.isArray(saved.protectedPaths) ? saved.protectedPaths : DEFAULT_SETTINGS.safety.protectedPaths;
   // Settings saved by an older version get each newer field's default (0.39: askMinutes, the sandbox settings).
-  return { ...DEFAULT_SETTINGS.safety, ...saved, protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true };
+  // Web access was on by default in 0.39.0: it is turned off once, and stays as you set it after that.
+  return {
+    ...DEFAULT_SETTINGS.safety, ...saved,
+    protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true,
+    webAccess: saved.webAccessReset ? saved.webAccess === true : false, webAccessReset: true,
+  };
 }

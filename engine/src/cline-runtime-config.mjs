@@ -329,8 +329,9 @@ export async function prepareClineRuntime({
       requestedProvider: provider, provider: clineProvider, model: remoteModel,
       baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
       ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
-      // opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY (not OPENCODE_API_KEY).
-      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || ((provider === "openai" || provider === "opencode") && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+      // The one variable Cline reads (opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY,
+      // not OPENCODE_API_KEY), holding the broker's token. The worker inherits no other provider key.
+      ...(provider === "openrouter" || provider === "openai" || provider === "opencode"
         ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
         : {}),
     };

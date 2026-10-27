@@ -70,7 +70,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   Linux, so there the list is only as trustworthy as the installed app). The app compares the installed engine and update script with
   it before it loads or starts the engine, and refuses changed, missing or added files. A file the
   watch cannot read or put back counts as changed.
-- **Web access for agents** (Settings › Execution & safety; on in Standard and Trusted, off in Strict). Codex
+- **Web access for agents** (Settings › Execution & safety; off by default and in every safety level, so it is
+  your own opt-in, and turning it on asks you to confirm). Codex
   runs with web_search "live" and Claude Code with WebSearch and WebFetch, for Implementation and Assessment only;
   QA runs with web search disabled and without those tools. Off, Codex's web search is disabled outright (its
   own default is a cached search) and Claude Code's web tools are not offered; the guard also refuses them

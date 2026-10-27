@@ -501,9 +501,9 @@ export async function launchCline({
     prompt,
     thinking,
   });
-  // Cline may need a cloud provider key (launchEnv adds the renamed one; a custom OPENROUTER_API_KEY /
-  // OPENAI_API_KEY is inherited), never the orchestrator CLIs' keys or the app's own variable.
-  const env = { ...withoutSecrets(process.env, { keep: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"] }), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
+  // No inherited credentials: a cloud provider's variable comes only from launchEnv (the broker's token), so an
+  // OPENROUTER_API_KEY or OPENAI_API_KEY set for something else never reaches Cline.
+  const env = { ...withoutSecrets(process.env), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
   const isolation = await clineSkillEnv(env, {dataDir, configDir});
   let result;

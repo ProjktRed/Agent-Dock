@@ -543,8 +543,8 @@ function SafetyLevelCard() {
           {[2, 5, 10, 30].map((m) => <option key={m} value={String(m)}>Ask me, wait {m} min</option>)}
         </select>
       </SetRow>
-      <SetRow title="Web access for agents" desc="Codex's live web search, and Claude Code's web search and page reading, for Implementation and Assessment (never QA). They run inside the agent, so the sandbox for agents' commands still keeps their shell commands offline. Web pages can contain instructions aimed at agents; protected files stay refused either way." support="engine">
-        <Toggle on={snap.settings.safety.webAccess !== false} onChange={(v) => patch("safety", { webAccess: v })} label="Web access for agents" />
+      <SetRow title="Web access for agents" desc="Off unless you turn it on. Codex's live web search, and Claude Code's web search and page reading, for Implementation and Assessment (never QA). They run inside the agent, so the sandbox for agents' commands still keeps their shell commands offline. Web pages can contain instructions aimed at agents; protected files stay refused either way." support="engine">
+        <Toggle on={snap.settings.safety.webAccess === true} onChange={(v) => patch("safety", { webAccess: v })} label="Web access for agents" />
       </SetRow>
       <SetRow title="Approve each task" desc="Each task Assessment chooses waits for your Approve (or Set aside) before Implementation starts, on the Overview page or on Telegram. Runs one task at a time; not in unattended mode." support="engine">
         <Toggle on={snap.settings.workflow.approveTasks === true} onChange={(v) => patch("workflow", { approveTasks: v })} label="Approve each task" />

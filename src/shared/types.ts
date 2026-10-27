@@ -271,8 +271,10 @@ export interface Settings {
     sandboxChecks?: boolean;
     /** Experimental: Codex's and Claude Code's own shell commands run sandboxed. Set like sandboxChecks. */
     sandboxAgents?: boolean;
-    /** Web access for agents: Codex's live web search, Claude Code's WebSearch and WebFetch (not for QA). */
+    /** Web access for agents: Codex's live web search, Claude Code's WebSearch and WebFetch (not for QA). Off unless turned on. */
     webAccess?: boolean;
+    /** Web access was turned off once (it was on by default in 0.39.0); a later choice is kept. */
+    webAccessReset?: boolean;
     /**
      * Ask instead of refuse: minutes a Codex or Claude Code action the guard cannot verify waits for your answer
      * (native dialog, Telegram) before it is refused; 0 refuses at once. Unattended runs ask only when Telegram

@@ -33,13 +33,21 @@ describe("safety levels", () => {
 });
 
 describe("web access for agents", () => {
-  it("on by default (Standard, Trusted), off in Strict; turning it on is a change you confirm", () => {
-    expect(value(args(settings()), "--web-access")).toBe("true");
-    expect(args(settings((s) => { s.safety.webAccess = false; }))).not.toContain("--web-access");
+  it("off in every safety level, so it is your own opt-in; turning it on is a change you confirm", () => {
+    expect(args(settings())).not.toContain("--web-access");
+    expect(value(args(settings((s) => { s.safety.webAccess = true; })), "--web-access")).toBe("true");
     expect(SAFETY_PRESETS.strict.webAccess).toBe(false);
-    expect(SAFETY_PRESETS.standard.webAccess).toBe(true);
-    const off = settings((s) => { s.safety.webAccess = false; });
-    expect(weakenings(off, DEFAULT_SETTINGS).map((w) => w.label)).toContain("Let agents search the web and read web pages");
+    expect(SAFETY_PRESETS.standard.webAccess).toBe(false);
+    expect(SAFETY_PRESETS.trusted.webAccess).toBe(false);
+    const on = settings((s) => { s.safety.webAccess = true; });
+    expect(weakenings(DEFAULT_SETTINGS, on).map((w) => w.label)).toContain("Let agents search the web and read web pages");
+    // Settings with no value (older versions read none as on) are off.
+    expect(weakenings(settings((s) => { delete s.safety.webAccess; }), on).map((w) => w.label)).toContain("Let agents search the web and read web pages");
+  });
+  it("0.39.0 had it on by default: an upgrade turns it off once, and a later choice is kept", () => {
+    expect(upgradeSafety({ protectedPaths: [".git/"], toolConfigPathsAdded: true, askMinutes: 10, webAccess: true })).toMatchObject({ webAccess: false, webAccessReset: true });
+    expect(upgradeSafety({ protectedPaths: [".git/"], toolConfigPathsAdded: true, webAccess: true, webAccessReset: true }).webAccess).toBe(true);
+    expect(upgradeSafety({ protectedPaths: [".git/"], toolConfigPathsAdded: true, webAccessReset: true }).webAccess).toBe(false);
   });
 });
 

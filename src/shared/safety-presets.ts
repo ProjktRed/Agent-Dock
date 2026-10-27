@@ -24,11 +24,11 @@ export const SAFETY_PRESETS: Record<SafetyPresetName, SafetyPreset & { label: st
   },
   standard: {
     label: "Standard", summary: "Tasks run on their own; Agent Dock watches its own files during checks; anything the guard cannot verify is put to you for up to 10 minutes.",
-    toolGuard: true, checksTrusted: false, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: true,
+    toolGuard: true, checksTrusted: false, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: false,
   },
   trusted: {
     label: "Trusted", summary: "For projects whose tests you trust completely: checks run as you, unwatched; the guard still asks about what it cannot verify.",
-    toolGuard: true, checksTrusted: true, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: true,
+    toolGuard: true, checksTrusted: true, askMinutes: 10, approveTasks: false, sandboxChecks: false, sandboxAgents: false, webAccess: false,
   },
 };
 
@@ -41,7 +41,7 @@ export function safetyValues(s: Settings): SafetyPreset {
     approveTasks: s.workflow.approveTasks === true,
     sandboxChecks: s.safety.sandboxChecks === true,
     sandboxAgents: s.safety.sandboxAgents === true,
-    webAccess: s.safety.webAccess !== false,
+    webAccess: s.safety.webAccess === true,
   };
 }
 
