@@ -72,7 +72,9 @@ export async function selfTest({ canaryDir, secrets = [] }) {
   const problem = await sandboxProblem();
   if (problem) return { ok: false, problem, results: [] };
   const tag = randomBytes(6).toString("hex");
-  const work = await mkdtemp(path.join(os.tmpdir(), "agent-dock-sandbox-test-"));
+  // Windows: not in the temp folder. The sandbox account cannot look into AppData, and Node resolves every
+  // folder above the script it runs, so a probe under AppData never starts. The profile folder itself is fine.
+  const work = await mkdtemp(path.join(process.platform === "win32" ? os.homedir() : os.tmpdir(), ".agent-dock-sandbox-test-"));
   const canary = path.join(canaryDir, `sandbox-canary-${tag}.txt`);
   try {
     await writeFile(canary, "agent-dock-canary");

@@ -35,11 +35,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   on. The watch works while Agent Dock is open; changes made while it is closed are not seen.
 - **Sandboxed checks (experimental, off by default)**, Settings › Execution & safety › Experimental. Checks
   run inside Anthropic's sandbox runtime (`@anthropic-ai/sandbox-runtime` 0.0.79, bundled with the engine and
-  on the engine file list): no network, writes only inside the project or worktree (never its `.git`), and
-  nothing else of yours to read. On Windows a check runs as a separate local account (`srt-sandbox`, with a
-  Windows Filtering Platform rule that blocks its network); that account has no rights on your profile, so it
-  cannot read Agent Dock's config or decrypt saved keys (DPAPI ties them to your account), nor read CLI
-  sign-ins. While a check runs, the account is granted the project folder only, and the grant is removed
+  on the engine file list): no network and writes only inside the project or worktree (never its `.git`). On
+  Linux bubblewrap hides your home folder except the project and the toolchain. On Windows a check runs as a
+  separate local account (`srt-sandbox`, with a Windows Filtering Platform rule that blocks its network);
+  that account has no rights on your profile, so it cannot read Agent Dock's config or decrypt saved keys
+  (DPAPI ties them to your account), nor read CLI sign-ins. Files outside your profile that every local
+  account may read (another drive, for example) stay readable to it. A portable copy keeps its data folder
+  next to the program, often on such a drive, so the self-test finds it readable and refuses to turn the
+  sandbox on. While a check runs, the account is granted the project folder only, and the grant is removed
   afterwards. Setting it up creates that account and rule (one administrator prompt); turning the setting off
   offers to remove them. On Linux, bubblewrap hides your home folder except the project and the Node/Git
   installed there; it needs `bubblewrap`, `socat` and `ripgrep`. The setting turns on only after a self-test

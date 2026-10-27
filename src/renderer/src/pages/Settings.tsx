@@ -798,8 +798,8 @@ function SandboxChecksCard() {
   return (
     <section className="card pad stack" style={{ gap: 12 }}>
       <h2 className="h2" style={{ marginBottom: 4 }}>Experimental</h2>
-      <SetRow title="Run project checks in a sandbox" desc={<span>Checks such as npm test run inside Anthropic's sandbox runtime: no network, writes only inside the project (never its .git folder), nothing else of yours to read. A check that cannot start in the sandbox fails; it never runs outside. {windows
-        ? "Checks run as a separate local Windows account (srt-sandbox) that cannot open your profile, so it cannot read or decrypt saved keys or CLI sign-ins; turning this on sets that account up (one administrator prompt)."
+      <SetRow title="Run project checks in a sandbox" desc={<span>Checks such as npm test run inside Anthropic's sandbox runtime: no network, writes only inside the project (never its .git folder). A check that cannot start in the sandbox fails; it never runs outside. {windows
+        ? "Checks run as a separate local Windows account (srt-sandbox) that cannot open your profile, so it cannot read or decrypt saved keys or CLI sign-ins. Files outside your profile that every local account can read (other drives, for example) stay readable, and a portable copy's data folder is one of them: the self-test then refuses to turn this on. Turning this on sets that account up (one administrator prompt)."
         : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."}</span>} support="app">
         <Toggle on={on} onChange={(v) => void change("checks", v)} label="Run project checks in a sandbox" disabled={busy} />
       </SetRow>
