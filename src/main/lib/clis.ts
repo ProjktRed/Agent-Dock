@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { Capability, CliConnection, CliHealth, PathDetection } from "@shared/types";
 import { run } from "./git";
@@ -132,8 +132,10 @@ export function connectionUrlProblem(location: string): string | null {
   return null;
 }
 
+/** The long form of a path that exists (Windows: 8.3 short names such as RUNNER~1 expanded), else the path resolved. */
+const longPath = (p: string) => { try { return realpathSync.native(p); } catch { return path.resolve(p); } };
 const samePath = (a: string, b: string) => {
-  const [x, y] = [path.resolve(a), path.resolve(b)];
+  const [x, y] = [longPath(a), longPath(b)];
   return process.platform === "win32" || process.platform === "darwin" ? x.toLowerCase() === y.toLowerCase() : x === y;
 };
 
