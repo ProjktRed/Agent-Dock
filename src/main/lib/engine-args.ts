@@ -294,7 +294,8 @@ export function buildEngineArgs(input: {
   // "When relevant" skills: Assessment sees their descriptions and picks per task; always-assigned ones are not repeated.
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
-  if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // The project skill (src/main/project-skill.ts) goes into the same file for every role; the app adds it when it writes the file.
+  if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported || project.projectSkill === true) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
   // Parallel tasks. Unattended mode too: the run keeps one budget for all its tasks, whose engines run without
   // limits of their own. On a local model server (0.38) the engine runs at most as many tasks as the server
   // answers at once: llama.cpp's slots, or the requests at once set on the Ollama connection.

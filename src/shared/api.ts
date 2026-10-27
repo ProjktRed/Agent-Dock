@@ -11,9 +11,11 @@ import type {
   ModelCatalog,
   PathDetection,
   Project,
+  ProjectSkillInfo,
   ProjectStatus,
   Settings,
   SkillInfo,
+  StashEntry,
   TaskBoard,
   TaskBoardUpdate,
   TaskBoardWriteResult,
@@ -164,6 +166,25 @@ export interface DesktopApi {
   history(projectId: string): Promise<HistoryEntry[]>;
   /** Runs one task from the history again as the next start's first task. */
   rerunTask(projectId: string, taskId: string): Promise<void>;
+  /** Removes the deferred mark from set-aside tasks; returns how many were removed. */
+  undeferTasks(projectId: string, taskIds: string[]): Promise<number>;
+  /** A set-aside task becomes the next start's first task and loses its deferred mark (the engine must be stopped). */
+  runNext(projectId: string, taskId: string): Promise<void>;
+  /** The workspace's git stashes, newest first. */
+  stashes(projectId: string): Promise<StashEntry[]>;
+  /** Puts the workspace's uncommitted work (untracked files too) in a new stash; the engine must be stopped. */
+  stashChanges(projectId: string): Promise<{ message: string }>;
+  /** Applies a stash to the clean workspace and drops it; on a conflict the stash is kept. The engine must be stopped. */
+  popStash(projectId: string, sha: string): Promise<{ conflicts: boolean; output: string }>;
+  /** Deletes a stash (git stash drop); the engine must be stopped. */
+  dropStash(projectId: string, sha: string): Promise<void>;
+  /** The project skill: generated from the workspace, stored in the state folder, given to the project's agents when on. */
+  projectSkill(projectId: string): Promise<ProjectSkillInfo>;
+  /** Drafts the project skill with a read-only agent (one at a time per project); returns the SKILL.md text to review. */
+  generateProjectSkill(projectId: string, cliId: string, model: string | null): Promise<string>;
+  cancelProjectSkill(projectId: string): Promise<void>;
+  /** Saves the reviewed text (null removes the skill) and whether the project's agents get it. */
+  saveProjectSkill(projectId: string, text: string | null, enabled: boolean): Promise<ProjectSkillInfo>;
   /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
   openPullRequest(projectId: string): Promise<string>;
   /** GitHub CI: the watched commit's GitHub Actions runs, as last read. */

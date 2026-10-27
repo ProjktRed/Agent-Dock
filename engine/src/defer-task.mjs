@@ -55,16 +55,32 @@ async function stashWork(workspace, message, pathspec) {
   }
 }
 
-/**
- * Sets the current task aside at a loop boundary. Its uncommitted work (tracked and untracked, not
- * ignored files) goes into a named git stash, so nothing is lost or reset; Agent Dock's own state
- * folder is excluded when it sits inside the workspace. Refuses when HEAD moved from the baseline.
- */
 /** Tasks set aside (by you or for a missing tool), newest last. */
 export async function readDeferred(stateDir) {
   try { const list = JSON.parse(await readFile(path.join(stateDir, "deferred-tasks.json"), "utf8")); return Array.isArray(list) ? list : []; } catch { return []; }
 }
 
+/** You removed the deferred mark: Assessment may choose these tasks again. Their stashes stay in git. Returns the removed entries. */
+export async function undeferTasks(stateDir, ids) {
+  const wanted = new Set(ids.map(String));
+  const list = await readDeferred(stateDir);
+  const removed = list.filter((d) => wanted.has(String(d.id)));
+  if (removed.length) await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), list.filter((d) => !wanted.has(String(d.id))));
+  return removed;
+}
+
+/** A stash was popped or dropped: deferred tasks that named it no longer have their work in a stash. */
+export async function forgetDeferredStash(stateDir, ref) {
+  const list = await readDeferred(stateDir);
+  if (!list.some((d) => d.stash?.ref === ref)) return;
+  await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), list.map((d) => (d.stash?.ref === ref ? { ...d, stash: null } : d)));
+}
+
+/**
+ * Sets the current task aside at a loop boundary. Its uncommitted work (tracked and untracked, not
+ * ignored files) goes into a named git stash, so nothing is lost or reset; Agent Dock's own state
+ * folder is excluded when it sits inside the workspace. Refuses when HEAD moved from the baseline.
+ */
 export async function deferTask({ workspace, stateDir, task, baselineSha, reason }) {
   const head = await git(workspace, ["rev-parse", "HEAD"]);
   if (baselineSha && head !== baselineSha) return { blocked: `Cannot defer ${task.id}: HEAD moved from the task's baseline` };

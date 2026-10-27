@@ -10,6 +10,7 @@ import { PARALLEL_STAGE_LABEL, parallelCycleKeys, parallelRoundSummary, planItem
 import { Icon } from "../../components/Icon";
 import { Bar, Disclosure, Dot, Empty, St, type StatusKind } from "../../components/ui";
 import { ActionRequestCard } from "../../components/ActionPrompt";
+import { StashCard } from "./StashCard";
 
 const CYCLE = [
   { key: "assessment", name: "Assessment", agent: "Plans one bounded task" },
@@ -36,6 +37,13 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
       clearInterval(t);
     };
   }, [sandboxError, projectId]);
+  // Collapsed by default: the title and the first line of the reason. Resolve attention in the title bar opens it.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener("app:show-attention", show);
+    return () => window.removeEventListener("app:show-attention", show);
+  }, []);
   if (!["attention", "blocked", "waiting-limit"].includes(kind)) return null;
   const meta = {
     attention: { title: "Attention required: manual review", tone: "attnb", text: s.attentionReason, help: "The engine stopped for your review. Elevation can propose a revised correction, which then goes through independent QA." },
@@ -47,8 +55,15 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
   return (
     <section id="attention-panel" className={`banner ${meta.tone} fade-in`} role="alert" style={{ padding: 18 }}>
       <Icon name="warn" className={kind === "blocked" ? "err" : "attn"} />
-      <div className="grow stack" style={{ gap: 10 }}>
-        <div style={{ fontWeight: 600, color: "var(--t)" }}>{meta.title}</div>
+      <div className="grow stack" style={{ gap: 10, minWidth: 0 }}>
+        <div className="row" style={{ gap: 10 }}>
+          <div className="grow" style={{ fontWeight: 600, color: "var(--t)" }}>{meta.title}</div>
+          <button className="btn ghost sm" onClick={() => setOpen(!open)} aria-expanded={open} aria-controls="attention-details">
+            <Icon name={open ? "chevronDown" : "chevronRight"} size="sm" />{open ? "Hide details" : "Show details"}
+          </button>
+        </div>
+        {!open && meta.text && <div className="sub mono ellipsis" title={meta.text}>{meta.text.split(/\r?\n/).find((l) => l.trim()) ?? ""}</div>}
+        {open && <div id="attention-details" className="stack" style={{ gap: 10 }}>
         {meta.text && <div className="mono log" style={{ maxHeight: 140 }}>{meta.text}</div>}
         {s.limitRetryAt && <div className="sub">Provider reports retry after: {s.limitRetryAt}</div>}
         <div className="sub">{meta.help}</div>
@@ -83,6 +98,7 @@ function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string 
           {!s.elevateAvailable && kind === "attention" && s.elevateReason && <span className="sub">Elevate unavailable: {s.elevateReason}</span>}
           {!s.resolverAvailable && !s.assessmentRetry && kind === "blocked" && s.resolverReason && <span className="sub">Resolver unavailable: {s.resolverReason}</span>}
         </div>
+        </div>}
       </div>
     </section>
   );
@@ -318,6 +334,7 @@ export function ProgressTab() {
       <MissingToolsPanel s={s} projectId={activeProject.id} wsl={Boolean(activeProject.wsl?.enabled)} />
       <ActionRequestsPanel s={s} projectId={activeProject.id} />
       <AttentionPanel s={s} projectId={activeProject.id} />
+      <StashCard s={s} projectId={activeProject.id} />
 
       {approval && s.runState !== "attention" && (
         <section className="card pad row wrap fade-in" style={{ gap: 16 }} aria-label="Last approved task">

@@ -1,6 +1,6 @@
 import { useEffect, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
-import type { PlanItemKey, TaskBoard, TaskBoardActivity, TaskBoardItem, TaskBoardUpdate } from "@shared/types";
-import { boardOrder, columnItems, plannedView, reorderWithin, withOrder } from "@shared/task-board";
+import type { DeferredTask, PlanItemKey, TaskBoard, TaskBoardActivity, TaskBoardItem, TaskBoardUpdate } from "@shared/types";
+import { boardOrder, columnItems, orderWithFirst, plannedView, reorderWithin, withOrder } from "@shared/task-board";
 import { cleanError, useApp } from "../store";
 import { Icon } from "../components/Icon";
 import { Dot, Empty, Segmented } from "../components/ui";
@@ -20,11 +20,20 @@ function PhaseChip({ item }: { item: TaskBoardItem }) {
   return <span className="chip mut" title={`Phase ${item.phase.number} · ${item.phase.title}`}>Phase {item.phase.number}</span>;
 }
 
-function ItemBadges({ item }: { item: TaskBoardItem }) {
-  const deferred = item.activity.find((a) => a.kind === "deferred");
+function ItemBadges({ item, onUndefer, busy }: { item: TaskBoardItem; onUndefer?: (taskIds: string[]) => void; busy?: boolean }) {
+  const deferred = item.activity.filter((a) => a.kind === "deferred");
   return (
     <>
-      {deferred && <span className="chip warn" title={deferred.detail ? `Set aside: ${deferred.detail}` : "Set aside: Assessment passes over it while other work remains"}>Deferred</span>}
+      {deferred.length > 0 && (
+        <span className="chip warn row" style={{ gap: 4 }} title={deferred[0].detail ? `Set aside: ${deferred[0].detail}` : "Set aside: Assessment passes over it while other work remains"}>
+          Deferred
+          {onUndefer && (
+            <button className="btn ghost sm icon" style={{ height: 16, width: 16, padding: 0 }} disabled={busy} onClick={(e) => { e.stopPropagation(); onUndefer(deferred.map((a) => a.taskId)); }} title="Remove the deferred mark: Assessment may choose it again" aria-label={`Remove the deferred mark from ${item.title}`}>
+              <Icon name="close" size="sm" />
+            </button>
+          )}
+        </span>
+      )}
       {item.ambiguous && <span className="chip dash attn" title="This title appears on more than one plan line, so the engine cannot check it off by its text. Make the titles distinct.">Duplicate title</span>}
     </>
   );
@@ -43,6 +52,8 @@ function PlannedRow(props: {
   busy: boolean;
   onSelect: () => void;
   onMove: (to: number) => void;
+  onNext: () => void;
+  onUndefer: (taskIds: string[]) => void;
   onDragStart: (e: DragEvent) => void;
   onDragOver: (e: DragEvent) => void;
   onDrop: (e: DragEvent) => void;
@@ -75,11 +86,12 @@ function PlannedRow(props: {
         {(flat || item.activity.length > 0 || item.ambiguous) && (
           <span className="row wrap" style={{ gap: 6 }}>
             {flat && <PhaseChip item={item} />}
-            <ItemBadges item={item} />
+            <ItemBadges item={item} onUndefer={props.onUndefer} busy={props.busy} />
           </span>
         )}
       </div>
       <span className="row tmoves" style={{ gap: 2 }} onClick={(e) => e.stopPropagation()}>
+        <button className="btn ghost sm icon" disabled={props.busy || (props.rank === 0 && !item.activity.some((a) => a.kind === "deferred"))} onClick={props.onNext} title="Do next: first in the whole priority order (and no longer deferred); applies at the next Assessment" aria-label={`Do ${item.title} next`}><Icon name="play" size="sm" /></button>
         <button className="btn ghost sm icon" disabled={props.busy || index === 0} onClick={() => props.onMove(0)} title={`Move to top of ${scope}`} aria-label={`Move ${item.title} to top of ${scope}`}><Icon name="toTop" size="sm" /></button>
         <button className="btn ghost sm icon" disabled={props.busy || index === 0} onClick={() => props.onMove(index - 1)} title="Move up" aria-label={`Move ${item.title} up`}><Icon name="arrowUp" size="sm" /></button>
         <button className="btn ghost sm icon" disabled={props.busy || index === count - 1} onClick={() => props.onMove(index + 1)} title="Move down" aria-label={`Move ${item.title} down`}><Icon name="arrowDown" size="sm" /></button>
@@ -165,6 +177,38 @@ export function TaskBoardPage() {
     const order = reorderWithin(boardOrder(board), view, from, to);
     if (order.join() !== boardOrder(board).join()) void save({ order }, order);
   };
+  const undefer = async (taskIds: string[], quiet = false) => {
+    setBusy(true);
+    try {
+      const n = await window.api.undeferTasks(activeProject.id, taskIds);
+      setLocal(await window.api.taskBoard(activeProject.id));
+      if (!quiet) toast("success", n ? "Deferred mark removed. Assessment may choose it again." : "It was no longer deferred.");
+    } catch (error) {
+      toast("error", cleanError(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Do next: first of all open items, and no longer deferred; the next Assessment takes it unless it cannot be done.
+  const doNext = async (item: TaskBoardItem) => {
+    const deferredIds = item.activity.filter((a) => a.kind === "deferred").map((a) => a.taskId);
+    if (deferredIds.length) await undefer(deferredIds, true);
+    const order = orderWithFirst(board, item.id);
+    if (order.join() !== boardOrder(board).join()) await save({ order }, order);
+    toast("success", `Next: ${item.title}${s.processAlive ? ". The running task keeps going; this one comes at the next Assessment." : ""}`);
+  };
+  const runNext = async (d: DeferredTask) => {
+    setBusy(true);
+    try {
+      await window.api.runNext(activeProject.id, d.id);
+      setLocal(await window.api.taskBoard(activeProject.id));
+      toast("success", `${d.name} runs first when you start the project.${d.stash ? ` Its earlier work is still in the stash "${d.stash}" (Overview › Stashes).` : ""}`);
+    } catch (error) {
+      toast("error", cleanError(error));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setGrouping = (g: Grouping) => {
     setOptimistic({ base: board.revision, order: boardOrder(board), groupByPhase: g === "phase" });
     void save({ groupByPhase: g === "phase" });
@@ -199,6 +243,8 @@ export function TaskBoardPage() {
             dropAfter={over?.id === item.id && over.after && drag?.id !== item.id}
             onSelect={() => setSelected(selected === item.id ? null : item.id)}
             onMove={(to) => move(view, index, to)}
+            onNext={() => void doNext(item)}
+            onUndefer={(ids) => void undefer(ids)}
             onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.id); setDrag({ id: item.id, scope }); }}
             onDragOver={(e) => {
               if (!drag || drag.scope !== scope) return;
@@ -289,6 +335,31 @@ export function TaskBoardPage() {
           )}
         </Column>
       </div>
+
+      {(board.deferred?.length ?? 0) > 0 && (
+        <section className="card pad stack" style={{ gap: 10 }} aria-label="Set-aside tasks">
+          <div>
+            <h2 className="h2">Set aside</h2>
+            <div className="sub">Assessment passes over these while other work remains. Their unfinished work stays in its git stash until you pop it on Overview.</div>
+          </div>
+          <ul className="tlist">
+            {board.deferred!.map((d) => (
+              <li key={d.id} className="item titem static">
+                <Icon name="pause" size="sm" className="mut" />
+                <div className="grow stack" style={{ gap: 4 }}>
+                  <span className="name">{d.name}</span>
+                  <span className="sub">{d.reason}{d.at ? ` · ${new Date(d.at).toLocaleString()}` : ""}{d.planItemIds.length ? ` · ${d.planItemIds.length} plan item${d.planItemIds.length === 1 ? "" : "s"}` : ""}</span>
+                  {d.stash && <span className="sub mono ellipsis" title={d.stash}>Stash: {d.stash}</span>}
+                </div>
+                <span className="row" style={{ gap: 6 }}>
+                  {d.rerunnable && <button className="btn sm" disabled={busy || s.processAlive} onClick={() => void runNext(d)} title={s.processAlive ? "Stop the automation first" : "Runs this task (same prompt, files and check) as the first task of the next start, and removes its deferred mark"}>Run next</button>}
+                  <button className="btn sm" disabled={busy} onClick={() => void undefer([d.id])} title="Assessment may choose it again; its stash is left alone">Remove mark</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

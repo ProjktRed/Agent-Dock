@@ -34,7 +34,9 @@ export interface BoardInputs {
   current?: BoardTask | null;
   /** Tasks of the parallel round running now, with their lane folder. */
   parallel?: (BoardTask & { lane: string })[];
-  deferred?: { id: string; name?: string; reason?: string; planItems?: string[] }[];
+  deferred?: { id: string; name?: string; reason?: string; planItems?: string[]; at?: string; stash?: { message?: string } | null }[];
+  /** Task ids whose definitions the engine kept, so a set-aside task can run next. */
+  rerunnable?: Set<string>;
 }
 
 export const normalizeTitle = (title: string) => String(title ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -105,7 +107,16 @@ export function deriveBoard(input: BoardInputs): TaskBoard {
   });
   const open = resolvePriority(items, input.order).map((i, n) => toItem(i, n));
   const finished = items.filter((i) => i.completed).map((i) => toItem(i, null));
-  return { revision: input.revision, groupByPhase: input.groupByPhase, items: [...open, ...finished] };
+  const deferred = (input.deferred ?? []).map((d) => ({
+    id: d.id,
+    name: d.name ?? d.id,
+    reason: d.reason ?? "",
+    at: d.at ?? null,
+    stash: d.stash?.message ?? null,
+    planItemIds: d.planItems?.length ? itemsOfTask(items, { planItems: d.planItems }).filter((i) => !i.completed).map((i) => i.id) : [],
+    rerunnable: input.rerunnable?.has(d.id) ?? false,
+  }));
+  return { revision: input.revision, groupByPhase: input.groupByPhase, items: [...open, ...finished], deferred };
 }
 
 /** Board items of one column, in board order (priority for open items, plan order for finished ones). */
@@ -130,6 +141,9 @@ export function reorderWithin(order: PlanItemKey[], view: PlanItemKey[], from: n
   let next = 0;
   return order.map((key) => (inView.has(key) ? moved[next++] : key));
 }
+
+/** Do next: the order with this item first of all open items, whatever phase it is in; the rest keep their order. */
+export const orderWithFirst = (board: TaskBoard, id: PlanItemKey): PlanItemKey[] => [id, ...boardOrder(board).filter((key) => key !== id)];
 
 /** The Planned items a view shows: all of them (flat), or one phase's. */
 export function plannedView(board: TaskBoard, phase: number | null): PlanItemKey[] {

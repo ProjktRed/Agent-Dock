@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PlanProgress, TaskBoard, TaskBoardState, TaskBoardUpdate, TaskBoardWriteResult } from "@shared/types";
 import { deriveBoard, normalizeTitle, resolvePriority, type BoardInputs, type BoardTask, type KeyedPlanItem } from "@shared/task-board";
 import { readJson, writeJson } from "./json-file";
+import { taskFileName } from "../projects";
 
 /** <stateDir>/task-board.json. Only the app writes it; the engine reads it at each Assessment (engine/src/task-priority.mjs). */
 export const TASK_BOARD_FILE = "task-board.json";
@@ -46,11 +47,12 @@ export async function readTaskBoardState(stateDir: string): Promise<TaskBoardSta
 }
 
 /** What is being worked on, from the engine's state folder. */
-export async function readBoardActivity(stateDir: string, live: { task?: BoardTask | null; stage?: string } | null, processAlive: boolean): Promise<Pick<BoardInputs, "current" | "parallel" | "deferred">> {
+export async function readBoardActivity(stateDir: string, live: { task?: BoardTask | null; stage?: string } | null, processAlive: boolean): Promise<Pick<BoardInputs, "current" | "parallel" | "deferred" | "rerunnable">> {
   const read = <T>(file: string) => readJson<T | null>(path.join(stateDir, file), null).catch(() => null);
-  const [saved, deferredRaw] = await Promise.all([
+  const [saved, deferredRaw, kept] = await Promise.all([
     read<BoardTask & { automation?: { recovery?: { phase?: string } | null } }>("current-task.json"),
     read<BoardInputs["deferred"]>("deferred-tasks.json"),
+    readdir(path.join(stateDir, "tasks")).catch(() => [] as string[]),
   ]);
   const deferred = Array.isArray(deferredRaw) ? deferredRaw.filter((d) => d && typeof d.id === "string") : [];
   const setAside = new Set(deferred.map((d) => d.id));
@@ -72,10 +74,14 @@ export async function readBoardActivity(stateDir: string, live: { task?: BoardTa
       if (task?.id) parallel.push({ ...task, lane });
     }
   }
+  // Kept task definitions (<state>/tasks/<id>.json, engine/src/task-archive.mjs).
+  const keptNames = new Set(kept);
+  const rerunnable = new Set(deferred.map((d) => d.id).filter((id) => keptNames.has(taskFileName(String(id)))));
   return {
     current,
     parallel,
     deferred,
+    rerunnable,
   };
 }
 

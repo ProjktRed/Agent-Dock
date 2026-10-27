@@ -4,7 +4,7 @@ import {mkdtemp,readFile,readdir,rm,writeFile,access} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {setAsideTask} from '../src/defer-task.mjs';
+import {forgetDeferredStash,readDeferred,setAsideTask,undeferTasks} from '../src/defer-task.mjs';
 import {DashboardState} from '../src/dashboard-state.mjs';
 
 // Found in a live run: a blocked task with no Retry QA, Resolver or Retry Assessment left nothing to press.
@@ -40,4 +40,31 @@ test('setting aside refuses when HEAD moved from the task baseline',async t=>{
  await writeFile(path.join(stateDir,'current-task.json'),JSON.stringify({id:'T',automation:{recovery:{baselineSha:head}}}));
  await assert.rejects(setAsideTask({workspace:ws,stateDir}),/HEAD moved/);
  await access(path.join(stateDir,'current-task.json'));
+});
+
+// 0.39: the Task board removes the deferred mark; Overview's Pop clears the stash a set-aside task pointed at.
+test('removing the deferred mark keeps the stash; a popped stash is forgotten by its tasks',async t=>{
+ const stateDir=await mkdtemp(path.join(os.tmpdir(),'undefer-'));t.after(()=>rm(stateDir,{recursive:true,force:true}));
+ const list=[{id:'a',name:'A',stash:{ref:'111',message:'Agent Dock: deferred a'}},{id:'b',name:'B',stash:{ref:'222',message:'Agent Dock: deferred b'}},{id:'c',name:'C',stash:null}];
+ await writeFile(path.join(stateDir,'deferred-tasks.json'),JSON.stringify(list));
+ const removed=await undeferTasks(stateDir,['a','missing']);
+ assert.deepEqual(removed.map(d=>d.id),['a']);
+ assert.deepEqual((await readDeferred(stateDir)).map(d=>d.id),['b','c']);
+ assert.deepEqual(await undeferTasks(stateDir,['a']),[],'nothing left to remove');
+ await forgetDeferredStash(stateDir,'222');
+ assert.deepEqual((await readDeferred(stateDir)).map(d=>d.stash),[null,null]);
+ await forgetDeferredStash(stateDir,'999');
+ assert.equal((await readDeferred(stateDir)).length,2);
+});
+
+// 0.39: a start given --task files what happens before the task loads (a dirty workspace) under that task.
+test('showTask names the attached task in live state without an event',async t=>{
+ const stateDir=await mkdtemp(path.join(os.tmpdir(),'show-task-'));t.after(()=>rm(stateDir,{recursive:true,force:true}));
+ const state=new DashboardState({stateDir});await state.initialize({task:{id:'old',name:'Old',prompt:'p'},workspace:stateDir});
+ const before=(await state.readEvents()).length;
+ await state.showTask({id:'rust-again-x',name:'Rust (again)',prompt:'p'});
+ assert.equal((await state.readLive()).task.id,'rust-again-x');
+ assert.equal((await state.readEvents()).length,before,'no event');
+ await state.record({type:'blocked',qa:'QA requires a clean git workspace before Cline starts.'});
+ assert.equal((await state.readEvents()).at(-1).taskId,'rust-again-x');
 });

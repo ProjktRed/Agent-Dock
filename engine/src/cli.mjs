@@ -136,7 +136,11 @@ const codex = mixed || Object.keys(options.roleBackups).length
       additionalWritableDirs: gitCommonIsOutsideWorkspace ? [gitCommonDir] : [],
     });
 const pendingCodex = await readPendingCodex(stateDir);
-if (!(await state.readLive())) {
+const liveBefore = await state.readLive();
+// A start with --task (Run again, Run next, an attached task): a block before the task loads (a workspace that is
+// not clean) is filed under that task, not the last run's.
+if (liveBefore && initialTask && !pendingCodex && liveBefore.task?.id !== initialTask.id) await state.showTask(initialTask);
+if (!liveBefore) {
   await state.initialize({
     task: pendingCodex?.context?.task ?? pendingCodex?.inputs?.task ?? initialTask ?? { id: "assessment", name: "Assessing project", prompt: options.objective },
     workspace,

@@ -119,9 +119,8 @@ export function folderNameProblem(name: string): string | null {
   return null;
 }
 
-/** Task outcomes from the engine's append-only activity log, newest first. */
-/** Same rule as engine/src/task-archive.mjs. */
-const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;
+/** A kept task definition's file name in <state>/tasks; same rule as engine/src/task-archive.mjs. */
+export const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;
 
 /** Task ids whose definitions the engine kept (<state>/tasks), so they can run again. */
 export async function savedTaskIds(stateDir: string): Promise<Set<string>> {
@@ -145,6 +144,7 @@ export async function prepareRerun(stateDir: string, taskId: string, now = Date.
   return file;
 }
 
+/** Task outcomes from the engine's append-only activity log, newest first. */
 export function taskHistory(events: EngineEvent[]): TaskHistoryEntry[] {
   const outcomes: Record<string, TaskHistoryEntry["outcome"]> = {
     "qa-pass": "approved",

@@ -171,6 +171,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         r.elevationFingerprint=fingerprint;
         r.phase='elevation';r.elevationAutomatic=false;
       }
+      // Approve each task: a run stopped while the task waited for you asks again, so the window shows it.
+      if(r.awaitingApproval)r.approvalRequestedAt=null;
       await save();
     }
     for(;;) {

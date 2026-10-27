@@ -8,10 +8,11 @@ import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle, type StatusKind } from "../../components/ui";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { ProjectSkillTab } from "./ProjectSkillTab";
 import { TaskModePicker } from "../../components/TaskMode";
 import { TASK_MODES, taskModeOf } from "@shared/task-mode";
 
-type DetailTab = "overview" | "plan" | "agents" | "workflow" | "history";
+type DetailTab = "overview" | "plan" | "agents" | "workflow" | "history" | "skill";
 const ROLES = [
   ["implementation", "Implementation"],
   ["qa", "QA"],
@@ -462,6 +463,7 @@ export function ProjectsPage() {
                 { value: "agents", label: "Agents" },
                 { value: "workflow", label: "Workflow" },
                 { value: "history", label: "Task history" },
+                { value: "skill", label: "Project skill" },
               ]} />
 
               {tab === "overview" && (
@@ -513,6 +515,7 @@ export function ProjectsPage() {
               {tab === "agents" && <AgentsTab project={sel} />}
               {tab === "workflow" && <WorkflowTab project={sel} />}
               {tab === "history" && <HistoryTab project={sel} />}
+              {tab === "skill" && <ProjectSkillTab project={sel} />}
             </section>
           )}
         </div>

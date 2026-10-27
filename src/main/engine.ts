@@ -14,6 +14,7 @@ import { buildStatus, parallelRound, pendingMissingTools, pendingTaskApproval, t
 import { decideActionRequest, readActionRequests } from "./lib/action-requests";
 import { readActivity } from "./lib/usage";
 import { buildTaskBoard, writeTaskBoard } from "./lib/task-board";
+import { dropStash, listStashes, popStash, stashChanges } from "./lib/stash";
 
 // Bypass the bundler: engine modules are plain ESM files loaded at runtime from disk.
 const nativeImport = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, any>>;
@@ -289,6 +290,41 @@ export class EngineManager {
     if (await this.refreshAlive(project)) throw new Error("Stop the engine before setting the task aside.");
     this.gitCache.delete(project.id);
     return (await this.load("defer-task.mjs")).setAsideTask({ workspace: project.path, stateDir: project.stateDir, state: await this.state(project), source });
+  }
+
+  /** Overview › Stash changes. Only while the engine is stopped: an agent may be writing the files. */
+  async stashChanges(project: Project): Promise<{ message: string }> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before stashing; an agent may be changing files.");
+    this.gitCache.delete(project.id);
+    const result = await stashChanges(project.path, project.stateDir);
+    await this.recordEvent(project, { type: "stash-saved", message: result.message, source: "app" });
+    return result;
+  }
+
+  /** Overview › Pop. A set-aside task whose work was in this stash no longer points at it. */
+  async popStash(project: Project, sha: string): Promise<{ conflicts: boolean; output: string }> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before popping a stash.");
+    this.gitCache.delete(project.id);
+    const result = await popStash(project.path, project.stateDir, sha);
+    if (!result.conflicts) await (await this.load("defer-task.mjs")).forgetDeferredStash(project.stateDir, sha);
+    await this.recordEvent(project, { type: "stash-popped", sha, conflicts: result.conflicts, source: "app" });
+    return result;
+  }
+
+  /** Overview › Delete beside Pop. A set-aside task whose work was in this stash no longer points at it. */
+  async dropStash(project: Project, sha: string): Promise<void> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before deleting a stash.");
+    const entry = (await listStashes(project.path)).find((s) => s.sha === sha);
+    await dropStash(project.path, sha);
+    await (await this.load("defer-task.mjs")).forgetDeferredStash(project.stateDir, sha);
+    await this.recordEvent(project, { type: "stash-dropped", sha, message: entry?.message ?? null, source: "app" });
+  }
+
+  /** Removes the deferred mark from these tasks: the next Assessment may choose them again. Their stashes are left alone. */
+  async undefer(project: Project, ids: string[]): Promise<number> {
+    const removed = await (await this.load("defer-task.mjs")).undeferTasks(project.stateDir, ids);
+    for (const d of removed) await this.recordEvent(project, { type: "task-undeferred", taskId: d.id, source: "app" });
+    return removed.length;
   }
 
   /** Adds a line to the project's Activity (and its action log). */

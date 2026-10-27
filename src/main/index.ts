@@ -37,9 +37,11 @@ import { addProject, canRerun, inspectDirectory, managedProjectFolder, prepareRe
 import { AUTO_INDEX_MAX, listSkills, ROLE_SKILLS_MAX_CHARS, SKILL_MAX_CHARS, skillDeliveryText } from "./skills";
 import { installLibraryImport, previewLibraryImport, TRUSTED_LIBRARIES } from "./skill-library";
 import { generatePlan, PLANNER_KINDS, savePlan } from "./planner";
+import { generateProjectSkill, PROJECT_SKILL_ROLES, projectSkillDelivery, readProjectSkill, saveProjectSkill } from "./project-skill";
 import { RolesService } from "./roles";
 import { AppStore } from "./store";
 import { ownerFixCommand, run, sharedGitOwnerProblem } from "./lib/git";
+import { listStashes } from "./lib/stash";
 import { canOpenPath, isExternalWebUrl } from "./lib/safe-open";
 import { interruptedWork, skipPoll } from "./lib/status";
 import { STAGING, Updater } from "./updater";
@@ -214,6 +216,7 @@ const project = (id: string) => {
 };
 const agents = () => store.data.agents ?? [];
 const planners = new Map<string, AbortController>();
+const skillWriters = new Map<string, AbortController>();
 
 function osNotify(title: string, body: string) {
   if (Notification.isSupported()) new Notification({ title, body, icon: appIcon(64) }).show();
@@ -229,9 +232,10 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
     await mkdir(p.stateDir, { recursive: true });
     await writeFile(path.join(p.stateDir, "workflow-roles.json"), JSON.stringify(check.roles, null, 2));
   }
-  if (Object.keys(check.skills).length || Object.keys(check.notes).length || check.autoSkills.length || check.autoAllImported) {
+  const projectSkill = await projectSkillDelivery(p.stateDir, p.projectSkill === true);
+  if (Object.keys(check.skills).length || Object.keys(check.notes).length || check.autoSkills.length || check.autoAllImported || p.projectSkill === true) {
     await mkdir(p.stateDir, { recursive: true });
-    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify({ ...(await assignedSkillsFile(check.skills, check.autoSkills, check.autoAllImported)), ...(Object.keys(check.notes).length ? { notes: check.notes } : {}) }, null, 2));
+    await writeFile(path.join(p.stateDir, "assigned-skills.json"), JSON.stringify({ ...(await assignedSkillsFile(check.skills, check.autoSkills, check.autoAllImported, projectSkill)), ...(Object.keys(check.notes).length ? { notes: check.notes } : {}) }, null, 2));
   }
   return check.args;
 }
@@ -241,12 +245,15 @@ async function launchArgs(p: Project, check = launchCheck(p)): Promise<string[]>
  * "When relevant" implementation skills (the hand-picked list, or every imported skill) go as an index only:
  * name, description and folder. Assessment picks from the index; the engine reads a picked skill's text.
  */
-async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames: string[] = [], autoAll = false) {
+async function assignedSkillsFile(assigned: Record<string, string[]>, autoNames: string[] = [], autoAll = false, projectSkill: { name: string; instructions: string } | null = null) {
   const available = (await listSkills(engineDir, store.data.settings.skills.importedDirs))
     .filter((s) => s.source === "imported" && store.data.settings.skills.enabled[s.id] !== false);
   const roles: Record<string, { name: string; instructions: string }[]> = {};
-  for (const [role, names] of Object.entries(assigned)) {
-    roles[role] = [];
+  // The project skill comes first for every engine role, before the skills assigned to the role's agent.
+  const roleKeys = projectSkill ? [...new Set([...PROJECT_SKILL_ROLES, ...Object.keys(assigned)])] : Object.keys(assigned);
+  for (const role of roleKeys) {
+    const names = assigned[role] ?? [];
+    roles[role] = projectSkill ? [projectSkill] : [];
     for (const name of names) {
       const skill = available.find((s) => s.name === name);
       if (!skill || !skill.instructions.trim()) continue;
@@ -459,12 +466,27 @@ async function runControl(id: string, action: ControlAction, source = "app") {
   const wasAlive = engine.isAlive(id);
   await engine.control(p, action, await launchArgs(p, check), providerEnv(p), source);
   if (starting && action === "start" && engine.isAlive(id)) void recordEstimate(p).catch(() => {});
-  if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) {
-    // The attached task is for this start only.
-    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: null } : x));
-    await store.saveProjects();
-  }
+  // The attached task is for one start, but it is cleared only once the engine has loaded it (clearPendingTask):
+  // a start that blocks first (a workspace that is not clean) would otherwise lose a Run again or Run next.
+  if (p.pendingTaskFile && !wasAlive && engine.isAlive(id)) pendingLaunches.set(id, p.pendingTaskFile);
   void pollOnce();
+}
+
+/** The task file each project was last started with, until the engine takes the task on. */
+const pendingLaunches = new Map<string, string>();
+/**
+ * Clears the project's attached task once the engine has taken it on: its current-task.json names the task only
+ * after the workspace checks passed (loaded, resumed, or set aside at Approve each task).
+ */
+async function clearPendingTask(p: Project) {
+  const file = pendingLaunches.get(p.id);
+  if (!file || p.pendingTaskFile !== file) return;
+  const read = (name: string) => readFile(name, "utf8").then((text) => JSON.parse(text)?.id, () => null);
+  const taskId = await read(file);
+  if (typeof taskId !== "string" || (await read(path.join(p.stateDir, "current-task.json"))) !== taskId) return;
+  pendingLaunches.delete(p.id);
+  store.data.projects = store.data.projects.map((x) => (x.id === p.id && x.pendingTaskFile === file ? { ...x, pendingTaskFile: null } : x));
+  await store.saveProjects();
 }
 
 // ---------- signed remote approvals (Telegram buttons, email replies) ----------
@@ -642,6 +664,7 @@ async function pollOnce() {
       const status = await engine.status(p);
       if (engine.isStoppingAfterTask(p.id) && status.processAlive) status.label = "Stopping after task";
       await engine.afterPoll(p, status);
+      await clearPendingTask(p).catch(() => {});
       await handleTransitions(p, lastStatus.get(p.id), status);
       lastStatus.set(p.id, status);
       // Unchanged status is not sent again: the window would only redraw the same thing.
@@ -1198,6 +1221,30 @@ function registerIpc() {
     }
   });
   handle("planner:cancel", (projectId: string) => { planners.get(projectId)?.abort(); });
+  // Project skill: drafted read-only like a plan (one run per project), saved in the state folder after review.
+  handle("projectSkill:get", (projectId: string) => { const p = project(projectId); return readProjectSkill(p.stateDir, p.projectSkill === true); });
+  handle("projectSkill:generate", async (projectId: string, cliId: string, model: string | null) => {
+    const p = project(projectId);
+    const connection = store.data.clis.find((c) => c.id === cliId);
+    if (!connection || !(PLANNER_KINDS as readonly string[]).includes(connection.kind)) throw new Error("Choose who writes the skill.");
+    skillWriters.get(projectId)?.abort();
+    const controller = new AbortController();
+    skillWriters.set(projectId, controller);
+    try {
+      return await generateProjectSkill(p.path, p.name, { connection, model: model?.trim() || null, apiKey: connection.kind === "openai" ? store.getCliSecret(connection.id) : null }, controller.signal);
+    } finally {
+      if (skillWriters.get(projectId) === controller) skillWriters.delete(projectId);
+    }
+  });
+  handle("projectSkill:cancel", (projectId: string) => { skillWriters.get(projectId)?.abort(); });
+  handle("projectSkill:save", async (projectId: string, text: string | null, enabled: boolean) => {
+    const p = project(projectId);
+    await saveProjectSkill(p.stateDir, text === null ? null : String(text));
+    const on = text !== null && enabled === true;
+    store.data.projects = store.data.projects.map((x) => (x.id === projectId ? { ...x, projectSkill: on } : x));
+    await store.saveProjects();
+    return readProjectSkill(p.stateDir, on);
+  });
   handle("planner:save", (projectId: string, text: string) => savePlan(project(projectId).path, String(text)));
   handle("project:update", async (p: Project) => {
     const before = store.data.projects.find((x) => x.id === p.id);
@@ -1218,8 +1265,9 @@ function registerIpc() {
     // counts its slots already past as handled, so a slot from before the change never starts.
     const passed = JSON.stringify(before?.schedule) !== JSON.stringify(p.schedule) ? lastPassedSlot(p.schedule, new Date()) : null;
     const handled = (last?: string | null) => (passed && (!last || Date.parse(passed) > Date.parse(last)) ? passed : last ?? null);
-    // The project folder and its state folder are set when the project is added, never by a window.
-    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart), ci: x.ci ?? null } : x));
+    // The project folder and its state folder are set when the project is added, never by a window; the project
+    // skill switch only by Save on the Project skill tab (which checks the skill is usable).
+    store.data.projects = store.data.projects.map((x) => (x.id === p.id ? { ...p, path: x.path, stateDir: x.stateDir, lastScheduledStart: handled(x.lastScheduledStart), ci: x.ci ?? null, projectSkill: x.projectSkill } : x));
     await store.saveProjects();
     return store.data.projects;
   });
@@ -1290,6 +1338,35 @@ function registerIpc() {
     store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: file } : x));
     await store.saveProjects();
     await runControl(id, "start");
+  });
+  handle("project:undefer", async (id: string, taskIds: string[]) => {
+    if (!Array.isArray(taskIds) || taskIds.some((t) => typeof t !== "string")) throw new Error("Choose the tasks to bring back.");
+    const n = await engine.undefer(project(id), taskIds);
+    void pollOnce();
+    return n;
+  });
+  // Run next: a set-aside task becomes the next start's first task (as Run again does) and loses its deferred mark; nothing starts now.
+  handle("project:runNext", async (id: string, taskId: string) => {
+    const p = project(id);
+    if (engine.isAlive(id)) throw new Error("Stop the automation first; the task runs as the next start's first task.");
+    const file = await prepareRerun(p.stateDir, String(taskId));
+    store.data.projects = store.data.projects.map((x) => (x.id === id ? { ...x, pendingTaskFile: file } : x));
+    await store.saveProjects();
+    await engine.undefer(p, [String(taskId)]);
+    void pollOnce();
+  });
+  handle("git:stashes", (id: string) => listStashes(project(id).path));
+  handle("git:stash", async (id: string) => { const r = await engine.stashChanges(project(id)); void pollOnce(); return r; });
+  handle("git:pop", async (id: string, sha: string) => {
+    if (typeof sha !== "string" || !/^[0-9a-f]{40,64}$/.test(sha)) throw new Error("Choose a stash.");
+    const r = await engine.popStash(project(id), sha);
+    void pollOnce();
+    return r;
+  });
+  handle("git:drop", async (id: string, sha: string) => {
+    if (typeof sha !== "string" || !/^[0-9a-f]{40,64}$/.test(sha)) throw new Error("Choose a stash.");
+    await engine.dropStash(project(id), sha);
+    void pollOnce();
   });
   handle("project:gitOwner", async (id: string) => {
     const problem = await sharedGitOwnerProblem(project(id).path);

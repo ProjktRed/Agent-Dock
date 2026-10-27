@@ -198,6 +198,8 @@ export class DashboardState {
       "user-attention": ["USER_ATTENTION", "idle", "fail", false],
       "blocked": ["BLOCKED", "idle", "fail", false],
       "task-set-aside": ["waiting", "idle", "waiting", false],
+      // Also after a restart, when the stage was still "stopped": the run is waiting for your Approve.
+      "task-approval-requested": ["waiting", "idle", "waiting", false],
       "sol-reassessment-started": ["elevating", "idle", "fail", false],
       "sol-reassessment-finished": ["USER_ATTENTION", "idle", "fail", false],
       "resolver-started": ["resolving", "idle", "waiting", false],
@@ -240,6 +242,14 @@ export class DashboardState {
     await atomicWriteJson(this.livePath, next);
     const { codexOperation: _privateCompletion, recovery: _privateRecovery, ...activityEvent } = event;
     if(event.type!=='recovery-state')await this.appendEvent(activityEvent);
+  }
+
+  /** Names the task this start was given (--task) before it loads, so what happens first is filed under it. No event. */
+  async showTask(task) {
+    this.live ??= await this.readLive();
+    if (!this.live) return;
+    this.live = { ...this.live, task: { ...task, id: task.id, name: task.name ?? task.id, prompt: redactText(task.prompt, { assignments: false }) }, updatedAt: new Date().toISOString() };
+    await atomicWriteJson(this.livePath, this.live);
   }
 
   async configureRuntime({ contextTokens, timeoutSeconds, model, provider }) {

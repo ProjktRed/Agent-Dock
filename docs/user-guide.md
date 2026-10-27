@@ -111,6 +111,20 @@ trusting checks, unprotecting a path or changing a program Agent Dock runs asks 
 
 - **Task history** (Projects): every task with its outcome. **Run again** repeats one with the same
   prompt, files and check.
+- **Choosing what comes next** (Tasks): **Do next** (the play button) puts a planned item first in the
+  whole priority order and removes its deferred mark; the next Assessment takes it unless it cannot be
+  done within the task size and safety limits. The ✕ on a Deferred badge only removes the mark. **Set
+  aside** at the bottom lists every set-aside task: **Remove mark**, or **Run next** to make it the first
+  task of the next start.
+- **Stash and pop** (Overview › Workspace, while the project is stopped): **Stash changes** puts all
+  uncommitted work, untracked files included, in a named git stash so a run can start on a clean
+  workspace. **Pop** puts a stash back (the workspace must be clean; on a conflict git keeps the stash).
+  **Delete** drops a stash after a second click. A set-aside task's unfinished work is one of these
+  stashes. The card starts collapsed; **Show stashes** opens the list.
+- **Project skill** (Projects › Project skill): Generate has a read-only agent draft a SKILL.md for this
+  project (layout, exact commands, conventions, pitfalls). Review and edit it, then Save; every role of
+  the project gets it from the next start. It is stored in Agent Dock's state folder, not in the
+  repository; Remove skill deletes it.
 - **Pull-request mode** (Projects › Workflow): each run works on its own `agent-dock/run-…` branch.
   Nothing is pushed until you press **Open pull request**. On GitLab this opens a merge request.
 - **GitHub CI** (Projects › Workflow): after Open pull request, the pushed commit's GitHub Actions

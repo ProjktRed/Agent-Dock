@@ -75,6 +75,10 @@ export function describeEvent(e: EngineEvent): string {
     case "assessment-rejected": return `Assessment chose again: ${first(e.qa)}`;
     case "qa-commit-recovered": return `QA commit recovered: ${first(e.qa)}`;
     case "task-set-aside": return `Task ${e.taskId ?? ""} set aside by you: ${e.stash ? `its work is in git stash "${e.stash}"` : "it had no uncommitted work"}. The next Run starts a fresh Assessment.`;
+    case "task-undeferred": return `Task ${e.taskId ?? ""}: deferred mark removed by you; Assessment may choose it again`;
+    case "stash-saved": return `Uncommitted changes stashed by you as "${e.message ?? ""}"`;
+    case "stash-dropped": return `Stash ${String(e.sha ?? "").slice(0, 7)} deleted by you${e.message ? ` ("${e.message}")` : ""}`;
+    case "stash-popped": return e.conflicts ? `Stash ${String(e.sha ?? "").slice(0, 7)} popped with conflicts; the stash was kept` : `Stash ${String(e.sha ?? "").slice(0, 7)} popped by you; its work is back as uncommitted changes`;
     case "retention": return `History older than ${e.days ?? "?"} days removed: ${[e.calls ? plural(Number(e.calls), "call folder") : "", e.sessions ? plural(Number(e.sessions), "Cline session") : "", e.actionLogPruned ? plural(Number(e.actionLogPruned), "action-log archive") : "", e.activityTrimmed ? "older Activity" : "", e.actionLogRotated ? "action log archived" : ""].filter(Boolean).join(", ") || "nothing"}`;
     case "plan-item-done": return `Plan item checked off${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;

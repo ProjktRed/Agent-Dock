@@ -42,6 +42,8 @@ export interface Project {
   ci?: CiWatch | null;
   /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
   wsl?: { enabled: boolean; distro: string };
+  /** The project skill (<stateDir>/project-skill/SKILL.md) is given to the project's agents. */
+  projectSkill?: boolean;
 }
 
 /** A pushed run branch and commit whose GitHub Actions runs the app reads with GitHub CLI. */
@@ -518,6 +520,40 @@ export interface TaskBoard {
   groupByPhase: boolean;
   /** Open items in priority order (In progress and Planned), then finished ones in plan order. */
   items: TaskBoardItem[];
+  /** Tasks set aside (deferred-tasks.json), oldest first. Absent from older builds. */
+  deferred?: DeferredTask[];
+}
+
+export interface StashEntry {
+  /** stash@{n} when it was read; the index moves as stashes come and go, so actions name the commit. */
+  ref: string;
+  sha: string;
+  message: string;
+  at: string | null;
+  /** Made by Agent Dock (a set-aside task, or Stash changes on Overview). */
+  agentDock: boolean;
+}
+
+export interface ProjectSkillInfo {
+  /** SKILL.md text, or null when none was saved. */
+  text: string | null;
+  /** Where it is stored (in the project's state folder, not the repository). */
+  path: string;
+  /** Given to the project's agents at the next start. */
+  enabled: boolean;
+}
+
+export interface DeferredTask {
+  id: string;
+  name: string;
+  reason: string;
+  at: string | null;
+  /** The git stash message holding its unfinished work, or null when it had none (or it was popped). */
+  stash: string | null;
+  /** The open plan items it worked on. */
+  planItemIds: PlanItemKey[];
+  /** Its definition was kept, so it can run as the next start's first task. */
+  rerunnable: boolean;
 }
 
 export interface TaskBoardUpdate {

@@ -119,9 +119,13 @@ export async function workspaceSummary(workspace: string, objective = ""): Promi
 }
 
 export interface PlannerRun { connection: CliConnection; model: string | null; apiKey: string | null }
-type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<any>; text(): Promise<string> }>;
+export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<any>; text(): Promise<string> }>;
 
-function runCli(command: string, args: string[], cwd: string, prompt: string, signal: AbortSignal, env: NodeJS.ProcessEnv, outputFile?: string, tempDir?: string): Promise<string> {
+/** Words for one kind of read-only workspace call, in its errors. */
+export interface CallWords { who: string; cancelled: string; minutes: string }
+const PLANNER_WORDS: CallWords = { who: "planner", cancelled: "Planning was cancelled.", minutes: "The planner did not finish within 10 minutes." };
+
+function runCli(command: string, args: string[], cwd: string, prompt: string, signal: AbortSignal, env: NodeJS.ProcessEnv, outputFile?: string, tempDir?: string, words: CallWords = PLANNER_WORDS): Promise<string> {
   return new Promise((resolve, reject) => {
     // Windows: through cmd.exe so npm's .cmd launchers run, with every argument escaped for it.
     const child = process.platform === "win32"
@@ -141,8 +145,8 @@ function runCli(command: string, args: string[], cwd: string, prompt: string, si
         resolve(value);
       }
     };
-    const abort = () => finish(new Error("Planning was cancelled."));
-    const timer = setTimeout(() => finish(new Error("The planner did not finish within 10 minutes.")), TIMEOUT_MS);
+    const abort = () => finish(new Error(words.cancelled));
+    const timer = setTimeout(() => finish(new Error(words.minutes)), TIMEOUT_MS);
     signal.addEventListener("abort", abort);
     child.on("error", (error) => finish(error));
     child.stdout.on("data", (d) => (stdout += d));
@@ -151,46 +155,53 @@ function runCli(command: string, args: string[], cwd: string, prompt: string, si
       if (done) return;
       const text = outputFile ? await readFile(outputFile, "utf8").catch(() => "") : stdout;
       if (code === 0 && text.trim()) finish(null, text);
-      else finish(new Error(stderr.trim().split(/\r?\n/).slice(-2).join(" ") || `The planner exited with code ${code} and no plan.`));
+      else finish(new Error(stderr.trim().split(/\r?\n/).slice(-2).join(" ") || `The ${words.who} exited with code ${code} and no answer.`));
     });
     child.stdin.on("error", () => {});
     child.stdin.end(prompt);
   });
 }
 
-/** One planner call; cloud CLIs run read-only in the workspace, local models get the workspace summary. */
-export async function callPlanner(workspace: string, objective: string, planner: PlannerRun, signal: AbortSignal, fetchImpl: Fetch = fetch as unknown as Fetch, feedback = ""): Promise<string> {
+/**
+ * One read-only question about the workspace: cloud CLIs read it themselves (Codex in its read-only sandbox,
+ * Claude Code with Read, Grep and Glob only); local models get the workspace summary in the prompt instead.
+ */
+export async function askWorkspace(workspace: string, prompt: (summary: string | null) => string, planner: PlannerRun, signal: AbortSignal, { fetchImpl = fetch as unknown as Fetch, words = PLANNER_WORDS, summaryFocus = "" }: { fetchImpl?: Fetch; words?: CallWords; summaryFocus?: string } = {}): Promise<string> {
   const { connection, model } = planner;
   const kind = connection.kind;
   if (kind === "codex" || kind === "claude") {
-    const prompt = buildPlannerPrompt(objective, null) + feedback;
     const command = connection.location.trim().replace(/^"(.+)"$/, "$1") || kind;
     if (kind === "codex") {
       const temp = await mkdtemp(path.join(os.tmpdir(), "agent-dock-plan-"));
-      const out = path.join(temp, "plan.md");
+      const out = path.join(temp, "answer.md");
       const args = ["exec", "--ephemeral", "--color", "never", "--sandbox", "read-only", "--skip-git-repo-check", ...(model ? ["-m", model] : []), "--cd", workspace, "--output-last-message", out, "-"];
-      return runCli(command, args, workspace, prompt, signal, process.env, out, temp);
+      return runCli(command, args, workspace, prompt(null), signal, process.env, out, temp, words);
     }
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE")));
     const args = ["-p", "--output-format", "text", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands", "--permission-mode", "dontAsk", "--allowedTools", "Read", "Grep", "Glob", ...(model ? ["--model", model] : [])];
-    return runCli(command, args, workspace, prompt, signal, env);
+    return runCli(command, args, workspace, prompt(null), signal, env, undefined, undefined, words);
   }
-  if (!["llamacpp", "ollama", "openai"].includes(kind)) throw new Error(`${connection.name} cannot be used as a planner.`);
-  if (!model) throw new Error("Choose the local model that should write the plan.");
+  if (!["llamacpp", "ollama", "openai"].includes(kind)) throw new Error(`${connection.name} cannot be used as a ${words.who}.`);
+  if (!model) throw new Error(`Choose the local model for the ${words.who}.`);
   let base = connection.location.trim().replace(/\/+$/, "");
   if (kind === "ollama" && !/\/v1$/.test(base)) base += "/v1";
-  const prompt = buildPlannerPrompt(objective, await workspaceSummary(workspace, objective)) + feedback;
+  const content = prompt(await workspaceSummary(workspace, summaryFocus));
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const res = await fetchImpl(`${base}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(planner.apiKey ? { Authorization: `Bearer ${planner.apiKey}` } : {}) },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2, stream: false }),
+    body: JSON.stringify({ model, messages: [{ role: "user", content }], temperature: 0.2, stream: false }),
     signal: AbortSignal.any([signal, timeout]),
-  }).catch((error: Error) => { throw new Error(signal.aborted ? "Planning was cancelled." : timeout.aborted ? "The planner did not finish within 10 minutes." : `Could not reach ${connection.name}: ${error.message}`); });
+  }).catch((error: Error) => { throw new Error(signal.aborted ? words.cancelled : timeout.aborted ? words.minutes : `Could not reach ${connection.name}: ${error.message}`); });
   if (!res.ok) throw new Error(`${connection.name} returned ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   const text = (await res.json())?.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim()) throw new Error(`${connection.name} returned no text.`);
   return text;
+}
+
+/** One planner call; cloud CLIs run read-only in the workspace, local models get the workspace summary. */
+export function callPlanner(workspace: string, objective: string, planner: PlannerRun, signal: AbortSignal, fetchImpl: Fetch = fetch as unknown as Fetch, feedback = ""): Promise<string> {
+  return askWorkspace(workspace, (summary) => buildPlannerPrompt(objective, summary) + feedback, planner, signal, { fetchImpl, summaryFocus: objective });
 }
 
 /** Generates a plan; one retry with the structural problem when the first answer does not parse. */
