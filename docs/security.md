@@ -153,6 +153,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   to the engine, which reads them once at startup and removes them from its environment. Check
   commands, model CLIs, workers and parallel task engines never inherit them; only the engine that
   started the run sends notifications.
+- Check commands and agents don't inherit credentials from your environment: any variable named like
+  one (`*_API_KEY`, `*_TOKEN`, `*PASSWORD`, `*_SECRET`, `GITHUB_PAT`, `MYSQL_PWD` and similar) is removed.
+  Each agent CLI keeps only its own sign-in variable (for a cloud provider, the key broker's token).
+  A credential stored under an ordinary name (for example a password inside `DATABASE_URL`) is not
+  recognized, so don't keep one in the environment Agent Dock starts from.
 - Windows: Agent Dock and its engine resolve bare program names (git, codex, claude, powershell)
   from PATH only, never from the current folder, and child processes inherit that setting. Arguments
   that pass through `cmd.exe` are quoted and escaped for it, or refused when they cannot be passed

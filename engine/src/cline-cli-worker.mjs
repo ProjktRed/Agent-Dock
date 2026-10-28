@@ -503,7 +503,9 @@ export async function launchCline({
   });
   // No inherited credentials: a cloud provider's variable comes only from launchEnv (the broker's token), so an
   // OPENROUTER_API_KEY or OPENAI_API_KEY set for something else never reaches Cline.
-  const env = { ...withoutSecrets(process.env), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
+  // OPENCODE_* (key, server password, config) is OpenCode's, as the OpenCode worker strips it too.
+  const inherited = Object.fromEntries(Object.entries(withoutSecrets(process.env)).filter(([name]) => !name.toUpperCase().startsWith("OPENCODE_")));
+  const env = { ...inherited, ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
   const isolation = await clineSkillEnv(env, {dataDir, configDir});
   let result;
