@@ -23,8 +23,10 @@ test('each orchestrator CLI keeps only its own sign-in variables', () => {
 test('any variable named like a credential is removed, not only the listed ones', () => {
   const secrets = ['GEMINI_API_KEY', 'XAI_API_KEY', 'DEEPSEEK_API_KEY', 'OPENCODE_API_KEY', 'GOOGLE_APIKEY', 'GITHUB_TOKEN', 'GITHUB_PAT',
     'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_BEARER_TOKEN_BEDROCK', 'SECRET_KEY_BASE', 'MY_SERVICE_PASSWORD', 'Some_Token', 'GCP_CREDENTIALS',
-    'PGPASSWORD', 'MYSQL_PWD', 'REDISCLI_AUTH', 'DOCKER_AUTH_CONFIG', 'NPM_CONFIG__AUTH', 'NPM_CONFIG__AUTHTOKEN', 'CLIENTSECRET'];
-  const plain = ['PATH', 'HOME', 'KEYBOARD_LAYOUT', 'TOKENIZERS_PARALLELISM', 'NODE_OPTIONS', 'PATHEXT', 'SSH_AUTH_SOCK', 'MAX_TOKENS', 'PWD', 'OLDPWD', 'AUTHOR_NAME', 'GIT_AUTHOR_EMAIL'];
+    'PGPASSWORD', 'MYSQL_PWD', 'REDISCLI_AUTH', 'DOCKER_AUTH_CONFIG', 'NPM_CONFIG__AUTH', 'NPM_CONFIG__AUTHTOKEN', 'CLIENTSECRET', 'NPM_CONFIG_OTP', 'MYAPIKEY',
+    'GOOGLE_APPLICATION_CREDENTIALS_FILE', 'AWS_SHARED_CREDENTIALS_FILE', 'NPM_CONFIG_FOO_TOKEN_FILE', 'TOKEN_PATH', 'API-KEY', 'my.secret', 'HTTP_AUTHORIZATION', 'AUTHORIZATION'];
+  const plain = ['PATH', 'HOME', 'KEYBOARD_LAYOUT', 'TOKENIZERS_PARALLELISM', 'NODE_OPTIONS', 'PATHEXT', 'SSH_AUTH_SOCK', 'MAX_TOKENS', 'PWD', 'OLDPWD', 'AUTHOR_NAME', 'GIT_AUTHOR_EMAIL',
+    'NPM_CONFIG_ALWAYS_AUTH', 'PASSWORD_STORE_DIR', 'COTP', 'POTPOURRI', 'FOOTPRINT'];
   const all = Object.fromEntries([...secrets, ...plain].map((name) => [name, 'value-' + name]));
   assert.deepEqual(Object.keys(withoutSecrets(all)).sort(), [...plain].sort());
   // keep still hands a worker its own sign-in variable, whatever it is named.

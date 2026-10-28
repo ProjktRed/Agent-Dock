@@ -153,8 +153,9 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   to the engine, which reads them once at startup and removes them from its environment. Check
   commands, model CLIs, workers and parallel task engines never inherit them; only the engine that
   started the run sends notifications.
-- Check commands and agents don't inherit credentials from your environment: any variable named like
-  one (`*_API_KEY`, `*_TOKEN`, `*PASSWORD`, `*_SECRET`, `GITHUB_PAT`, `MYSQL_PWD` and similar) is removed.
+- Check commands and agents don't inherit variables named like credentials from your environment
+  (`*_API_KEY`, `*_TOKEN`, `*PASSWORD`, `*_SECRET`, `GITHUB_PAT`, `MYSQL_PWD`, `NPM_CONFIG_OTP` and similar);
+  locations such as `PASSWORD_STORE_DIR` stay.
   Each agent CLI keeps only its own sign-in variable (for a cloud provider, the key broker's token).
   A credential stored under an ordinary name (for example a password inside `DATABASE_URL`) is not
   recognized, so don't keep one in the environment Agent Dock starts from.

@@ -62,3 +62,15 @@ test('secrets by name are hidden however short; live.json keeps no known secret 
   await state.initialize({task:{id:'T',prompt:'use the key k7Qz9'},workspace:dir,maxAttempts:1});
   assert.doesNotMatch(await readFile(path.join(dir,'live.json'),'utf8'),/k7Qz9/);
 });
+
+test('a value named like a credential is hidden in logs, as short as a one-time code', (t) => {
+ t.after(()=>useSecretValues(secretValuesFromEnv()));
+ useSecretValues(secretValuesFromEnv({NPM_CONFIG_OTP:'482913',FOO_TOKEN_FILE:'directSecret9',PASSWORD_STORE_DIR:'C:/store-dir-1',MY_PASSWORD:'secret',MY_TOKEN:'default',
+  agent_dock_notify:JSON.stringify({slack:{token:'customSecret42'}})}));
+ // Ordinary short words stay readable; a lowercase notification setting (Windows ignores case) is still read inside.
+ assert.equal(redactText('No secret found; using default',{patterns:false}),'No secret found; using default');
+ assert.equal(redactText('failed: customSecret42',{patterns:false}),'failed: [redacted:secret]');
+ assert.equal(redactText('npm publish --otp 482913',{patterns:false}),'npm publish --otp [redacted:secret]');
+ assert.equal(redactText('read directSecret9',{patterns:false}),'read [redacted:secret]');
+ assert.equal(redactText('store C:/store-dir-1',{patterns:false}),'store C:/store-dir-1');
+});

@@ -1,6 +1,6 @@
 import { parseTuning } from "./engine-tuning.mjs";
 import { registerSecretEnv } from "./secret-env.mjs";
-import { secretValuesFromEnv, useSecretValues } from "./redact.mjs";
+import { addSecretValues, secretValuesFromEnv } from "./redact.mjs";
 import { readAssignedSkills, useAssignedSkills } from "./task-handoff-skill.mjs";
 
 export const DEFAULT_CLINE_CONTEXT_TOKENS = 98_304;
@@ -104,7 +104,7 @@ export function parseLoopOptions(argv) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(providerApiKeyEnv)) throw new Error("--provider-api-key-env must be a valid environment variable name");
   registerSecretEnv(providerApiKeyEnv);
   // Redaction read the environment at startup, before this name was known: hide its value too.
-  useSecretValues(secretValuesFromEnv());
+  addSecretValues(secretValuesFromEnv());
   // Assigned skills reach every role prompt through task-handoff-skill.mjs; read once at startup.
   useAssignedSkills(readAssignedSkills(options["skills-file"]));
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;

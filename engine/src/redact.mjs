@@ -4,7 +4,7 @@
 // secret-looking environment variables), and well-known credential formats. A redaction names the
 // kind ("[redacted:github-token]") so the reader still understands what was there.
 
-import { secretEnvNames } from "./secret-env.mjs";
+import { isSecretEnvName, secretEnvNames } from "./secret-env.mjs";
 
 const PATTERNS = [
   ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
@@ -36,15 +36,25 @@ export function useSecretValues(list = []) {
   values = [...new Set(list.map((v) => String(v ?? "").trim()).filter((v) => v.length >= 4))].sort((a, b) => b.length - a.length);
 }
 
+/** Adds values to the ones already hidden (those read at startup stay, even once removed from the environment). */
+export function addSecretValues(list = []) {
+  useSecretValues([...values, ...list]);
+}
+
 /** Secrets the engine process holds: secret-looking variables, and every string inside AGENT_DOCK_NOTIFY. */
 export function secretValuesFromEnv(env = process.env) {
   const found = [];
   const named = secretEnvNames();
   for (const [name, value] of Object.entries(env)) {
-    // A variable that is a secret by name counts however short; one only named like a secret needs 8 characters.
-    if (typeof value !== "string" || value.length < (named.has(name.toUpperCase()) ? 4 : 8)) continue;
-    if (named.has(name.toUpperCase()) && name !== "AGENT_DOCK_NOTIFY") { found.push(value); continue; }
-    if (name === "AGENT_DOCK_NOTIFY") {
+    // A listed or registered secret counts however short. One named like a credential (the rule that keeps it from
+    // child processes) needs 8 characters, or 6 digits for a one-time code: shorter words (default, secret) would be
+    // hidden all over the logs. One that only resembles a secret name needs 8.
+    const upper = name.toUpperCase();
+    const listed = named.has(upper);
+    const byName = listed || isSecretEnvName(name);
+    if (typeof value !== "string" || value.length < (listed ? 4 : byName && /^\d+$/.test(value) ? 6 : 8)) continue;
+    if (byName && upper !== "AGENT_DOCK_NOTIFY") { found.push(value); continue; }
+    if (upper === "AGENT_DOCK_NOTIFY") {
       try { collect(JSON.parse(value), found); } catch {}
       continue;
     }
