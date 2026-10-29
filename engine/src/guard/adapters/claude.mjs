@@ -24,6 +24,7 @@ export const adapter = {
   id: "claude",
   label: "Claude Code",
   stateSubdir: null,
+  maxHookInput: 2_000_000,
   capabilities: {
     narrowsToolSchema: false, enumeratesCommands: false, postToolEvents: false,
     outOfProcessHooks: true, counters: false, editDiscipline: false,

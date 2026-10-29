@@ -113,6 +113,7 @@ export const adapter = {
   id: "codex",
   label: "Codex",
   stateSubdir: "codex",
+  maxHookInput: 2_000_000,
   capabilities: {
     narrowsToolSchema: false, enumeratesCommands: false, postToolEvents: false,
     outOfProcessHooks: true, counters: false, editDiscipline: false,

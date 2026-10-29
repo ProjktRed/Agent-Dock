@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isProtectedPath, pathsIn } from "./protected-paths.mjs";
+import { redactText } from "../redact.mjs";
 
 /**
  * Ask instead of refuse (Settings › Execution & safety, "When the guard cannot verify an action"). A Codex or
@@ -64,16 +66,27 @@ export function askable(policy, action, decision, adapter) {
   return decision?.effect === "stop" && Boolean(policy.ask?.dir) && Number(policy.ask?.timeoutMs) > 0 && ASK_ADAPTERS.has(adapter?.id) && !definitelyRefused(policy, action);
 }
 
+const digest = (value) => createHash("sha256").update(value).digest("hex");
+const preview = (action, limit) => redactText(commandText(action)).slice(0, limit);
+
 // Actions allowed for this run: one file per action, named by the hash of what it is (no shared file to race on).
+// It is bound to the whole tool call (not just the text shown), the policy, the task and the engine run, so it
+// never carries over to another task, run or policy; the file keeps only digests and a short redacted preview.
 const rememberedDir = (dir) => path.join(dir, "allowed-for-run");
-function remembered(dir, adapter, action, cwd) {
-  const what = { cli: adapter.label, tool: action.tool ?? null, cwd, text: commandText(action) };
-  return { what, file: path.join(rememberedDir(dir), `${createHash("sha256").update(JSON.stringify(what)).digest("hex")}.json`) };
+function remembered(policy, adapter, action, cwd) {
+  const what = {
+    cli: adapter.label, tool: action.tool ?? null, cwd, taskId: policy.taskId ?? null, runId: policy.ask.runId ?? null,
+    policy: digest(JSON.stringify({ ...policy, ask: null })), action: digest(JSON.stringify([commandText(action), action.input ?? null])),
+  };
+  return { what, file: path.join(rememberedDir(policy.ask.dir), `${digest(JSON.stringify(what))}.json`) };
 }
 
 /** A new engine run forgets what the last one allowed (parallel children share the parent's run). */
 export async function startAskRun() {
-  if (configured) await rm(rememberedDir(configured.dir), { recursive: true, force: true }).catch(() => {});
+  if (!configured) return;
+  await rm(rememberedDir(configured.dir), { recursive: true, force: true }).catch(() => {});
+  await mkdir(configured.dir, { recursive: true });
+  await writeFile(path.join(configured.dir, "run-id"), randomBytes(16).toString("hex"), { mode: 0o600 });
 }
 
 /**
@@ -83,7 +96,7 @@ export async function startAskRun() {
 export async function askUser(policy, action, reason, adapter, { now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 500 } = {}) {
   const { dir, timeoutMs } = policy.ask;
   const cwd = action.cwd || policy.workspace;
-  const memory = remembered(dir, adapter, action, cwd);
+  const memory = remembered(policy, adapter, action, cwd);
   const earlier = await readFile(memory.file, "utf8").then(JSON.parse, () => null);
   if (earlier && JSON.stringify(earlier.what) === JSON.stringify(memory.what)) return "remembered";
   await mkdir(dir, { recursive: true });
@@ -91,7 +104,7 @@ export async function askUser(policy, action, reason, adapter, { now = Date.now,
   const createdAt = now();
   const request = {
     id, cli: adapter.label, tool: action.tool ?? null, kind: action.kind,
-    text: commandText(action).slice(0, TEXT_LIMIT), reason: String(reason ?? "").slice(0, 500),
+    text: preview(action, TEXT_LIMIT), reason: String(reason ?? "").slice(0, 500),
     cwd, taskId: policy.taskId ?? null,
     createdAt: new Date(createdAt).toISOString(), expiresAt: new Date(createdAt + timeoutMs).toISOString(),
   };
@@ -112,7 +125,7 @@ export async function askUser(policy, action, reason, adapter, { now = Date.now,
   }
   if (outcome === "allow-run") {
     await mkdir(rememberedDir(dir), { recursive: true });
-    await writeFile(memory.file, JSON.stringify({ what: memory.what, id, at: new Date(now()).toISOString() }), { mode: 0o600 }).catch(() => {});
+    await writeFile(memory.file, JSON.stringify({ what: memory.what, preview: preview(action, 200), id, at: new Date(now()).toISOString() }), { mode: 0o600 }).catch(() => {});
   }
   return outcome;
 }
@@ -124,7 +137,13 @@ let configured = null;
 export function useActionAsk({ stateDir, minutes } = {}) {
   configured = stateDir && Number(minutes) > 0 ? { dir: path.join(path.resolve(stateDir), "approvals"), timeoutMs: Math.round(Number(minutes) * 60_000) } : null;
 }
-export const actionAsk = () => configured;
+/** The run's id is read when a policy is written: parallel children and Elevation use their parent's run. */
+export const actionAsk = () => {
+  if (!configured) return null;
+  let runId = null;
+  try { runId = readFileSync(path.join(configured.dir, "run-id"), "utf8").trim() || null; } catch { /* No run started here yet. */ }
+  return { ...configured, runId };
+};
 
 /** Hook timeout (seconds) a CLI must allow so the hook can wait for an answer. */
 export const hookTimeoutSeconds = (policyAsk) => 30 + Math.ceil(Math.max(0, Number(policyAsk?.timeoutMs) || 0) / 1000);

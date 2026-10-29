@@ -133,3 +133,59 @@ test("Allow for this run: the same action is allowed without asking until the ru
     assert.equal(policy.ask.dir, dir);
   } finally { /* nothing left running */ }
 });
+
+test("your yes is re-checked: a policy rewritten while you decided refuses the action", async () => {
+  const { dir, policyPath, logPath, workspace, policy } = setup();
+  const timer = setInterval(() => {
+    let files = [];
+    try { files = readdirSync(dir).filter((f) => f.endsWith(".request.json")); } catch { return; }
+    if (!files.length) return;
+    const request = JSON.parse(readFileSync(path.join(dir, files[0]), "utf8"));
+    writeFileSync(policyPath, JSON.stringify({ ...policy, allowedPaths: ["changed.txt"] }));
+    writeFileSync(path.join(dir, `${request.id}.decision.json`), JSON.stringify({ id: request.id, decision: "allow" }));
+    clearInterval(timer);
+  }, 20);
+  try {
+    const result = await runHook(codex, { policyPath, logPath, input: bash("rg --files", workspace) });
+    assert.equal(result.exitCode, 2);
+    assert.match(result.stderr, /policy changed while you were asked/);
+  } finally { clearInterval(timer); }
+});
+
+test("Allow for this run is bound to the task, the run, the policy and the whole call, and stores no command", async () => {
+  const { dir, workspace, policy } = setup();
+  const action = { kind: "command", tool: "Bash", commands: ["rg --files token=abc123def456ghi"], input: { command: "rg --files token=abc123def456ghi" }, cwd: workspace };
+  const answer = setInterval(() => {
+    for (const f of (() => { try { return readdirSync(dir); } catch { return []; } })().filter((x) => x.endsWith(".request.json"))) {
+      const r = JSON.parse(readFileSync(path.join(dir, f), "utf8"));
+      try { writeFileSync(path.join(dir, `${r.id}.decision.json`), JSON.stringify({ id: r.id, decision: "allow", remember: true }), { flag: "wx" }); } catch { /* answered */ }
+    }
+  }, 20);
+  const base = { ...policy, taskId: "T1", ask: { ...policy.ask, runId: "run-1" } };
+  try { assert.equal(await askUser(base, action, "unverified", codex), "allow-run"); } finally { clearInterval(answer); }
+  const quick = (p, a = action) => askUser({ ...p, ask: { ...p.ask, timeoutMs: 50 } }, a, "unverified", codex, { pollMs: 10 });
+  assert.equal(await quick(base), "remembered");
+  assert.equal(await quick({ ...base, taskId: "T2" }), "timeout", "another task");
+  assert.equal(await quick({ ...base, ask: { ...base.ask, runId: "run-2" } }), "timeout", "another run");
+  assert.equal(await quick({ ...base, allowedPaths: ["x.txt"] }), "timeout", "another policy");
+  assert.equal(await quick(base, { ...action, input: { ...action.input, extra: 1 } }), "timeout", "same text, different call");
+  const [saved] = readdirSync(path.join(dir, "allowed-for-run")).map((f) => readFileSync(path.join(dir, "allowed-for-run", f), "utf8"));
+  assert.doesNotMatch(saved, /abc123def456ghi/, "only digests and a redacted preview are kept");
+});
+
+test("oversized hook input is refused in each CLI's own format", async () => {
+  const { policyPath, logPath } = setup();
+  const { Readable } = await import("node:stream");
+  const big = JSON.stringify({ tool_name: "Bash", tool_input: { command: "x".repeat(2_100_000) } });
+  for (const adapter of [codex, claude]) {
+    const stdin = Object.getOwnPropertyDescriptor(process, "stdin");
+    Object.defineProperty(process, "stdin", { value: Object.assign(Readable.from([big]), { setEncoding() {} }), configurable: true });
+    try {
+      const result = await runHook(adapter, { policyPath, logPath });
+      assert.equal(typeof result.exitCode, "number");
+      assert.match(JSON.stringify(result), /oversized hook input/);
+      if (adapter === claude) assert.match(result.stdout, /"permissionDecision":"deny"/);
+      else assert.equal(result.exitCode, 2);
+    } finally { Object.defineProperty(process, "stdin", stdin); }
+  }
+});
