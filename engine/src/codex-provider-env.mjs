@@ -12,6 +12,8 @@ import { CLAUDE_AUTH_ENV, CODEX_AUTH_ENV, registerSecretEnv } from "./secret-env
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NEVER = new Set(CLAUDE_AUTH_ENV);
+// Variables every process needs (env_key = "PATH" would strip it from checks and agents and redact its value).
+const SYSTEM_NAME = /^(?:PATH|PATHEXT|HOME|HOMEDRIVE|HOMEPATH|USERPROFILE|USER|USERNAME|LOGNAME|SHELL|COMSPEC|SYSTEMROOT|SYSTEMDRIVE|WINDIR|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PSMODULEPATH|OS|COMPUTERNAME|PWD|TERM|LANG|LC_w+|XDG_w+|NODE_OPTIONS|NODE_PATH|CODEX_HOME|DISPLAY|NUMBER_OF_PROCESSORS|PROCESSOR_w+)$/i;
 
 /** One key-path segment: bare, "basic" or 'literal' (basic strings with escapes are not supported). */
 const SEGMENT = /\s*(?:([A-Za-z0-9_-]+)|"([^"\\]*)"|'([^']*)')\s*/y;
@@ -95,7 +97,12 @@ export function tomlStrings(text) {
     if (eq < 0) continue;
     const key = keyPath(line.slice(0, eq));
     const string = stringValue(line.slice(eq + 1));
-    if (key && string !== null && !table.includes(null)) { values.set([...table, ...key].join("\0"), string); continue; }
+    if (key && string !== null && !table.includes(null)) {
+      const full = [...table, ...key].join("\0");
+      if (values.has(full)) values.unreadable = true; // a duplicate key is invalid TOML: never pick one of them
+      values.set(full, string);
+      continue;
+    }
     // Unread: a selecting key, a key with an escape (it may spell one), or any other value that mentions one
     // (an inline table such as work = { model_provider = "x" }).
     const inProviders = [table[0], key?.[0]].some((part) => part === null || part === "profiles" || part === "model_providers");
@@ -114,7 +121,7 @@ export function codexProviderKeyEnv({ env = process.env, read = (file) => readFi
   const provider = (profile && values.get(["profiles", profile, "model_provider"].join("\0"))) || values.get("model_provider");
   if (!provider) return null;
   const name = values.get(["model_providers", provider, "env_key"].join("\0"));
-  if (!name || !ENV_NAME.test(name) || /^AGENT_DOCK_/i.test(name) || NEVER.has(name.toUpperCase())) return null;
+  if (!name || !ENV_NAME.test(name) || SYSTEM_NAME.test(name) || /^AGENT_DOCK_/i.test(name) || NEVER.has(name.toUpperCase())) return null;
   return name;
 }
 
