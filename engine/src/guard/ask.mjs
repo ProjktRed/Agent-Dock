@@ -23,6 +23,21 @@ function words(text) {
   return String(text).split(/[\s;|&()<>]+/).map((w) => w.replace(/^["'`]+|["'`,]+$/g, "")).filter(Boolean);
 }
 
+/**
+ * The file names a word could stand for. Code inside a command (`node -e "…c?1:0…"`) is no file name: a
+ * quote, brace, equals sign or comma, or a colon that is not a drive letter's (`C:\`), splits it, and each
+ * piece is checked (`-Path:.env` and `-Path:C:\…` still name their paths; wildcards stay in their word).
+ * Environment variables are expanded as well, so `$env:APPDATA\…` is checked where it points. Only decides
+ * refuse-outright versus ask: never allows anything.
+ */
+function nameCandidates(word) {
+  const expanded = word
+    .replace(/\$\{env:(\w+)\}|\$env:(\w+)|%(\w+)%|\$\{?(\w+)\}?/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m)
+    .replace(/^~(?=$|[\\/])/, process.env.USERPROFILE ?? process.env.HOME ?? "~");
+  const pieces = [word, expanded].flatMap((w) => w.split(/["'`{}=,]+/)).flatMap((w) => w.split(/(?<!(?:^|[^A-Za-z0-9_])[A-Za-z]):|:(?![\\/])/));
+  return [...new Set(pieces.filter(Boolean))];
+}
+
 function commandText(action) {
   const commands = (action.commands ?? []).map((c) => (typeof c === "string" ? c : [c?.command, ...(c?.args ?? [])].join(" ")));
   return commands.length ? commands.join("\n") : JSON.stringify(action.input ?? null);
@@ -39,9 +54,10 @@ export function definitelyRefused(policy, action) {
     else if (value && typeof value === "object") for (const v of Object.values(value)) strings(v, out);
     return out;
   };
-  const names = action.kind === "command" ? words(commandText(action)) : [...pathsIn(action.input), ...strings(action.input).flatMap(words)];
+  const texts = action.kind === "command" ? words(commandText(action)) : strings(action.input).flatMap(words);
+  const paths = action.kind === "command" ? [] : pathsIn(action.input);
   // A web address is no file name (the path check reads its colon as a drive and refuses it, to be safe).
-  return names.filter((name) => !/^https?:\/\//i.test(name)).some(protectedName);
+  return [...paths, ...texts.filter((name) => !/^https?:\/\//i.test(name)).flatMap(nameCandidates)].some(protectedName);
 }
 
 export function askable(policy, action, decision, adapter) {

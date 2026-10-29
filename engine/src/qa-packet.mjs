@@ -258,7 +258,12 @@ export async function prepareQaPacket({
   const beforeFingerprint = await workspaceFingerprint(workspace);
   const previous = previousPacket?.qaEvidence;
   const reusable = beforeFingerprint && before.scope.status === "PASS" && previous?.fingerprint?.request === request && previous.fingerprint.workspace === beforeFingerprint && previous.workspaceStable === true && previous.command.exitCode === 0 && previous.scope.status === "PASS" && !Object.values(previous.categories).some(status => ["FAIL", "INCONCLUSIVE", "TIMEOUT", "RUNNING", "NON-TERMINATING"].includes(status));
-  const commandResult = reusable ? null : await runCommand(task.qaCommand, workspace);
+  // The project's check runs only on work that passed the scope check: changes outside the task's paths (or to
+  // protected ones) could be what the check would execute. The run stops on the failed scope, as before.
+  const scopeGate = !reusable && before.scope.status !== "PASS";
+  const commandResult = reusable ? null : scopeGate
+    ? { exitCode: null, stdout: `Not run: the scope check failed first (${before.scope.message})`, stderr: "", durationMs: 0, steps: [{ command: task.qaCommand, status: "NOT RUN", exitCode: null, durationMs: 0 }] }
+    : await runCommand(task.qaCommand, workspace);
   const after = await collectGitEvidence({ workspace, task, baselineSha, stateDir });
   const afterFingerprint = await workspaceFingerprint(workspace);
   const combined = commandResult ? [commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n").trim() : "";

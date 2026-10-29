@@ -50,6 +50,26 @@ test("only unverified actions are askable: protected paths and edits stay refuse
   assert.equal(askable(policy, command("rg --files"), { effect: "allow" }, codex), false);
 });
 
+test("code inside a command is asked about, not refused as if it named a protected path", () => {
+  const { policy, workspace, stateDir } = setup();
+  const command = (text) => ({ kind: "command", tool: "Bash", commands: [text], cwd: workspace });
+  // The icon writer an agent used: `c>>>1):c>>>1`, `raw[o]=e?240:40` and `icons',{recursive:true}` are code.
+  const iconWriter = `node -e "const fs=require('fs');for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;raw[o]=e?240:40;fs.mkdirSync('src-tauri/icons',{recursive:true})"`;
+  assert.equal(definitelyRefused(policy, command(iconWriter)), false);
+  // Protected names hidden in the same punctuation, or behind a variable, stay refused outright.
+  assert.equal(definitelyRefused(policy, command("Get-Content -Path:.env")), true);
+  assert.equal(definitelyRefused(policy, command(`node -e "require('fs').readFileSync('.env')"`)), true);
+  assert.equal(definitelyRefused(policy, command("x=.env cat")), true);
+  process.env.GUARD_ASK_TEST_STATE = stateDir;
+  try {
+    assert.equal(definitelyRefused(policy, command("type $env:GUARD_ASK_TEST_STATE\\policy.json")), true);
+    assert.equal(definitelyRefused(policy, command("cat %GUARD_ASK_TEST_STATE%/policy.json")), true);
+    assert.equal(definitelyRefused(policy, command("Get-Content ${env:GUARD_ASK_TEST_STATE}\\policy.json")), true);
+    assert.equal(definitelyRefused(policy, command(`Get-Content -Path:${path.join(stateDir, "policy.json")}`)), true);
+    assert.equal(definitelyRefused(policy, command(`cat "${stateDir}${path.sep}policy.json"`)), true);
+  } finally { delete process.env.GUARD_ASK_TEST_STATE; }
+});
+
 test("an unverified command runs once you allow it, and stays refused when you refuse it or do not answer", async () => {
   for (const [decision, exitCode, reason] of [["allow", 0, null], ["deny", 2, /you refused it/], [null, 2, /no answer in time/]]) {
     const { dir, policyPath, logPath, workspace } = setup();

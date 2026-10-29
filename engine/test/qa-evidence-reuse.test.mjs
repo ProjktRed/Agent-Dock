@@ -68,3 +68,15 @@ test("freshness rejects same-length edits, repository inputs and HEAD changes be
   git(input.workspace, "commit", "--allow-empty", "-m", "new HEAD");
   await assert.rejects(assertQaPacketFresh(input.workspace, packet), /stale/);
 });
+
+test("the check command does not run when the scope check already failed", async t => {
+  const input = await fixture(t);
+  await writeFile(path.join(input.workspace, "outside.js"), "process.exit(0)\n");
+  const packet = await prepareQaPacket(input);
+  assert.equal(input.count(), 0);
+  assert.equal(packet.qaEvidence.scope.status, "FAIL");
+  assert.equal(packet.qaEvidence.scopeBeforeCommand, "FAIL");
+  assert.equal(packet.qaEvidence.command.exitCode, null);
+  assert.match(packet.qaEvidence.command.summary, /Not run: the scope check failed first/);
+  assert.equal(packet.qaEvidence.categories.tests, "NOT RUN");
+});
