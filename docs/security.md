@@ -157,6 +157,11 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   (`*_API_KEY`, `*_TOKEN`, `*PASSWORD`, `*_SECRET`, `GITHUB_PAT`, `MYSQL_PWD`, `NPM_CONFIG_OTP` and similar);
   locations such as `PASSWORD_STORE_DIR` stay.
   Each agent CLI keeps only its own sign-in variable (for a cloud provider, the key broker's token).
+  Codex also keeps the variable its active custom model provider names (`model_providers.<id>.env_key`
+  in your `config.toml`, profiles included); that value is treated as a secret like the others.
+  Check commands lose credential files and registry tokens too (`GOOGLE_APPLICATION_CREDENTIALS`,
+  `AWS_SHARED_CREDENTIALS_FILE`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `COMPOSER_AUTH`), so a check that
+  installs from a private registry or calls a cloud service fails; install dependencies before the run.
   A credential stored under an ordinary name (for example a password inside `DATABASE_URL`) is not
   recognized, so don't keep one in the environment Agent Dock starts from.
 - Windows: Agent Dock and its engine resolve bare program names (git, codex, claude, powershell)

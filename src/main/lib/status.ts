@@ -100,6 +100,35 @@ export function parallelRound(round: EngineParallelRound | null, lives: Record<s
   };
 }
 
+/** No text in a status is longer than this: it goes to the window every poll, and older engines wrote megabytes into one event. */
+export const STATUS_TEXT_LIMIT = 12_000;
+
+/** A long text cut to its start and end, saying how much was left out (engine/src/clip.mjs). */
+export function clipText<T>(text: T, max = STATUS_TEXT_LIMIT): T {
+  if (typeof text !== "string" || text.length <= max) return text;
+  const half = Math.floor((max - 60) / 2);
+  return `${text.slice(0, half)}
+... ${text.length - 2 * half} characters left out ...
+${text.slice(-half)}` as T;
+}
+
+/** The value with every string in it clipped. */
+export function clipDeep<T>(value: T, max = STATUS_TEXT_LIMIT): T {
+  if (typeof value === "string") return clipText(value, max);
+  if (Array.isArray(value)) return value.map((item) => clipDeep(item, max)) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clipDeep(item, max)])) as T;
+  return value;
+}
+
+/** The window gets at most this many changed files (an untracked node_modules is tens of thousands); changedTotal counts all. */
+export const CHANGED_FILES_SHOWN = 1000;
+
+/** A changed file is outside the task's approved paths (QA will reject it), from the full list. */
+function outsideApproved(git: GitInfo, allowedPaths: string[] | undefined): boolean {
+  const approved = new Set((allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")));
+  return git.changedFiles.some((f) => !approved.has(f.path));
+}
+
 const defaultChecks: QaChecks ={ tests: "NOT RUN", typecheck: "NOT RUN", lint: "NOT RUN", scopeCheck: "NOT RUN" };
 
 export function buildStatus(args: {
@@ -134,13 +163,13 @@ export function buildStatus(args: {
     pid: args.pid,
     stage: stageOf(live) ?? "waiting",
     cycle: args.processAlive || live?.stage === "pass" ? cycleStage(live) : null,
-    task: live?.task ? { id: live.task.id, name: live.task.name ?? live.task.id, prompt: live.task.prompt ?? "", qaCommand: live.task.qaCommand, allowedPaths: live.task.allowedPaths } : null,
+    task: live?.task ? { id: live.task.id, name: live.task.name ?? live.task.id, prompt: clipText(live.task.prompt ?? ""), qaCommand: live.task.qaCommand, allowedPaths: live.task.allowedPaths } : null,
     attempt: live?.attempt ?? 0,
     activeRole: live?.assessmentRunning ? "Assessment" : live?.activeReasoningRole ?? (live?.clineStatus === "running" ? "Implementation" : null),
     activeModel: live?.activeReasoningModel ?? (live?.clineStatus === "running" ? live?.cline?.model ?? null : null),
     clineStatus: live?.clineStatus ?? "idle",
     qaStatus: live?.qaStatus ?? "waiting",
-    latestQa: live?.latestQa ?? "",
+    latestQa: clipText(live?.latestQa ?? ""),
     qaChecks: { ...defaultChecks, ...(live?.qaChecks ?? {}) } as QaChecks,
     clineStartedAt: startedAt,
     clineElapsedMs: elapsed,
@@ -148,8 +177,8 @@ export function buildStatus(args: {
     clineProvider: live?.cline?.provider ?? null,
     contextTokens: live?.cline?.contextTokens ?? null,
     control: { pauseAfterCurrent: Boolean(control.pauseAfterCurrent), stopAfterSafePoint: Boolean(control.stopAfterSafePoint) },
-    attentionReason: live?.userAttention ? live.userAttentionReason ?? live.latestQa ?? null : null,
-    blockedReason: live?.stage === "BLOCKED" ? live.blockedReason ?? live.latestQa ?? null : null,
+    attentionReason: live?.userAttention ? clipText(live.userAttentionReason ?? live.latestQa ?? null) : null,
+    blockedReason: live?.stage === "BLOCKED" ? clipText(live.blockedReason ?? live.latestQa ?? null) : null,
     limitMessage: live?.codexLimitMessage ?? null,
     limitRetryAt: live?.codexRetryAt ?? null,
     elevateAvailable: args.elevate.available,
@@ -159,8 +188,9 @@ export function buildStatus(args: {
     assessmentRetry: args.assessmentRetry ?? false,
     qaRetry: args.qaRetry ?? false,
     interrupted: interruptedWork({ processAlive: args.processAlive, runState, events: args.events }),
-    events: args.events,
-    git: args.git,
+    events: clipDeep(args.events),
+    git: { ...args.git, changedFiles: args.git.changedFiles.slice(0, CHANGED_FILES_SHOWN), changedTotal: args.git.changedTotal ?? args.git.changedFiles.length },
+    outsideApproved: live?.task ? outsideApproved(args.git, live.task.allowedPaths) : false,
     plan: args.plan,
     updatedAt: live?.updatedAt ?? null,
   };

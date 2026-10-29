@@ -149,3 +149,8 @@ export function engineStageLabel(stage: string | null | undefined): string {
   if (!stage) return "—";
   return STAGE_LABELS[stage] ?? stage.replace(/[-_]+/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
 }
+
+/** Changed files in the working tree: all of them, though the status lists only the first ones. */
+export function changedCount(git: { changedFiles: unknown[]; changedTotal?: number }): number {
+  return git.changedTotal ?? git.changedFiles.length;
+}

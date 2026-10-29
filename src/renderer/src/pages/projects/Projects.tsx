@@ -3,7 +3,7 @@ import { describeSchedule, SCHEDULE_GRACE_MINUTES, scheduleMinutes } from "@shar
 import type { HistoryEntry } from "@shared/api";
 import type { CiCheck, CiState, CiStatus, Project, ProjectSchedule, WorkflowSettings } from "@shared/types";
 import { cleanError, useApp } from "../../store";
-import { ago, longDate, plural, runTone } from "../../lib/format";
+import { ago, changedCount, longDate, plural, runTone } from "../../lib/format";
 import { agentForRoleClient } from "../../lib/agents";
 import { Icon } from "../../components/Icon";
 import { Bar, Dot, Empty, Modal, St, Support, Tabs, Toggle, type StatusKind } from "../../components/ui";
@@ -480,7 +480,7 @@ export function ProjectsPage() {
                         <div><dt>Active branch</dt><dd className="mono">{s?.git.branch ?? "—"}</dd></div>
                         <div><dt>HEAD</dt><dd className="mono">{s?.git.head?.slice(0, 10) ?? "—"}</dd></div>
                         <div><dt>Sync</dt><dd>{s?.git.ahead != null ? `${s.git.ahead} ahead · ${s.git.behind} behind` : "No upstream"}</dd></div>
-                        <div><dt>Working tree</dt><dd>{s ? (s.git.changedFiles.length ? `${s.git.changedFiles.length} changed` : "Clean") : "—"}</dd></div>
+                        <div><dt>Working tree</dt><dd>{s ? (changedCount(s.git) ? `${changedCount(s.git)} changed` : "Clean") : "—"}</dd></div>
                       </dl>
                     </div>
                     <div className="well pad stack" style={{ gap: 14 }}>

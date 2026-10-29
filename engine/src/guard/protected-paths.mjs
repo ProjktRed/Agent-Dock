@@ -51,36 +51,55 @@ function glob(pattern) {
 
 /** Checks both the lexical name and the resolved target (including missing-file parents). */
 export function isProtectedPath(policy,file,cwd=policy.workspace) {
-  if(typeof file!=='string'||!file.trim()||file.includes('\0'))return true;
-  // Device namespaces, drive-relative names, NTFS streams and trailing-dot aliases are ambiguous.
-  if(process.platform==='win32'&&(/^(?:\\\\[?.]\\|[a-z]:(?![\\/]))/i.test(file)||file.replace(/^[a-z]:/i,'').includes(':')||file.split(/[\\/]/).some(p=>p!=='.'&&p!=='..'&&/[. ]$/.test(p))))return true;
-  try {
-    const absolute=path.resolve(cwd||policy.workspace,file),resolved=canonical(absolute);
-    const candidates=[absolute,resolved].map(normalize);
+  return protectionChecker(policy)(file,cwd);
+}
+
+/**
+ * isProtectedPath for many files checked together (a working tree's changed files): the workspace and each
+ * rule's own location are resolved once, on the first call; each file is still resolved when it is checked.
+ * Not for access decisions: a rule location that another process changes during the batch is missed. Used for
+ * QA evidence (which changed files are under protected paths) and the workspace fingerprint, never by the hooks.
+ */
+export function protectionChecker(policy) {
+  let rules=null;
+  const prepare=()=>{
     const workspace=canonical(path.resolve(policy.workspace));
-    for(const rule of policy.protectedPaths??[]) {
+    const list=(policy.protectedPaths??[]).map(rule=>{
       const trimmed=rule.replaceAll('\\','/').replace(/\/+$/,'');
-      if(!trimmed)return true;
-      if(!/[*?]/.test(trimmed)) {
-        const base=path.resolve(policy.workspace,trimmed);
-        if([base,canonical(base)].some(root=>[absolute,resolved].some(file=>within(root,file))))return true;
-      } else {
-        const absolutePattern=normalize(path.resolve(policy.workspace,trimmed)).replaceAll('\\','/');
-        const matcher=glob(absolutePattern);
-        if(candidates.some(p=>matcher.test(p.replaceAll('\\','/'))))return true;
-        // Relative basename patterns also cover nested .env files.
-        if(!trimmed.includes('/')&&!path.isAbsolute(rule)) {
-          const match=glob(normalize(trimmed));
-          if([absolute,resolved].some(p=>within(workspace,p)&&path.relative(workspace,p).split(path.sep).some(part=>match.test(normalize(part)))))return true;
-        }
-        // Resolve the non-glob prefix so an aliased workspace/root cannot bypass the pattern.
-        const prefix=absolutePattern.slice(0,absolutePattern.search(/[*?]/));
-        const slash=prefix.lastIndexOf('/');
-        if(slash>=0){const canonicalPattern=normalize(canonical(prefix.slice(0,slash)||path.parse(absolute).root)).replaceAll('\\','/')+absolutePattern.slice(slash);if(candidates.some(p=>glob(canonicalPattern).test(p.replaceAll('\\','/'))))return true;}
+      if(!trimmed)return {all:true};
+      if(!/[*?]/.test(trimmed)){const base=path.resolve(policy.workspace,trimmed);return {roots:[base,canonical(base)]};}
+      const absolutePattern=normalize(path.resolve(policy.workspace,trimmed)).replaceAll('\\','/');
+      // Relative basename patterns also cover nested .env files.
+      const basename=!trimmed.includes('/')&&!path.isAbsolute(rule)?glob(normalize(trimmed)):null;
+      // Resolve the non-glob prefix so an aliased workspace/root cannot bypass the pattern.
+      const prefix=absolutePattern.slice(0,absolutePattern.search(/[*?]/));
+      const slash=prefix.lastIndexOf('/');
+      const canonicalFor=slash<0?null:prefix.slice(0,slash)
+        ?(()=>{const m=glob(normalize(canonical(prefix.slice(0,slash))).replaceAll('\\','/')+absolutePattern.slice(slash));return ()=>m;})()
+        :(absolute)=>glob(normalize(canonical(path.parse(absolute).root)).replaceAll('\\','/')+absolutePattern.slice(slash));
+      return {matcher:glob(absolutePattern),basename,canonicalFor};
+    });
+    return {workspace,list};
+  };
+  return (file,cwd=policy.workspace)=>{
+    if(typeof file!=='string'||!file.trim()||file.includes('\0'))return true;
+    // Device namespaces, drive-relative names, NTFS streams and trailing-dot aliases are ambiguous.
+    if(process.platform==='win32'&&(/^(?:\\\\[?.]\\|[a-z]:(?![\\/]))/i.test(file)||file.replace(/^[a-z]:/i,'').includes(':')||file.split(/[\\/]/).some(p=>p!=='.'&&p!=='..'&&/[. ]$/.test(p))))return true;
+    try {
+      rules??=prepare();
+      const absolute=path.resolve(cwd||policy.workspace,file),resolved=canonical(absolute);
+      const candidates=[absolute,resolved].map(normalize);
+      const {workspace}=rules;
+      for(const rule of rules.list) {
+        if(rule.all)return true;
+        if(rule.roots){if(rule.roots.some(root=>[absolute,resolved].some(file=>within(root,file))))return true;continue;}
+        if(candidates.some(p=>rule.matcher.test(p.replaceAll('\\','/'))))return true;
+        if(rule.basename&&[absolute,resolved].some(p=>within(workspace,p)&&path.relative(workspace,p).split(path.sep).some(part=>rule.basename.test(normalize(part)))))return true;
+        if(rule.canonicalFor){const m=rule.canonicalFor(absolute);if(candidates.some(p=>m.test(p.replaceAll('\\','/'))))return true;}
       }
-    }
-    return false;
-  }catch{return true;}
+      return false;
+    }catch{return true;}
+  };
 }
 
 /** A recursive search/list/read may expose any descendant; bound the scan and fail closed. */

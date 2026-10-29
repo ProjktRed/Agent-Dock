@@ -20,6 +20,13 @@ const CYCLE = [
   { key: "next", name: "Next task", agent: "Back to Assessment" },
 ] as const;
 
+/** Files outside the task's approved paths have changed (the app works it out from every changed file). */
+function outsideApproved(s: ProjectStatus): boolean {
+  if (s.outsideApproved !== undefined) return s.outsideApproved;
+  const approved = new Set((s.task?.allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")));
+  return s.git.changedFiles.some((f) => !approved.has(f.path));
+}
+
 function AttentionPanel({ s, projectId }: { s: ProjectStatus; projectId: string }) {
   const { control, activeProject, toast } = useApp();
   const kind = s.runState;
@@ -528,7 +535,7 @@ export function ProgressTab() {
                           return <li key={p}><span className="mono grow">{p}</span><span className={`chip ${change ? "warn" : "mut"}`}>{change ? change.status.trim() || "changed" : "unchanged"}</span></li>;
                         })}
                       </ul>
-                      {s.git.changedFiles.some((f) => !(s.task!.allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")).includes(f.path)) && (
+                      {outsideApproved(s) && (
                         <div className="row warn" style={{ marginTop: 8, fontSize: 12 }}><Icon name="warn" size="sm" />Files outside the approved paths have changed. QA will reject them.</div>
                       )}
                     </div>

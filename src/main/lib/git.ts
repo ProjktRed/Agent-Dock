@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { GitInfo } from "@shared/types";
 
-export function run(command: string, args: string[], options: { cwd?: string; timeoutMs?: number; shell?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+export function run(command: string, args: string[], options: { cwd?: string; timeoutMs?: number; shell?: boolean; maxBuffer?: number } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
   // git: no fsmonitor program from the repository's config runs (git gives the same results without it).
   if (command === "git") args = ["-c", "core.fsmonitor=false", ...args];
   return new Promise((resolve) => {
@@ -12,7 +12,7 @@ export function run(command: string, args: string[], options: { cwd?: string; ti
       options.shell ? [command, ...args].join(" ") : command,
       options.shell ? [] : args,
       // GIT_OPTIONAL_LOCKS=0: monitoring must never take index locks or rewrite the index while an agent works.
-      { cwd: options.cwd, windowsHide: true, timeout: options.timeoutMs ?? 15_000, shell: options.shell ?? false, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } },
+      { cwd: options.cwd, windowsHide: true, timeout: options.timeoutMs ?? 15_000, shell: options.shell ?? false, maxBuffer: options.maxBuffer ?? 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } },
       (error, stdout, stderr) => {
         const code = error ? (typeof (error as { code?: unknown }).code === "number" ? ((error as { code: number }).code) : 1) : 0;
         resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? (error ? error.message : "")), code });
@@ -60,12 +60,13 @@ async function readGitInfo(workspace: string): Promise<GitInfo> {
   if (!existsSync(workspace)) return { isRepo: false, branch: null, head: null, remote: null, ahead: null, behind: null, changedFiles: [], error: "Folder not found" };
   if (!isGitRepo(workspace)) return { isRepo: false, branch: null, head: null, remote: null, ahead: null, behind: null, changedFiles: [] };
   const [status, branch, head, remote, counts] = await Promise.all([
-    run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: workspace }),
+    run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: workspace, maxBuffer: 256 * 1024 * 1024 }),
     run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: workspace }),
     run("git", ["rev-parse", "HEAD"], { cwd: workspace }),
     run("git", ["remote", "get-url", "origin"], { cwd: workspace }),
     run("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd: workspace }),
   ]);
+  const changed = status.code === 0 ? parsePorcelain(status.stdout) : [];
   const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [null, null];
   return {
     isRepo: true,
@@ -74,7 +75,8 @@ async function readGitInfo(workspace: string): Promise<GitInfo> {
     remote: remote.code === 0 ? remote.stdout.trim() : null,
     ahead: Number.isFinite(ahead) ? (ahead as number) : null,
     behind: Number.isFinite(behind) ? (behind as number) : null,
-    changedFiles: status.code === 0 ? parsePorcelain(status.stdout) : [],
+    changedFiles: changed,
+    changedTotal: changed.length,
     error: status.code === 0 ? undefined : status.stderr.trim() || "git status failed",
   };
 }

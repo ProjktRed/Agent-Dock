@@ -8,7 +8,9 @@ import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
 import codexAdapter, { CODEX_WRITE_SANDBOX, codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
-import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
+import { codexAuthEnv } from "./codex-provider-env.mjs";
+import { redactText } from "./redact.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
@@ -83,7 +85,8 @@ export class CloudImplementationWorker {
     this.fast = fast;
     this.timeoutMs = timeoutSeconds * 1000;
     this.toolGuard = toolGuard;
-    this.env = cli === "claude" ? claudeChildEnv(env) : withoutSecrets(env, { keep: CODEX_AUTH_ENV });
+    // Codex: credentials are removed at each launch, which keeps the active provider's key (config may change between runs).
+    this.env = cli === "claude" ? claudeChildEnv(env) : env;
     this.spawnProcess = spawnProcess;
     // Same lock file as the Cline worker: one implementation at a time per state folder.
     this.lockPath = path.join(this.stateDir, "cline.busy.lock");
@@ -99,11 +102,14 @@ export class CloudImplementationWorker {
   }
 
   async run(prompt, hooks = {}) {
+    // Codex: the active provider's key is registered as a secret before the prompt is redacted and written.
+    const keep = this.cli === "codex" ? codexAuthEnv({ env: this.env }) : null;
     const onEvent = hooks.onEvent ?? (() => {});
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
     const outputFile = path.join(invocation, "result.txt");
-    const text = `${IMPLEMENTATION_RULES}\n\n${prompt}`;
+    // Secrets in the task text are hidden before it is written or sent, as for Codex roles (codex-worker.mjs).
+    const text = redactText(`${IMPLEMENTATION_RULES}\n\n${prompt}`, { assignments: false });
     await writeFile(path.join(invocation, "prompt.txt"), text);
     // Codex: the scope hook gets this run's policy and logs every decision next to the prompt.
     let hookArgs = [];
@@ -117,7 +123,7 @@ export class CloudImplementationWorker {
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {
       const launch = launchSpec(this.command, args);
-      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...this.env, ...claudeRunEnv() } : this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...this.env, ...claudeRunEnv() } : withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
       const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += chunk; });
       child.stderr.on("data", (chunk) => { stderr += chunk; });

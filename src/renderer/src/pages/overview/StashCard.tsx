@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ProjectStatus, StashEntry } from "@shared/types";
 import { cleanError, useApp } from "../../store";
 import { Icon } from "../../components/Icon";
+import { changedCount } from "../../lib/format";
 
 /** Stashes shown before "Show all". */
 const SHOWN = 4;
@@ -30,7 +31,7 @@ export function StashCard({ s, projectId }: { s: ProjectStatus; projectId: strin
     const t = setTimeout(() => setArming(null), 6000);
     return () => clearTimeout(t);
   }, [arming]);
-  const changed = s.git.changedFiles.length;
+  const changed = changedCount(s.git);
   useEffect(() => {
     if (!s.git.isRepo) return;
     let live = true;

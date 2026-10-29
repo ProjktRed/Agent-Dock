@@ -4,6 +4,11 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { launchSpec } from "./cmd-line.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
+import { codexAuthEnv } from "./codex-provider-env.mjs";
+
+// Codex's own checks get the same environment as its runs: no credentials but its sign-in and provider key.
+const codexEnv = () => withoutSecrets(process.env, { keep: codexAuthEnv() });
 
 const WINDOWS_BUNDLED_RELATIVE = path.join(
   "node_modules",
@@ -137,7 +142,7 @@ export function codexSandboxProblem(launcher) {
   const key = launcher.displayCommand ?? launcher.command;
   if (!sandboxChecks.has(key)) sandboxChecks.set(key, new Promise((resolve) => {
     const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "-c", 'windows.sandbox="elevated"', "doctor"]);
-    const child = spawn(launch.command, launch.args, { ...launch.options, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(launch.command, launch.args, { ...launch.options, env: codexEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     const timer = setTimeout(() => child.kill(), 120_000);
     child.stdout.setEncoding("utf8").on("data", (chunk) => (output += chunk));
@@ -167,6 +172,7 @@ function preflightCodexVersion(launcher) {
     const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "--version"]);
     const child = spawn(launch.command, launch.args, {
       ...launch.options,
+      env: codexEnv(),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

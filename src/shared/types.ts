@@ -577,7 +577,10 @@ export interface GitInfo {
   remote: string | null;
   ahead: number | null;
   behind: number | null;
+  /** The changed files; in a ProjectStatus only the first CHANGED_FILES_SHOWN (main/lib/status.ts). */
   changedFiles: { status: string; path: string }[];
+  /** Every changed file, counted. Absent in older statuses. */
+  changedTotal?: number;
   error?: string;
 }
 
@@ -619,6 +622,8 @@ export interface ProjectStatus {
   interrupted: string | null;
   events: EngineEvent[];
   git: GitInfo;
+  /** A changed file is outside the task's approved paths, from every changed file. Absent in older statuses. */
+  outsideApproved?: boolean;
   plan: PlanProgress;
   /** The Task board: plan items in Planned, In progress and Finished, in priority order. Absent from older builds. */
   board?: TaskBoard;

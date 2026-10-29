@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ProjectStatus } from "@shared/types";
 import { cleanError, useApp, type Route } from "../store";
-import { plural, runTone } from "../lib/format";
+import { changedCount, plural, runTone } from "../lib/format";
 import { Icon, type IconName } from "./Icon";
 import { Dot, Modal } from "./ui";
 import { useUpdateStatus } from "../lib/updates";
@@ -335,7 +335,7 @@ export function StatusBar() {
       </span>
       {activeStatus?.git.isRepo && (
         <span>
-          Git: {activeStatus.git.branch} · {activeStatus.git.changedFiles.length ? `${activeStatus.git.changedFiles.length} changed` : "clean"}
+          Git: {activeStatus.git.branch} · {changedCount(activeStatus.git) ? `${changedCount(activeStatus.git)} changed` : "clean"}
           {activeStatus.git.head ? ` · ${activeStatus.git.head.slice(0, 7)}` : ""}
         </span>
       )}

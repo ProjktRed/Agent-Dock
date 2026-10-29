@@ -10,6 +10,10 @@ import { selectedAutoSkills } from './task-handoff-skill.mjs';
 import { appendAction, flushActionLog } from './action-log.mjs';
 import { redactText } from "./redact.mjs";
 import { redactDeep } from './redact.mjs';
+import { clipDeep, clipText } from './clip.mjs';
+
+// No text in an event is longer than this (the app reads activity and live state on every poll).
+export const EVENT_TEXT_LIMIT = 20_000;
 export { flushActionLog };
 
 async function readJson(file, fallback) {
@@ -95,6 +99,7 @@ export class DashboardState {
   }
 
   async record(event) {
+    // Decisions below (the manual-review classification) read the whole text; only what is written is clipped.
     event = redactDeep(event);
     this.live ??= await this.readLive();
     const next = { ...this.live, updatedAt: new Date().toISOString() };
@@ -238,8 +243,10 @@ export class DashboardState {
       next.codexLimitMessage = null;
       next.codexRetryAt = null;
     }
+    // Only the display texts are clipped: other fields (the private codexOperation receipt) are read back to resume.
+    for (const key of ["latestQa", "blockedReason", "userAttentionReason"]) next[key] = clipText(next[key], EVENT_TEXT_LIMIT);
     this.live = next;
-    await atomicWriteJson(this.livePath, next);
+    await atomicWriteJson(this.livePath, this.live);
     const { codexOperation: _privateCompletion, recovery: _privateRecovery, ...activityEvent } = event;
     if(event.type!=='recovery-state')await this.appendEvent(activityEvent);
   }
@@ -266,7 +273,7 @@ export class DashboardState {
   async appendEvent(event) {
     await mkdir(this.stateDir, { recursive: true });
     const currentTaskId = this.carryTask ? (await this.readLive())?.task?.id : undefined;
-    const entry = redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event });
+    const entry = clipDeep(redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event }), EVENT_TEXT_LIMIT);
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
     // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.
     await appendAction(this.stateDir, entry).catch((error) => diagnostic("ACTION_LOG_WRITE_FAILED", { message: error.message }));

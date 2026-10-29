@@ -7,7 +7,8 @@ import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, readFilesText, taskScopeText, workerSizingText } from "./engine-tuning.mjs";
-import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
+import { codexAuthEnv } from "./codex-provider-env.mjs";
 import { launchSpec } from "./cmd-line.mjs";
 import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
@@ -252,6 +253,8 @@ export class CodexWorker {
   }
 
   async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+    // First: the active provider's key is registered as a secret before the prompt is redacted and written.
+    const keep = codexAuthEnv({ env: this.env });
     prompt = redactText(prompt, { assignments: false });
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
@@ -285,7 +288,7 @@ export class CodexWorker {
     try {
       await new Promise((resolve, reject) => {
         const launch = launchSpec(this.command, args);
-        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false;
         let closed = false;
         let closeCode = 1;

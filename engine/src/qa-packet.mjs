@@ -8,13 +8,19 @@ import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { withoutSecrets } from "./secret-env.mjs";
 import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
-import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
+import {protectionChecker,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
 import { noInstall } from "./qa-runner.mjs";
 import { checksSandboxed, sandboxedSpawn } from "./sandbox.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
 const DIFF_LIMIT = 200_000;
+
+/** The first paths and how many more: an untracked node_modules lists tens of thousands. */
+export function listPaths(paths, shown = 20) {
+  const more = paths.length - shown;
+  return paths.slice(0, shown).join(", ") + (more > 0 ? ` and ${more} more` : "");
+}
 
 function bounded(text, limit) {
   const value = String(text ?? "");
@@ -147,7 +153,8 @@ export async function collectGitEvidence({ workspace, task, baselineSha, stateDi
   const changedFiles = status.exitCode === 0 ? parseStatus(status.stdout) : [];
   const allowed = new Set(task.allowedPaths.map((item) => item.replaceAll("\\", "/")));
   const unexpectedPaths = changedFiles.filter((item) => !allowed.has(item));
-  const protectedChanges = changedFiles.filter(item => isProtectedPath(protection,item));
+  const isProtected = protectionChecker(protection);
+  const protectedChanges = changedFiles.filter(item => isProtected(item));
   let scopeStatus = "PASS";
   let scopeMessage = "All changed paths are approved.";
   if (head.exitCode !== 0 || status.exitCode !== 0) {
@@ -157,10 +164,10 @@ export async function collectGitEvidence({ workspace, task, baselineSha, stateDi
     scopeStatus = "FAIL";
     scopeMessage = head.stdout.trim() !== baselineSha
       ? `HEAD differs from baseline ${baselineSha}.`
-      : `Changes outside allowedPaths: ${unexpectedPaths.join(", ")}`;
+      : `Changes outside allowedPaths: ${listPaths(unexpectedPaths)}`;
   }
 
-  if(protectedChanges.length){scopeStatus='FAIL';scopeMessage=`Changes to protected paths: ${protectedChanges.join(', ')}`;}
+  if(protectedChanges.length){scopeStatus='FAIL';scopeMessage=`Changes to protected paths: ${listPaths(protectedChanges)}`;}
 
   // A rename/copy can carry protected contents into an otherwise approved name.
   // Once protected changes exist, fail closed on the entire diff rather than exposing it.
@@ -201,7 +208,7 @@ function conciseClineSummary(workerResult) {
 
 /** Hash tracked and non-ignored input files, including unchanged dependencies in the repository. */
 export async function workspaceFingerprint(workspace) {
-  const protection={workspace,protectedPaths:protectedPathsFor({workspace})};
+  const isProtected=protectionChecker({workspace,protectedPaths:protectedPathsFor({workspace})});
   const [head, index, untracked] = await Promise.all([
     git(workspace, ["rev-parse", "HEAD"]),
     git(workspace, ["ls-files", "--stage", "-z"]),
@@ -216,7 +223,7 @@ export async function workspaceFingerprint(workspace) {
     const relative = path.relative(workspace, fullPath);
     if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
     hash.update(JSON.stringify(file));
-    if(isProtectedPath(protection,file)){hash.update('protected');continue;}
+    if(isProtected(file)){hash.update('protected');continue;}
     const details = await lstat(fullPath).catch(error => { if (error.code === "ENOENT") return null; throw error; });
     if (!details) { hash.update("missing"); continue; }
     if (details.isSymbolicLink()) hash.update("link:" + await readlink(fullPath));

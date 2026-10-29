@@ -202,3 +202,42 @@ test("a half-written Activity line is skipped by every reader", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('no event text is huge in activity or live state', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'dashboard-clip-'));
+  try {
+    const { EVENT_TEXT_LIMIT } = await import('../src/dashboard-state.mjs');
+    const state = new DashboardState({ stateDir: dir });
+    await state.initialize({ task, workspace: "C:/fake", maxAttempts: 3 });
+    await state.record({ type: 'blocked', qa: 'Changes outside allowedPaths: ' + 'node_modules/x.js, '.repeat(50_000) });
+    const live = JSON.parse(await readFile(path.join(dir, 'live.json'), 'utf8'));
+    assert.ok(live.latestQa.length <= EVENT_TEXT_LIMIT);
+    assert.ok(live.blockedReason.length <= EVENT_TEXT_LIMIT);
+    assert.match(live.latestQa, /characters left out/);
+    const activity = await readFile(path.join(dir, 'activity.ndjson'), 'utf8');
+    assert.ok(activity.length < EVENT_TEXT_LIMIT * 2);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the manual-review classification reads the whole text, not the clipped one", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "dashboard-classify-"));
+  try {
+    const state = new DashboardState({ stateDir: dir });
+    await state.initialize({ task, workspace: "C:/fake", maxAttempts: 3 });
+    await state.record({ type: "manual-review", qa: "a".repeat(11_000) + " permission denied " + "b".repeat(11_000) });
+    const live = JSON.parse(await readFile(path.join(dir, "live.json"), "utf8"));
+    assert.equal(live.stage, "BLOCKED");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("a pending Codex receipt in live state is never clipped", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "dashboard-receipt-"));
+  try {
+    const state = new DashboardState({ stateDir: dir });
+    await state.initialize({ task, workspace: "C:/fake", maxAttempts: 3 });
+    const big = "d".repeat(60_000);
+    await state.record({ type: "recovery-state", recovery: { codexOperation: { id: "op", result: big } } });
+    const live = JSON.parse(await readFile(path.join(dir, "live.json"), "utf8"));
+    assert.equal(live.codexOperation.result.length, big.length);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
