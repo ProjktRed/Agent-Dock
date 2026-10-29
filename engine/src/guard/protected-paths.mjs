@@ -3,6 +3,7 @@ import {realpathSync,lstatSync,readdirSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {stripCheckOutputFilter} from './check-output-filter.mjs';
+import { safeGitArgs } from '../git-safe.mjs';
 
 const engineRoot=fileURLToPath(new URL('../../',import.meta.url));
 // Same list as src/shared/defaults.ts: secrets, plus the folders and files that configure tools which run code
@@ -139,7 +140,7 @@ const HEAD_REV=/^HEAD(?:~\d{1,4}|\^{1,4})?$/;
 function commitRevs(words,cwd) {
   for(const word of words)for(const rev of word.split('..')) {
     if(HEAD_REV.test(rev))continue;
-    try{if(execFileSync('git',['cat-file','-t',rev],{cwd,encoding:'utf8',windowsHide:true,timeout:5000,stdio:['ignore','pipe','ignore']}).trim()!=='commit')return false;}catch{return false;}
+    try{if(execFileSync('git',safeGitArgs(['cat-file','-t',rev]),{cwd,encoding:'utf8',windowsHide:true,timeout:5000,stdio:['ignore','pipe','ignore']}).trim()!=='commit')return false;}catch{return false;}
   }
   return true;
 }
@@ -306,7 +307,7 @@ function commandSafe(policy,script,cwd) {
     const divider=words.indexOf('--');
     if(divider>=0&&divider<words.length-1)return words.slice(1,divider).every(w=>['HEAD','--cached','--staged','--check','--stat','--numstat','--name-only','--no-ext-diff','--no-color'].includes(w))&&words.slice(divider+1).every(w=>safeRead(policy,w,cwd));
     if(words.slice(1).some(w=>!['HEAD','--cached','--staged','--no-ext-diff','--no-color'].includes(w)))return false;
-    try {const files=execFileSync('git',['ls-files','-z'],{cwd,encoding:'utf8',windowsHide:true,maxBuffer:1024*1024,timeout:5000}).split('\0').filter(Boolean);return files.every(p=>!isProtectedPath(policy,p,cwd));}catch{return false;}
+    try {const files=execFileSync('git',safeGitArgs(['ls-files','-z']),{cwd,encoding:'utf8',windowsHide:true,maxBuffer:1024*1024,timeout:5000}).split('\0').filter(Boolean);return files.every(p=>!isProtectedPath(policy,p,cwd));}catch{return false;}
   }
   // Conservative grammar: no wrappers, expansion, scripts, response files, or write-capable flags.
   if(['pwd','get-location'].includes(command))return words.length===0;
@@ -326,7 +327,8 @@ export function protectedActionReason(policy,action) {
     if(typeof command?.command!=='string'||!Array.isArray(command.args)||command.args.some(arg=>typeof arg!=='string'||/[\s"']/.test(arg)))return false;
     return commandSafe(policy,[command.command,...command.args].join(' '),cwd);
   })?null:denied;
-  if(action.kind==='unknown')return denied;
+  // MCP and other unknown tools: refused whatever toolGuard says (guard plan 0b); Ask can still put one to you.
+  if(action.kind==='unknown')return `${denied}: ${String(action.tool??'this tool').slice(0,100)} is not a tool the guard knows (MCP and unknown tools are refused)`;
   const paths=[...(action.paths??[]),...pathsIn(action.input)];
   if(action.kind==='edit')return paths.length&&paths.every(file=>!isProtectedPath(policy,file,cwd))?null:denied;
   if(action.kind==='read'||/search|grep|glob|list|find/i.test(action.tool??''))return (paths.length?paths:['.']).every(file=>safeRead(policy,file,cwd))?null:denied;

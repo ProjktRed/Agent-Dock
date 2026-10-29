@@ -33,3 +33,17 @@ test('any variable named like a credential is removed, not only the listed ones'
   assert.equal(withoutSecrets(all, { keep: ['GEMINI_API_KEY'] }).GEMINI_API_KEY, 'value-GEMINI_API_KEY');
   assert.equal(withoutSecrets(all, { keep: ['gemini_api_key'], windows: true }).GEMINI_API_KEY, 'value-GEMINI_API_KEY');
 });
+
+test('check commands also lose indirect credentials (SSH agent, askpass helpers, npm user config); agents keep them', async () => {
+  const { checkEnv } = await import('../src/secret-env.mjs');
+  const env = { PATH: '/bin', SSH_AUTH_SOCK: '/tmp/agent.sock', GIT_ASKPASS: 'helper', GIT_SSH_COMMAND: 'ssh -i k', npm_config_userconfig: '/home/u/.npmrc', NPM_CONFIG_CAFILE: 'ca.pem', OPENAI_API_KEY: 'x' };
+  assert.deepEqual(checkEnv(env), { PATH: '/bin' });
+  assert.equal(withoutSecrets(env).SSH_AUTH_SOCK, '/tmp/agent.sock', 'agents keep them until destination-bound grants exist');
+  const { runShellCommand } = await import('../src/qa-packet.mjs');
+  const before = process.env.GIT_ASKPASS;
+  process.env.GIT_ASKPASS = 'probe-helper';
+  try {
+    const result = await runShellCommand(process.platform === 'win32' ? 'echo [%GIT_ASKPASS%]' : 'echo "[$GIT_ASKPASS]"', process.cwd());
+    assert.doesNotMatch(result.stdout, /probe-helper/);
+  } finally { if (before === undefined) delete process.env.GIT_ASKPASS; else process.env.GIT_ASKPASS = before; }
+});

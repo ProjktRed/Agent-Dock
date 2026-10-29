@@ -189,3 +189,13 @@ test("oversized hook input is refused in each CLI's own format", async () => {
     } finally { Object.defineProperty(process, "stdin", stdin); }
   }
 });
+
+test("Codex MCP and unknown tools are refused whatever toolGuard says, and the reason names the tool (0b)", async () => {
+  const { decide } = await import("../src/guard/decide.mjs");
+  const { policy, workspace } = setup();
+  for (const toolGuard of [false, true]) for (const tool of ["mcp__github__create_issue", "some_new_tool"]) {
+    const decision = decide({ ...policy, toolGuard, protectionOnly: false, allowedPaths: ["a.txt"] }, codex.toAction({ tool_name: tool, tool_input: { q: 1 }, cwd: workspace }), { adapter: codex });
+    assert.equal(decision.effect, "stop", `${tool} toolGuard=${toolGuard}`);
+    assert.match(decision.reason, new RegExp(`${tool} is not a tool the guard knows`));
+  }
+});

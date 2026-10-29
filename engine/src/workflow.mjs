@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { clineHandoffSkill } from "./task-handoff-skill.mjs";
 import { redactText } from "./redact.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 /**
  * Deterministic CREATE / MODIFY status of each approved path, so the local worker
@@ -15,7 +16,7 @@ export function describeAllowedPaths(task, workspace) {
   if (!workspace || !task.allowedPaths?.length || !existsSync(path.join(workspace, ".git"))) return "";
   let tracked;
   try {
-    tracked = new Set(execFileSync("git", ["ls-files", "--", ...task.allowedPaths], { cwd: workspace, encoding: "utf8", windowsHide: true })
+    tracked = new Set(execFileSync("git", safeGitArgs(["ls-files", "--", ...task.allowedPaths]), { cwd: workspace, encoding: "utf8", windowsHide: true })
       .split(/\r?\n/).filter(Boolean).map((p) => p.replaceAll("\\", "/")));
   } catch {
     return "";

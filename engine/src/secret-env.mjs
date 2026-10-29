@@ -30,6 +30,18 @@ export function registerSecretEnv(name) {
   if (name) extra.add(name.toUpperCase());
 }
 
+// Variables that hand a program a way to authenticate without holding a key: an SSH agent, a password prompt
+// helper, an SSH command, npm's user config (which holds registry tokens) and its client certificate.
+const INDIRECT_CREDENTIALS = new Set(["SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "GIT_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND", "NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG", "NPM_CONFIG_CERT", "NPM_CONFIG_KEY", "NPM_CONFIG_CAFILE"]);
+
+/**
+ * The environment of a check command: no credentials, and none of the indirect ones either. Checks run with
+ * installs disabled and need no sign-in (guard plan 0e); agents keep these for now.
+ */
+export function checkEnv(env = process.env, options) {
+  return Object.fromEntries(Object.entries(withoutSecrets(env, options)).filter(([name]) => !INDIRECT_CREDENTIALS.has(name.toUpperCase())));
+}
+
 /**
  * A copy of `env` without credentials (listed or named like one), except the names in `keep`: any case on
  * Windows, where names are case-insensitive; the exact name elsewhere, where api_key and API_KEY are two variables.

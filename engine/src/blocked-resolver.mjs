@@ -12,9 +12,10 @@ import {readPendingCodex,runRecoverableCodex} from './node-loop.mjs';
 import {parseRecoveryResult} from './codex-worker.mjs';
 import {readWorkerCapabilities} from './guard/state.mjs';
 import {OPERATIONALLY_RECOVERABLE_PREFIXES} from './guard/reasons.mjs';
+import { safeGitArgs } from './git-safe.mjs';
 
 const exec=promisify(execFile);
-const git=async(workspace,...args)=>(await exec('git',args,{cwd:workspace,windowsHide:true})).stdout.trim();
+const git=async(workspace,...args)=>(await exec('git',safeGitArgs(args),{cwd:workspace,windowsHide:true})).stdout.trim();
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const scratchName=p=>typeof p==='string'&&/^(?:fix[\w-]*\.ps1|temp[\w-]*\.(?:txt|ps1)|[\w-]+\.tmp)$/i.test(p);
 const hash=data=>createHash('sha256').update(data).digest('hex');

@@ -4,8 +4,15 @@ import path from "node:path";
 import type { GitInfo } from "@shared/types";
 
 export function run(command: string, args: string[], options: { cwd?: string; timeoutMs?: number; shell?: boolean; maxBuffer?: number } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
-  // git: no fsmonitor program from the repository's config runs (git gives the same results without it).
-  if (command === "git") args = ["-c", "core.fsmonitor=false", ...args];
+  // git: nothing the repository's config sets up runs as you (engine/src/git-safe.mjs, guard plan 0d): no fsmonitor
+  // program, no hooks, no file:// submodule fetches, and no external diff or textconv programs.
+  if (command === "git") {
+    const sub = args.findIndex((arg, i) => !arg.startsWith("-") && args[i - 1] !== "-c");
+    const rest = sub >= 0 && ["diff", "show", "log"].includes(args[sub]) ? [...args.slice(0, sub + 1), "--no-ext-diff", "--no-textconv", ...args.slice(sub + 1)] : args;
+    // A push keeps the repository's hooks: Git LFS uploads its objects from its pre-push hook.
+    const hooks = sub >= 0 && args[sub] === "push" ? [] : ["-c", "core.hooksPath=/dev/null"];
+    args = ["-c", "core.fsmonitor=false", ...hooks, "-c", "protocol.file.allow=user", ...rest];
+  }
   return new Promise((resolve) => {
     execFile(
       // A shell runs one command line (Node joins it the same way; passing it whole avoids DEP0190).

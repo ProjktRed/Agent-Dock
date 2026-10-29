@@ -117,7 +117,7 @@ export class CloudImplementationWorker {
     if (this.cli === "codex") {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
-    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast});
+    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env}});
     const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;

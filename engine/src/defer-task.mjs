@@ -6,10 +6,11 @@ import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 const git = (workspace, args, { env, input } = {}) => {
-  const run = exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) });
+  const run = exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) });
   if (input !== undefined) run.child.stdin.end(input);
   return run.then((r) => r.stdout.trim());
 };
@@ -34,7 +35,7 @@ async function stashWork(workspace, message, pathspec) {
     await git(workspace, ["add", "-u", "--", ...pathspec], withIndex("work"));
     const workTree = await git(workspace, ["write-tree"], withIndex("work"));
     // Untracked files that are not ignored, in a tree of their own (the stash's third parent).
-    const untracked = (await exec("git", ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspec], { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
+    const untracked = (await exec("git", safeGitArgs(["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspec]), { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
     const parents = [head, index];
     if (untracked) {
       await git(workspace, ["read-tree", "--empty"], withIndex("untracked"));

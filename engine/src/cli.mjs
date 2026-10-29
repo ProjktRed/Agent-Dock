@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { flushNotifications, notifyEvent, notifyFromEnv } from "./notify.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
 import { implementationLanes } from "./local-parallel.mjs";
+import { assertSafeRepository, safeGitArgs } from "./git-safe.mjs";
 
 installTopLevelDiagnostics();
 // Git reads by the engine and every process it starts skip optional locks (a status refresh of the index),
@@ -113,10 +114,12 @@ const { roles, runRole } = await createRoles(options, { stateDir, workspace });
 if (roles.length) console.log(JSON.stringify({ workflowRoles: roles.map(({ instructions: _text, ...role }) => role) }));
 const state = new DashboardState({ stateDir });
 const worker = implementation.worker;
-const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+const gitCommonOutput = await exec("git", safeGitArgs(["rev-parse", "--path-format=absolute", "--git-common-dir"]), {
   cwd: workspace,
   windowsHide: true,
 }).catch(gitStartupError);
+// Guard plan 0d: no git as you in a repository whose .git redirects elsewhere or whose config runs programs.
+await assertSafeRepository(workspace);
 const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
 const gitCommonIsOutsideWorkspace = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
 const codex = mixed || Object.keys(options.roleBackups).length

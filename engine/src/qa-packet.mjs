@@ -6,11 +6,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { withoutSecrets } from "./secret-env.mjs";
+import { checkEnv } from "./secret-env.mjs";
 import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
 import {protectionChecker,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
 import { noInstall } from "./qa-runner.mjs";
 import { checksSandboxed, sandboxedSpawn } from "./sandbox.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
@@ -86,7 +87,7 @@ export async function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_
   const windows = process.platform === "win32";
   const launch = checksSandboxed()
     ? await sandboxedSpawn(noInstall(command), cwd, { windowsShell: "cmd", env: { CODEX_QA: "1" } })
-    : { file: windows ? "cmd.exe" : "/bin/sh", args: windows ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)], env: { ...withoutSecrets(), CODEX_QA: "1" }, release() {} };
+    : { file: windows ? "cmd.exe" : "/bin/sh", args: windows ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)], env: { ...checkEnv(), CODEX_QA: "1" }, release() {} };
   return new Promise((resolve, reject) => {
     const started = Date.now();
     let child;
@@ -115,7 +116,7 @@ export async function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_
 // Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
 async function git(workspace, args) {
   try {
-    const result = await exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
+    const result = await exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     return { exitCode: Number.isInteger(error.code) ? error.code : 1, stdout: error.stdout ?? "", stderr: error.stderr ?? error.message };

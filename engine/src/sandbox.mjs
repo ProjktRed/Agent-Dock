@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { withoutSecrets } from "./secret-env.mjs";
+import { checkEnv } from "./secret-env.mjs";
 
 /**
  * Experimental, off unless Settings › Experimental turns it on (--sandbox-checks true): project checks run
@@ -27,7 +27,7 @@ export const agentsSandboxed = () => agents;
 // Sign-ins and keys under your home folder. Linux hides the whole home folder already; these stay hidden
 // even when the worktree or a toolchain folder beneath home is let back in. (Windows needs no list: the
 // sandbox account cannot open your profile at all.)
-const HOME_SECRETS = [".ssh", ".aws", ".azure", ".gnupg", ".docker", ".kube", ".codex", ".claude", ".config/gh", ".config/gcloud", ".config/Agent Dock", ".local/share/keyrings", ".npmrc", ".git-credentials", ".netrc", ".pypirc"];
+export const HOME_SECRETS = [".ssh", ".aws", ".azure", ".gnupg", ".docker", ".kube", ".codex", ".claude", ".config/gh", ".config/gcloud", ".config/Agent Dock", ".local/share/keyrings", ".npmrc", ".git-credentials", ".netrc", ".pypirc"];
 
 const inside = (parent, child) => {
   const rel = path.relative(parent, child);
@@ -133,7 +133,7 @@ export async function sandboxedSpawn(command, cwd, { windowsShell = "cmd", env =
     }
     // Windows: srt's env is for its broker only (the check gets the sandbox account's own environment plus
     // PATH). Linux: the check inherits it, so it gets the same environment an unsandboxed check gets.
-    const spawnEnv = windows ? withoutSecrets(wrapped.env) : { ...withoutSecrets(), ...env };
+    const spawnEnv = windows ? checkEnv(wrapped.env) : { ...checkEnv(), ...env };
     let released = false;
     const release = () => {
       if (released) return;

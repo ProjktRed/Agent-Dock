@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { withoutSecrets } from "./secret-env.mjs";
+import { checkEnv, withoutSecrets } from "./secret-env.mjs";
 import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
 import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree as killTree } from "./process-bounds.mjs";
 import { checksSandboxed, sandboxedSpawn } from "./sandbox.mjs";
@@ -34,7 +34,7 @@ async function launchFor(command, cwd, check) {
   return {
     file: windows ? "powershell.exe" : "/bin/sh",
     args: windows ? ["-NoProfile", "-NonInteractive", "-Command", text] : ["-c", text],
-    env: { ...withoutSecrets(), CODEX_QA: "1" },
+    env: { ...(check ? checkEnv() : withoutSecrets()), CODEX_QA: "1" },
     release() {},
   };
 }

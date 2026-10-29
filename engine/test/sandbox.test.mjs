@@ -96,12 +96,32 @@ test("agents' commands sandboxed: Claude Code's sandbox fails closed with no net
   const { installProtection, CODEX_WINDOWS_SANDBOX } = await import("../src/guard/install-protection.mjs");
   const { useSandboxedAgents } = await import("../src/sandbox.mjs");
   const workspace = temp(), stateDir = temp(), invocation = temp();
-  const claudeSettings = async () => JSON.parse((await installProtection({ cli: "claude", workspace, stateDir, invocation }))[1]);
+  // A stand-in Claude Code that only answers --version.
+  const fake = path.join(temp(), "fake-claude.mjs");
+  const launcher = (version = "2.1.296") => { writeFileSync(fake, `console.log("${version} (Claude Code)")`); return { command: process.execPath, prefixArgs: [fake] }; };
+  const claudeSettings = async (l = launcher()) => JSON.parse((await installProtection({ cli: "claude", workspace, stateDir, invocation, launcher: l }))[1]);
   try {
     assert.equal((await claudeSettings()).sandbox, undefined);
     assert.ok(!(await installProtection({ cli: "codex", workspace, stateDir, invocation })).includes('windows.sandbox="elevated"'));
     useSandboxedAgents(true);
-    assert.deepEqual((await claudeSettings()).sandbox, { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: { allowedDomains: [] } });
+    writeFileSync(path.join(workspace, ".env"), "SECRET=x");
+    if (process.platform === "win32") {
+      // Claude Code's sandbox doesn't run on native Windows: every Claude run refuses, saying why.
+      await assert.rejects(claudeSettings(), /native Windows.*WSL2/);
+      const codex = await installProtection({ cli: "codex", workspace, stateDir, invocation });
+      assert.deepEqual(codex.slice(codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) - 1, codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) + 1), [...CODEX_WINDOWS_SANDBOX]);
+      return;
+    }
+    await assert.rejects(claudeSettings(launcher("2.1.100")), /too old/);
+    await assert.rejects(installProtection({ cli: "claude", workspace, stateDir, invocation }), /could not be read/, "no CLI to ask: refused");
+    const sandbox = (await claudeSettings()).sandbox;
+    assert.deepEqual({ ...sandbox, filesystem: undefined, credentials: undefined }, { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: { allowedDomains: [] }, filesystem: undefined, credentials: undefined });
+    // Guard plan 0c: commands can't read or write the protected paths, nor read your sign-ins.
+    assert.ok(sandbox.filesystem.denyRead.includes(path.resolve(stateDir)), "Agent Dock's state");
+    assert.ok(sandbox.filesystem.denyWrite.filter((p) => path.basename(p) !== ".git").every((p) => sandbox.filesystem.denyRead.includes(p)), "nothing it can't write stays readable, except Git's folder");
+    assert.ok(sandbox.filesystem.denyWrite.includes(path.resolve(stateDir)));
+    assert.ok(!sandbox.filesystem.denyRead.includes(path.join(path.resolve(workspace), ".git")), "a missing path is not listed");
+    assert.ok(sandbox.credentials.files.every((f) => f.mode === "deny"));
     const codex = await installProtection({ cli: "codex", workspace, stateDir, invocation });
     if (process.platform === "win32") assert.deepEqual(codex.slice(codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) - 1, codex.indexOf(CODEX_WINDOWS_SANDBOX[1]) + 1), [...CODEX_WINDOWS_SANDBOX]);
     else assert.ok(!codex.includes('windows.sandbox="elevated"'));
@@ -118,4 +138,20 @@ test("Windows: a Codex whose elevated sandbox is not set up fails its preflight 
   useSandboxedAgents(true);
   try { await assert.rejects(preflightCodex(launcher), /elevated Windows sandbox is not set up/); }
   finally { useSandboxedAgents(false); }
+});
+
+test("a sandboxed Claude run needs a recent enough CLI and refuses on native Windows, saying why (0c)", async () => {
+  const { claudeSandboxProblem, claudeSandbox } = await import("../src/guard/adapters/claude.mjs");
+  assert.match(claudeSandboxProblem({ platform: "win32", version: "2.1.296 (Claude Code)" }), /native Windows.*WSL2/);
+  assert.equal(claudeSandboxProblem({ platform: "linux", version: "2.1.296 (Claude Code)" }), null);
+  assert.equal(claudeSandboxProblem({ platform: "linux", version: "3.0.0" }), null);
+  assert.match(claudeSandboxProblem({ platform: "linux", version: "2.1.99 (Claude Code)" }), /too old.*2\.1\.221/);
+  assert.match(claudeSandboxProblem({ platform: "linux", version: null }), /could not be read/);
+  const home = temp(), workspace = temp();
+  mkdirSync(path.join(home, ".ssh")); writeFileSync(path.join(home, ".git-credentials"), "x"); mkdirSync(path.join(workspace, ".git"));
+  const config = claudeSandbox({ workspace, protectedPaths: [".git/", ".env*"], homeSecrets: [".ssh", ".aws", ".git-credentials"], home });
+  assert.deepEqual(config.filesystem.denyRead, [path.join(home, ".ssh"), path.join(home, ".git-credentials"), path.join(workspace, ".env*")]);
+  assert.ok(config.filesystem.denyWrite.includes(path.join(workspace, ".git")), "Git can read its folder but not write it");
+  assert.deepEqual(config.credentials.files, [{ path: path.join(home, ".git-credentials"), mode: "deny" }]);
+  assert.ok(!claudeSandbox({ workspace, protectedPaths: [".git/"], home, allowGitCommit: true }).filesystem.denyWrite.includes(path.join(workspace, ".git")), "a committing task keeps Git writable");
 });

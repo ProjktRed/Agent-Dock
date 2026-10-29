@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { replaceWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
+import { safeGitArgs } from "./git-safe.mjs";
 
 // Plan check-offs: when QA approves a task that completes an IMPLEMENTATION_PLAN.md item, the engine checks it off
 // between tasks (the workspace must be clean), as its own commit touching only the plan. Marking work done stays
@@ -22,7 +23,7 @@ export function commitSubject(text, max = 64) {
 }
 
 function git(args, cwd) {
-  return new Promise((resolve) => execFile("git", args, { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
+  return new Promise((resolve) => execFile("git", safeGitArgs(args), { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
     resolve({ ok: !error, out: String(stdout), err: String(stderr || error?.message || "") })));
 }
 

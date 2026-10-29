@@ -449,15 +449,16 @@ test('the parent\'s Supervisor hears of the task engines\' activity during a rou
  assert.ok(beats>=2,`activity reported (${beats})`);
 });
 
-test('a merge commit that fails (a refusing pre-commit hook) is rolled back, and the other tasks still merge',async t=>{
+test('a merge commit that fails is rolled back, and the other tasks still merge',async t=>{
  const {ws,stateDir,git}=await repo(t);
- const hook=path.join(ws,'.git','hooks','pre-commit');
+ // Repository hooks never run for Agent Dock's git (git-safe.mjs), so the commit fails on an empty author name.
+ const name=git(ws,'config','user.name');
  let checks=0,n=0;const events=[];
  const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
   assess:async()=>(++n===1?{status:'task',task:task('A','a.txt')}:n===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
   runChild:async run=>commitIn(git,run),
-  // A's check passes, then a hook refuses its commit; by B's check the hook is gone.
-  runCheck:async()=>{if(++checks===1){mkdirSync(path.dirname(hook),{recursive:true});await writeFile(hook,'#!/bin/sh\necho refused by hook >&2\nexit 1\n',{mode:0o755});}else await rm(hook,{force:true});return{exitCode:0,output:''};},
+  // A's check passes, then its commit is refused; by B's check the name is back.
+  runCheck:async()=>{git(ws,'config','user.name',++checks===1?'':name);return{exitCode:0,output:''};},
   onEvent:async e=>events.push(e),readControl:async()=>({})});
  assert.equal(result.status,'done');
  assert.deepEqual(git(ws,'log','--format=%s').split('\n'),['QA: B','base']);

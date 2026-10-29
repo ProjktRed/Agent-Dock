@@ -78,7 +78,7 @@ export class ClaudeWorker extends CodexWorker {
     // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
     if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
-    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
+    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env}});
     const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),

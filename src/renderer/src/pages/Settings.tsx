@@ -803,9 +803,9 @@ function SandboxChecksCard() {
         : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."}</span>} support="app">
         <Toggle on={on} onChange={(v) => void change("checks", v)} label="Run project checks in a sandbox" disabled={busy} />
       </SetRow>
-      <SetRow title="Run agents' commands in a sandbox" desc={<span>The shell commands Codex and Claude Code run (tests included) get the same limits: no network, writes only inside the project. Claude Code uses the sandbox runtime above; {windows
-        ? "Codex uses its own elevated Windows sandbox, which must already be set up (start Codex once with windows.sandbox = \"elevated\")."
-        : "Codex already sandboxes its commands on Linux."} A command that cannot run in the sandbox fails. Cline and OpenCode are not covered yet (they never hold the provider key).</span>} support="engine">
+      <SetRow title="Run agents' commands in a sandbox" desc={<span>The shell commands Codex and Claude Code run (tests included) get the same limits: no network, writes only inside the project. {windows
+        ? "Codex uses its own elevated Windows sandbox, which must already be set up (start Codex once with windows.sandbox = \"elevated\"). Claude Code's sandbox does not run on native Windows: with this on, Claude runs refuse to start and say why (run Agent Dock in WSL2 for sandboxed Claude runs)."
+        : "Claude Code uses its own sandbox (version 2.1.221 or later), and its commands also can't read your sign-ins or the protected paths, or write those paths. Codex already sandboxes its commands on Linux."} A command that cannot run in the sandbox fails. Cline and OpenCode are not covered yet (they never hold the provider key).</span>} support="engine">
         <Toggle on={agentsOn} onChange={(v) => void change("agents", v)} label="Run agents' commands in a sandbox" disabled={busy} />
       </SetRow>
       <span className="hint">{busy ? "Working… setup and the self-test can take a minute." : (on || agentsOn) ? (status?.ready === false ? `On, but not ready: ${status.problem}. Runs will refuse to start.` : `On: ${[on && "checks", agentsOn && "agents' commands"].filter(Boolean).join(" and ")} run in the sandbox.`) : status?.ready ? "Off. The sandbox is ready on this computer." : status?.problem ? `Off. ${status.problem}` : "Off."}</span>

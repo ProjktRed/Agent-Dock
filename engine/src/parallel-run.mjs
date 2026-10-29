@@ -13,6 +13,7 @@ import { assertSafeQaCommand } from "./guard/protected-paths.mjs";
 import { validateTask } from "./node-loop.mjs";
 import { runCheckCommand } from "./qa-runner.mjs";
 import { addRunElevations, addRunUsage, BUDGET_FLAGS, elevationBudget, RUN_USAGE_FILE } from "./run-budget.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 // Parallel tasks in one run (0.35, --parallel N). Each round, Assessment picks up to N tasks whose
 // allowed files do not overlap. Every task then runs through a complete engine of its own (Implementation,
@@ -28,7 +29,7 @@ import { addRunElevations, addRunUsage, BUDGET_FLAGS, elevationBudget, RUN_USAGE
 // its state folder) toward its own run and day totals, and a limit reached there stops every task.
 
 const exec = promisify(execFile);
-const git = (cwd, args) => exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const git = (cwd, args) => exec("git", safeGitArgs(args), { cwd, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.trim());
 const firstLine = (text, max) => String(text ?? "").split(/\r?\n/)[0].slice(0, max);
 
 const overlaps = (a, b) => a.allowedPaths.some((x) => b.allowedPaths.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
@@ -277,7 +278,7 @@ export async function importLeftoverUsage({ stateDir, addUsage, onEvent, addElev
 
 /** Paths (from the repository root) that differ from HEAD, untracked ones included. */
 async function dirtyPaths(top) {
-  const { stdout } = await exec("git", ["-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const { stdout } = await exec("git", safeGitArgs(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]), { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   return stdout.split("\0").filter(Boolean).map((entry) => entry.slice(3));
 }
 
@@ -300,7 +301,7 @@ async function restoreToHead(workspace, commit = null) {
   const before = await dirtyPaths(top);
   if (!before.length) return { cleaned: [], left: [] };
   if (commit) {
-    const changed = await exec("git", ["-c", "core.fsmonitor=false", "diff-tree", "-r", "-z", "--no-commit-id", "--name-only", "--no-renames", commit], { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.split("\0").filter(Boolean), () => []);
+    const changed = await exec("git", safeGitArgs(["diff-tree", "-r", "-z", "--no-commit-id", "--name-only", "--no-renames", commit]), { cwd: top, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).then((r) => r.stdout.split("\0").filter(Boolean), () => []);
     await restorePaths(top, changed);
   }
   const left = await dirtyPaths(top);

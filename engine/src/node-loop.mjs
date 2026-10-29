@@ -10,11 +10,12 @@ import { classifyQaCommand, prepareQaPacket, collectGitEvidence } from "./qa-pac
 import { buildCorrectionPrompt, buildInitialPrompt } from "./workflow.mjs";
 import { diagnostic } from "./diagnostics.mjs";
 import { waitOutLimit } from "./run-budget.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
-const git = async (workspace, ...args) => (await exec("git", ["-c", "core.fsmonitor=false", ...args], { cwd: workspace, windowsHide: true })).stdout.trim();
+const git = async (workspace, ...args) => (await exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true })).stdout.trim();
 const pendingPath = (stateDir) => path.join(stateDir, "pending-codex.json");
 
 export async function readPendingCodex(stateDir) {

@@ -20,6 +20,7 @@ import { useWebAccess } from "./web-access.mjs";
 import { sandboxProblem, useSandboxedAgents } from "./sandbox.mjs";
 import { useActionAsk } from "./guard/ask.mjs";
 import { writeEnginePid } from "./engine-pid.mjs";
+import { assertSafeRepository, safeGitArgs } from "./git-safe.mjs";
 
 installTopLevelDiagnostics();
 // Git reads by the engine and every process it starts skip optional locks (a status refresh of the index),
@@ -58,7 +59,9 @@ try {
   const mixed = isMixed(clis);
   if (mixed) useMixedDefaults(clis);
   useRoleOverrides(options.roleOverrides);
-  const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true }).catch(gitStartupError);
+  const gitCommonOutput = await exec("git", safeGitArgs(["rev-parse", "--path-format=absolute", "--git-common-dir"]), { cwd: workspace, windowsHide: true }).catch(gitStartupError);
+  // Guard plan 0d: no git as you in a repository whose .git redirects elsewhere or whose config runs programs.
+  await assertSafeRepository(workspace);
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
   const additionalWritableDirs = outside ? [gitCommonDir] : [];

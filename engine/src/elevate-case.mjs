@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 
@@ -36,8 +37,8 @@ async function readScopedCurrentDiff(workspace, task, fallback) {
   try {
     // Read-only: no fsmonitor program from the repository's config runs.
     const args = ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--binary", "HEAD", "--", ...task.allowedPaths];
-    const patch = (await exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout;
-    const status = (await exec("git", ["-c", "core.fsmonitor=false", "status","--porcelain=v1", "-z", "--untracked-files=all", "--", ...task.allowedPaths], { cwd: workspace, windowsHide: true })).stdout;
+    const patch = (await exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true, maxBuffer: 8 * 1024 * 1024 })).stdout;
+    const status = (await exec("git", safeGitArgs(["status","--porcelain=v1", "-z", "--untracked-files=all", "--", ...task.allowedPaths]), { cwd: workspace, windowsHide: true })).stdout;
     const untracked = [];
     for (const record of status.split("\0").filter(Boolean)) {
       if (!record.startsWith("?? ")) continue;

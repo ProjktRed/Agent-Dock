@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { runCheckCommand } from "./qa-runner.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 // Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
-const git = (cwd, ...args) => new Promise((resolve) => execFile("git", ["-c", "core.fsmonitor=false", ...args], { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout).trim())));
+const git = (cwd, ...args) => new Promise((resolve) => execFile("git", safeGitArgs(args), { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : String(stdout).trim())));
 
 /**
  * QA commits as its last step and then reports. If the engine was killed in between (Stop now, a
