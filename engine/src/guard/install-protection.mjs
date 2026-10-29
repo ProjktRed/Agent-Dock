@@ -32,7 +32,7 @@ function claudeVersion(launcher){
  * Policies and hooks live in trusted state, outside the agent's writable task scope. Codex gets its hook
  * only here, with hook review turned off, so a repository's own Codex hooks stop the call first.
  */
-export async function installProtection({cli,workspace,stateDir,invocation,task,toolGuard=false,allowGitCommit=false,fast=false,launcher=null}) {
+export async function installProtection({cli,workspace,stateDir,invocation,task,toolGuard=false,allowGitCommit=false,fast=false,launcher=null,decisionLog=null}) {
   if(cli==='codex')assertNoRepoCliConfig('codex',workspace);
   // Every Claude run (implementation, roles, QA): no sandboxed run on a CLI or platform that can't confine it.
   if(cli==='claude'&&agentsSandboxed()){
@@ -40,7 +40,7 @@ export async function installProtection({cli,workspace,stateDir,invocation,task,
     if(problem)throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental): ${problem}`);
   }
   const policyFile=path.join(invocation,'scope-policy.json'),logFile=path.join(invocation,'scope-hook.ndjson');
-  const policy={workspace,protectedPaths:protectedPathsFor({workspace,stateDir}),allowedPaths:task?.allowedPaths??[],qaCommand:task?.qaCommand??'',toolGuard,allowGitCommit,protectionOnly:cli==='claude'||!task,taskId:task?.id??null,ask:actionAsk(),webAccess:webAccess()&&!allowGitCommit};
+  const policy={workspace,protectedPaths:protectedPathsFor({workspace,stateDir}),allowedPaths:task?.allowedPaths??[],qaCommand:task?.qaCommand??'',toolGuard,allowGitCommit,protectionOnly:cli==='claude'||!task,taskId:task?.id??null,ask:actionAsk(),webAccess:webAccess()&&!allowGitCommit,...(decisionLog?{decisionLog}:{})};
   await writeFile(policyFile,JSON.stringify(policy),{mode:0o600});
   // Settings › Experimental: agents' own commands sandboxed (Codex already confines them on Linux and macOS).
   const sandbox=agentsSandboxed();

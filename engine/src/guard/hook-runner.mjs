@@ -2,6 +2,7 @@ import {readFile,appendFile} from 'node:fs/promises';
 import {decide} from './decide.mjs';
 import {OVERSIZED_HOOK_INPUT} from './reasons.mjs';
 import {askable,askUser,askAllowed,definitelyRefused} from './ask.mjs';
+import {sendDecision,inputDigest} from './decision-log.mjs';
 
 /** Decode one stdin event and encode the adapter's decision without owning process exit. */
 export async function runHook(adapter,{policyPath,logPath,input,handleEvent}={}){
@@ -21,12 +22,13 @@ export async function runHook(adapter,{policyPath,logPath,input,handleEvent}={})
   let event;try{event=JSON.parse(input);}catch{event=null;}
   return {stdout:JSON.stringify(await handleEvent(policyPath,event))+'\n',exitCode:0};
  }
- let decision,tool=null,asked=null;
+ let decision,tool=null,asked=null,decisionLog=null,event=null,action=null;
  try{
   const policyText=await readFile(policyPath,'utf8'),policy=JSON.parse(policyText);
-  const event=JSON.parse(input);
+  decisionLog=policy.decisionLog??null;
+  event=JSON.parse(input);
   tool=event.tool_name??null;
-  const action=adapter.toAction(event);
+  action=adapter.toAction(event);
   decision=await decide(policy,action,{adapter});
   // Unverified (not certainly protected) and Settings say ask: the app puts it to you; no answer refuses it.
   if(askable(policy,action,decision,adapter)){
@@ -42,6 +44,11 @@ export async function runHook(adapter,{policyPath,logPath,input,handleEvent}={})
    }
   }
  }catch(error){decision={effect:'stop',reason:adapter.reasons.hookError(error)};}
+ // Guard plan stage 1: the engine records the decision before the call may run; no acknowledgement refuses it.
+ if(decisionLog){
+  const recorded=await sendDecision(decisionLog,{tool,kind:action?.kind??null,effect:decision.effect,reason:decision.reason??null,inputDigest:inputDigest(event?.tool_input),callId:event?.tool_use_id??event?.call_id??null,asked}).catch(()=>false);
+  if(!recorded&&decision.effect==='allow')decision={effect:'stop',reason:'Agent Dock could not record this decision (its engine did not answer), so the call is refused'};
+ }
  try{await appendFile(logPath,JSON.stringify({at:new Date().toISOString(),tool,allowed:decision.effect==='allow',reason:decision.reason??null,...(asked?{asked}:{})})+'\n');}catch{/* Decision logging remains best effort. */}
  return adapter.toControl(decision);
 }

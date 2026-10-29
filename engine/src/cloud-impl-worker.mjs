@@ -13,6 +13,8 @@ import { codexAuthEnv } from "./codex-provider-env.mjs";
 import { redactText } from "./redact.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
+import {openDecisionLog,crossCheck} from './guard/decision-log.mjs';
+import {agentsSandboxed} from './sandbox.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
@@ -102,6 +104,12 @@ export class CloudImplementationWorker {
   }
 
   async run(prompt, hooks = {}) {
+    // Guard plan stage 1: this run's guard decisions go to the action log through the engine; closed on every exit.
+    const log = await openDecisionLog({ stateDir: this.stateDir, taskId: hooks.task?.id ?? null });
+    try { return await this.runLogged(prompt, hooks, log); } finally { await log.close(); }
+  }
+
+  async runLogged(prompt, hooks, log) {
     // Codex: the active provider's key is registered as a secret before the prompt is redacted and written.
     const keep = this.cli === "codex" ? codexAuthEnv({ env: this.env }) : null;
     const onEvent = hooks.onEvent ?? (() => {});
@@ -117,7 +125,9 @@ export class CloudImplementationWorker {
     if (this.cli === "codex") {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
-    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env}});
+    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env},decisionLog:log.policy()});
+    // Stage 2: what this run asked for. The hook counts as observed only once a decision arrives (guard-records).
+    await onEvent({ type: "attestation", cli: this.cli, hook: "requested", decisionLog: log.signed ? "signed" : "unsigned (no action log key)", sandbox: this.cli === "codex" ? (agentsSandboxed() && process.platform === "win32" ? "codex-elevated" : "codex-workspace-write") : agentsSandboxed() ? "claude-sandbox" : "none" });
     const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
@@ -133,6 +143,9 @@ export class CloudImplementationWorker {
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
+    // The CLI's own output against what the guard recorded: a call with no record means the hook didn't see it.
+    const mismatch = crossCheck({ cli: this.cli, stdout, received: log.received });
+    await onEvent({ type: "guard-records", cli: this.cli, received: log.received.length, hookObserved: log.received.length > 0, ...(mismatch ? { mismatch } : {}) });
     noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout), this.model);
     if (this.cli === "claude") await saveClaudeRateLimit(this.stateDir, stdout);
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };
