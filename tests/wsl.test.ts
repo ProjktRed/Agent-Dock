@@ -24,6 +24,8 @@ describe("WSL isolation", () => {
     expect(launch).toEqual({ command: "wsl.exe", args: ["-d", "Ubuntu", "--cd", "/mnt/c/state/p1", "--exec", "node", "/mnt/c/App/resources/engine/src/cli.mjs", "--state-dir", "/mnt/c/state/p1"] });
     expect(() => wslLaunch("bad name;rm", "x", String.raw`C:\s`, [])).toThrow(/distro's name/);
     expect(wslEnv("PATH/l", ["OPENAI_API_KEY", "bad-key", "OPENAI_API_KEY"])).toBe("PATH/l:OPENAI_API_KEY/u");
+    // The app's data folder is a path: WSL translates it, so the agents' sandbox denies the mounted folder.
+    expect(wslEnv(undefined, ["AGENT_DOCK_USER_DATA"])).toBe("AGENT_DOCK_USER_DATA/up");
   });
 
   it("Stop now ends the engine and its processes inside the distro, and only an engine", async () => {

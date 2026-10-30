@@ -1,5 +1,6 @@
 import {approvedPath,approvedCommand,unsafeCommand} from './policy.mjs';
 import {failedResult} from './action.mjs';
+import {webAddressProblem} from '../web-access.mjs';
 import {protectedActionReason} from './protected-paths.mjs';
 import {rememberRead,checkSmallEdit,rememberEditFailure,nativeError} from './edit-discipline.mjs';
 import {cancelPrefix,COMMAND_NOT_APPROVED,UNKNOWN_TOOL,TWO_EDIT_FAILURES,HANDSHAKE_MISSING,COMMAND_SAFETY_FAILED,UNSAFE_COMMAND,UNAPPROVED_TOOL_PATH,SOFT_REJECT,THREE_INVALID_REQUESTS,MISSING_TOOL_INPUT,EDIT_PATH_OUTSIDE,PATCH_PATHS_NOT_EXPLICIT,PATCH_PATH_OUTSIDE} from './reasons.mjs';
@@ -43,10 +44,11 @@ function decideStateless(policy,action,adapter){
 
 /** Stateless adapters stay synchronous; stateful decisions may resolve paths. */
 export function decide(policy,action,{adapter,mode='hook'}={}){
- // Web search and page fetch: only with web access on (never for QA), and only web addresses.
+ // Web search and page fetch: only with web access on (never for QA), and only public web addresses.
  if(action.kind==='web'){
-  const url=action.input?.url;
-  return policy.webAccess===true&&(url===undefined||/^https?:\/\//i.test(String(url)))?allow():stop('Web access for agents is off (Settings › Execution & safety)');
+  if(policy.webAccess!==true)return stop('Web access for agents is off (Settings › Execution & safety)');
+  const url=action.input?.url,problem=url===undefined?null:webAddressProblem(url);
+  return problem?stop(`Web fetch refused: ${problem}`):allow();
  }
  // Cline's narrowed SDK never executes unknown tools or non-enumerated commands.
  // Keep its retry/counter protocol; its plugin is the final gate after the file hook.

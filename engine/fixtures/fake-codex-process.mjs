@@ -4,6 +4,13 @@ if (process.argv.includes("--approve-for-me") && process.argv.includes("--sandbo
   console.error("Conflicting approval and sandbox arguments");
   process.exit(2);
 }
+// The run-start sandbox probe (codex sandbox -P ...): an old Codex without permissions profiles, unless a test
+// asks for a passing probe. Not counted as a Codex run.
+if (process.argv[3] === "sandbox") {
+  if (process.env.FAKE_CODEX_PROBE === "pass") console.log(JSON.stringify({ insideWrite: process.argv.includes("permissions.agent-dock.extends=\":read-only\"") ? "EPERM" : "ok", outsideWrite: "EPERM", deniedRead: "EPERM", network: "EACCES" }));
+  else console.error("error: unrecognized subcommand 'sandbox'");
+  process.exit(process.env.FAKE_CODEX_PROBE === "pass" ? 0 : 2);
+}
 const pidFile = process.argv[2];
 if (process.env.FAKE_CODEX_ARGS_FILE) {
   await writeFile(process.env.FAKE_CODEX_ARGS_FILE, JSON.stringify(process.argv.slice(3)));

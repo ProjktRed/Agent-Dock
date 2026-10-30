@@ -73,6 +73,7 @@ test("with the engine listening, the hook's call goes through and carries its ca
   const result = await runHook(claude, { policyPath, logPath, input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: path.join(workspace, "a.txt") }, cwd: workspace, tool_use_id: "toolu_9" }) });
   assert.equal(result.stdout.trim(), "{}");
   assert.deepEqual(log.received.map((r) => [r.callId, r.effect]), [["toolu_9", "allow"]]);
+  assert.deepEqual([log.received[0].class, log.received[0].agrees, log.received[0].parseComplete], ["read", true, true], "stage 1 shadow: the typed record goes along");
 });
 
 test("the cross-check names tool calls the CLI reported that the guard never recorded", () => {

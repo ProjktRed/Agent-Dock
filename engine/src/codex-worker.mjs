@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import {installProtection} from './guard/install-protection.mjs';
-import {CODEX_WRITE_SANDBOX} from './guard/adapters/codex.mjs';
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -275,10 +274,14 @@ export class CodexWorker {
       // Per-run settings from CLIs › Codex › Settings (cli-run-settings.mjs: none loosens the sandbox).
       ...codexRunArgs(),
     ];
-    const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
+    // Read-only and workspace-write calls get Agent Dock's probed permissions profile (or the plain sandbox, stage 2).
+    const codexMode = sandbox === "workspace-write" ? "write" : sandbox === "read-only" ? "read" : null;
+    const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write',
+      codexMode,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:withoutSecrets(this.env,{keep})},
+      codexExtraArgs:this.windowsSandbox?["-c",`windows.sandbox=${JSON.stringify(this.windowsSandbox)}`]:[],writableDirs:sandbox==="workspace-write"?this.additionalWritableDirs:[]});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
       ...codexSkillArgs({workspace:this.workspace, env:this.env}),
-      ...(sandbox === "workspace-write" ? CODEX_WRITE_SANDBOX : ["--sandbox", sandbox]),
+      ...(codexMode ? [] : ["--sandbox", sandbox]),
       "--cd", this.workspace, "--output-schema", schemaFile,
       "--output-last-message", outputFile, "-"];
     this.activeCount++;

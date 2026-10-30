@@ -14,7 +14,6 @@ import { redactText } from "./redact.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
 import {openDecisionLog,crossCheck} from './guard/decision-log.mjs';
-import {agentsSandboxed} from './sandbox.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
@@ -49,7 +48,7 @@ export { codexScopeHookArgs };
 
 export { codexUsedTools };
 
-export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env }) {
+export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env, sandboxArgs = CODEX_WRITE_SANDBOX }) {
   if (cli === "codex") {
     return [...prefixArgs, "exec", "--ephemeral", "--json", "--color", "never",
       ...(model ? ["-m", model] : []),
@@ -60,7 +59,7 @@ export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, f
       ...hookArgs,
       ...codexSkillArgs({workspace, env}),
       // Same sandbox as Codex QA (workspace writes, never let out of it); the scope hook limits changes to the task.
-      ...CODEX_WRITE_SANDBOX, "--cd", workspace, "--output-last-message", outputFile, "-"];
+      ...sandboxArgs, "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
   return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...claudeRunArgs({ model }), ...hookArgs, ...launchArgs];
@@ -125,10 +124,12 @@ export class CloudImplementationWorker {
     if (this.cli === "codex") {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
-    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env},decisionLog:log.policy()});
-    // Stage 2: what this run asked for. The hook counts as observed only once a decision arrives (guard-records).
-    await onEvent({ type: "attestation", cli: this.cli, hook: "requested", decisionLog: log.signed ? "signed" : "unsigned (no action log key)", sandbox: this.cli === "codex" ? (agentsSandboxed() && process.platform === "win32" ? "codex-elevated" : "codex-workspace-write") : agentsSandboxed() ? "claude-sandbox" : "none" });
-    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env });
+    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env},decisionLog:log.policy(),
+      // Stage 2: Codex's sandbox is probed and chosen here; what confines the run is reported and logged. The hook
+      // counts as observed only once a decision arrives (guard-records).
+      codexMode:this.cli === "codex" ? "write" : null,
+      onAttestation:(entry) => onEvent({ type: "attestation", ...entry, decisionLog: log.signed ? "signed" : "unsigned (no action log key)" })});
+    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env, sandboxArgs: [] });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {

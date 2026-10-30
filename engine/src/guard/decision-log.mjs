@@ -20,7 +20,7 @@ import { redactText } from "../redact.mjs";
  * compromised CLI could read the secret and forge or skip records; the log proves what the engine received.
  */
 const LINE_LIMIT = 8 * 1024, CONNECTIONS = 32, READ_MS = 5_000;
-export const DECISION_FIELDS = ["runId", "nonce", "tool", "kind", "effect", "reason", "inputDigest", "callId", "asked"];
+export const DECISION_FIELDS = ["runId", "nonce", "tool", "kind", "effect", "reason", "inputDigest", "callId", "asked", "class", "agrees", "parseComplete"];
 
 export const recordMac = (secret, record) => createHmac("sha256", Buffer.from(secret, "hex")).update(canonical(record)).digest("hex");
 export const inputDigest = (input) => createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");

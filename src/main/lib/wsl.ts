@@ -39,10 +39,13 @@ export function wslLaunch(distro: string, script: string, stateDir: string, args
   return { command: "wsl.exe", args: ["-d", distro, "--cd", toWslPath(stateDir, distro), "--exec", "node", toWslPath(script, distro), ...wslEngineArgs(args, distro)] };
 }
 
-/** WSLENV entries so the given variables (provider keys, notification settings) reach the distro. */
+// Variables holding a Windows path: WSL translates them (/p), so the engine in the distro sees /mnt/c/....
+const PATH_VARS = new Set(["AGENT_DOCK_USER_DATA"]);
+
+/** WSLENV entries so the given variables (provider keys, notification settings, the app's data folder) reach the distro. */
 export function wslEnv(base: string | undefined, keys: string[]): string {
   const entries = new Set((base ?? "").split(":").filter(Boolean));
-  for (const key of keys) if (/^[A-Za-z_]\w*$/.test(key)) entries.add(`${key}/u`);
+  for (const key of keys) if (/^[A-Za-z_]\w*$/.test(key)) entries.add(`${key}/${PATH_VARS.has(key) ? "up" : "u"}`);
   return [...entries].join(":");
 }
 

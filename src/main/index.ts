@@ -307,7 +307,8 @@ function implProvider(p: Project): CliConnection | undefined {
 function providerEnv(p: Project): NodeJS.ProcessEnv {
   const provider = implProvider(p);
   const secret = provider ? store.getCliSecret(provider.id) : null;
-  return { ...notifyEnv(p), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}), ...(logKey ? { AGENT_DOCK_LOG_KEY: logKey } : {}) };
+  // AGENT_DOCK_USER_DATA: where this app keeps its data (portable and custom folders too), so agents' sandboxes deny reading it.
+  return { ...notifyEnv(p), AGENT_DOCK_USER_DATA: app.getPath("userData"), ...(secret ? { AGENT_DOCK_PROVIDER_KEY: secret } : {}), ...(logKey ? { AGENT_DOCK_LOG_KEY: logKey } : {}) };
 }
 
 /** Signs action log entries (engine/src/action-log.mjs); kept encrypted, null where the OS has no credential store. */

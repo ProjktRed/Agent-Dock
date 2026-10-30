@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {useWebAccess,codexWebSearchArgs} from '../src/web-access.mjs';
+import {useWebAccess,codexWebSearchArgs,webAddressProblem,webAddressResolvesPrivate} from '../src/web-access.mjs';
 import {decide} from '../src/guard/decide.mjs';
 import {definitelyRefused} from '../src/guard/ask.mjs';
 import claude,{claudeImplementationTools} from '../src/guard/adapters/claude.mjs';
@@ -40,4 +40,23 @@ test('web access on: research roles search and fetch web addresses; QA never doe
  const qa=await installProtection({cli:'codex',workspace,stateDir:dir,invocation:dir,allowGitCommit:true});
  assert.equal(qa.join(' ').includes('web_search="disabled"'),true,'QA verifies; it does not research');
  assert.equal(JSON.parse(await readFile(path.join(dir,'scope-policy.json'),'utf8')).webAccess,false);
+});
+
+test('web access on: fetches of sign-in addresses, IP addresses and local names are refused',()=>{
+ const policy={workspace:os.tmpdir(),protectedPaths:['.git/'],webAccess:true};
+ const fetch=url=>decide(policy,claude.toAction({tool_name:'WebFetch',tool_input:{url}}),{adapter:claude});
+ for(const url of ['https://user:pw@example.com/','https://token@example.com/','http://127.0.0.1:8080/','http://2130706433/','http://0x7f.1/','http://[::1]/','http://169.254.169.254/latest/meta-data/','http://localhost:3000/','http://api.localhost/','http://LOCALHOST./','http://intranet/','http://printer.local/','http://db.internal/','https://router.home.arpa/','ftp://example.com/','not a url'])
+  assert.equal(fetch(url).effect,'stop',url);
+ assert.match(fetch('https://u:p@example.com/').reason,/user name or password/);
+ for(const url of ['https://example.com/','https://docs.python.org/3/','http://sub.example.co.uk/path?q=1'])assert.equal(fetch(url).effect,'allow',url);
+ assert.equal(webAddressProblem('https://example.com.'),null,'a trailing dot is still a site name');
+});
+
+test('web access on: a site name that resolves to this computer or a private network is refused when the hook checks it',async()=>{
+ const answer=list=>async()=>list.map(address=>({address,family:address.includes(':')?6:4}));
+ for(const address of ['127.0.0.1','10.1.2.3','172.20.0.1','192.168.1.1','169.254.169.254','100.64.0.1','0.0.0.0','::1','fd00::1','fe80::1','::ffff:127.0.0.1'])
+  assert.match(await webAddressResolvesPrivate('http://127.0.0.1.nip.io/',{lookup:answer(['93.184.215.14',address])}),/private network/,address);
+ assert.equal(await webAddressResolvesPrivate('https://example.com/',{lookup:answer(['93.184.215.14','2606:2800:21f:cb07:6820:80da:af6b:8b2c'])}),null);
+ assert.match(await webAddressResolvesPrivate('https://nowhere.example/',{lookup:async()=>{throw Object.assign(new Error('x'),{code:'ENOTFOUND'})}}),/does not resolve/);
+ assert.match(await webAddressResolvesPrivate('https://slow.example/',{lookup:()=>new Promise(()=>{}),timeoutMs:50}),/does not resolve/);
 });
