@@ -36,7 +36,7 @@ test('a set-aside task never reaches Implementation; Assessment chooses again',a
  const result=await runNodeLoop({workspace:ws,stateDir,objective:'Build',approveTasks:true,codex:{activeCount:0,assertIdle:async()=>{}},
   assess:async()=>(++assessed===1?{status:'task',task}:{status:'done'}),
   worker:{withExclusive:fn=>fn(),run:async()=>{worker++;return{exitCode:0};}},
-  baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1});
+  baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:20});
  assert.equal(worker,0,'Implementation never ran');
  const events=await state.readEvents(80);
  const asked=events.find(e=>e.type==='task-approval-requested');
@@ -53,7 +53,7 @@ test('an approved task goes on to Implementation; without the setting nothing wa
   await runNodeLoop({workspace:ws,stateDir,objective:'Build',approveTasks,codex:{activeCount:0,assertIdle:async()=>{},resolveBlocked:async()=>({status:'blocked'})},
    assess:async()=>({status:'task',task}),
    worker:{withExclusive:fn=>fn(),run:async()=>{worker++;throw new Error('stop here');}},
-   baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1}).catch(()=>null);
+   baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:20}).catch(()=>null);
   const events=await state.readEvents(80);
   assert.ok(worker>=1,`Implementation ran (approveTasks ${approveTasks})`);
   assert.equal(events.some(e=>e.type==='task-approval-requested'),approveTasks);
@@ -63,12 +63,14 @@ test('an approved task goes on to Implementation; without the setting nothing wa
 
 test('an answer for another task, or from before the request, does not count',async t=>{
  const {ws,stateDir,state,head}=await setup(t);
+ // A failed assertion must not leave the loop polling forever (it held the whole test file on Windows CI).
+ t.after(()=>state.setControl('stop',{source:'app'}).catch(()=>{}));
  await state.setControl('approve-task',{source:'app',reason:'T1'});
  await new Promise(r=>setTimeout(r,5));
  let worker=0;
  const run=runNodeLoop({workspace:ws,stateDir,objective:'Build',approveTasks:true,codex:{activeCount:0,assertIdle:async()=>{}},
   assess:async()=>({status:'task',task}),worker:{withExclusive:fn=>fn(),run:async()=>{worker++;throw new Error('x');}},
-  baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:1}).catch(()=>null);
+  baseline:async()=>({head}),readControl:()=>state.readControl(),onEvent:e=>state.record(e),pollMs:20}).catch(()=>null);
  await new Promise(r=>setTimeout(r,150));
  await state.setControl('approve-task',{source:'app',reason:'OTHER'});
  await new Promise(r=>setTimeout(r,100));
