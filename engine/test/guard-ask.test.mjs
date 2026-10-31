@@ -38,6 +38,8 @@ test("only unverified actions are askable: protected paths and edits stay refuse
   const command = (text) => ({ kind: "command", tool: "Bash", commands: [text], cwd: workspace });
   assert.equal(definitelyRefused(policy, command("cat .env")), true);
   assert.equal(definitelyRefused(policy, command(`type "${path.join(workspace, ".env")}"`)), true);
+  // Shells join quoted pieces and drop escapes (release review 0.40.0): these are all `cat .env`.
+  for (const text of ["cat .e''nv", 'cat ".e"nv', "cat .e\\nv", "Get-Content .e`nv"]) assert.equal(definitelyRefused(policy, command(text)), true, text);
   assert.equal(definitelyRefused(policy, command(`cd "${workspace}" && git ls-files | head -40`)), false);
   assert.equal(definitelyRefused(policy, command("rg --files -g '!.git'")), false);
   assert.equal(definitelyRefused(policy, { kind: "unknown", tool: "webrun", input: { url: "https://example.com" }, cwd: workspace }), false);

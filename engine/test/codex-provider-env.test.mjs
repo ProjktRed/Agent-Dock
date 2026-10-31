@@ -264,6 +264,8 @@ args = ["C:\\\\y"]
 test("env_key may not name a system variable, and a duplicate key is never guessed between (kadono, 0.39.3)", () => {
   assert.equal(keyEnv(`model_provider = "a"\n[model_providers.a]\nenv_key = "PATH"\n`), null);
   assert.equal(keyEnv(`model_provider = "a"\n[model_providers.a]\nenv_key = "HOME"\n`), null);
+  // The families too (release review 0.40.0: the pattern had lost its backslashes).
+  for (const name of ["LC_ALL", "XDG_CONFIG_HOME", "PROCESSOR_ARCHITECTURE"]) assert.equal(keyEnv(`model_provider = "a"\n[model_providers.a]\nenv_key = "${name}"\n`), null, name);
   assert.equal(keyEnv(`model_provider = "a"\n[model_providers.a]\nenv_key = "GROQ_TOKEN"\n`), "GROQ_TOKEN");
   assert.equal(keyEnv(`model_provider = "a"\n[model_providers.a]\nenv_key = "A_KEY"\nenv_key = "B_KEY"\n`), null);
 });

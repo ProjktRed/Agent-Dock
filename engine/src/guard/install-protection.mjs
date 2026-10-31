@@ -12,6 +12,7 @@ import {agentsSandboxed,HOME_SECRETS} from '../sandbox.mjs';
 import {actionAsk,hookTimeoutSeconds} from './ask.mjs';
 import {webAccess,codexWebSearchArgs} from '../web-access.mjs';
 import {codexConfinement} from './codex-confinement.mjs';
+import {codexAuthEnv} from '../codex-provider-env.mjs';
 import {appendAction} from '../action-log.mjs';
 
 /** Codex on Windows: its elevated sandbox (separate sandbox accounts and firewall rules) for every command. */
@@ -69,7 +70,11 @@ export async function installProtection({cli,workspace,stateDir,invocation,task,
   const sandbox=agentsSandboxed();
   if(cli==='codex'){
     const windows=sandbox&&process.platform==='win32'?[...CODEX_WINDOWS_SANDBOX]:[];
-    const args=[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...windows,...codexWebSearchArgs(policy.webAccess)];
+    // The commands Codex runs don't get Codex's own keys (its default shell policy passes everything on): its
+    // usual *KEY*/*SECRET*/*TOKEN* exclusions apply, plus the sign-in variables by name (a custom provider's too).
+    const keys=codexAuthEnv({env:launcher?.env??process.env});
+    const args=[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...windows,...codexWebSearchArgs(policy.webAccess),
+      '-c','shell_environment_policy.ignore_default_excludes=false','-c',`shell_environment_policy.exclude=${JSON.stringify(keys)}`];
     // codexMode ("write" or "read"): this call's sandbox too, in place of the caller's plain --sandbox.
     if(!codexMode)return args;
     const confinement=await codexConfinement({mode:codexMode,stateDir,launcher,extraArgs:[...codexExtraArgs,...windows],writable:writableDirs,required:sandbox});

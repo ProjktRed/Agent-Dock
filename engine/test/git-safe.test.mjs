@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertSafeRepository, safeGitArgs, unsafeRepoConfig } from "../src/git-safe.mjs";
+import { assertSafeRepository, safeGitArgs, unsafeRepoConfig, unsafeConfigEntries } from "../src/git-safe.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true }).trim();
 function repo() {
@@ -62,4 +62,9 @@ test("a .git that redirects to another repository is refused; a registered linke
   const other = repo(), victim = mkdtempSync(path.join(os.tmpdir(), "git-safe-redirect-"));
   writeFileSync(path.join(victim, ".git"), `gitdir: ${path.join(other, ".git").replaceAll("\\", "/")}\n`);
   await assert.rejects(assertSafeRepository(victim), /not a worktree its repository registered/);
+});
+
+test("a git that ends config keys with CRLF still has its programs found (release review 0.40.0)", () => {
+  const out = ["local", "credential.helper\r\n!echo x", "local", "merge.evil.driver\r\nrun %A", "local", "user.name\r\nMe", "global", "core.sshcommand\r\nssh"].join("\0") + "\0";
+  assert.deepEqual(unsafeConfigEntries(out).map((e) => e.split("=")[0]), ["credential.helper", "merge.evil.driver"]);
 });

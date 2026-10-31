@@ -36,7 +36,10 @@ function nameCandidates(word) {
   const expanded = word
     .replace(/\$\{env:(\w+)\}|\$env:(\w+)|%(\w+)%|\$\{?(\w+)\}?/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m)
     .replace(/^~(?=$|[\\/])/, process.env.USERPROFILE ?? process.env.HOME ?? "~");
-  const pieces = [word, expanded].flatMap((w) => w.split(/["'`{}=,]+/)).flatMap((w) => w.split(/(?<!(?:^|[^A-Za-z0-9_])[A-Za-z]):|:(?![\\/])/));
+  // Shells join quoted pieces and drop escapes (`.e''nv`, `.e\nv` and PowerShell's .e`nv are all .env): the
+  // word with quotes, and with quotes and backslashes, removed is split and checked too. More names only refuse more.
+  const joined = [word, expanded].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, "")]);
+  const pieces = [word, expanded, ...joined].flatMap((w) => w.split(/["'`{}=,]+/)).flatMap((w) => w.split(/(?<!(?:^|[^A-Za-z0-9_])[A-Za-z]):|:(?![\\/])/));
   return [...new Set(pieces.filter(Boolean))];
 }
 

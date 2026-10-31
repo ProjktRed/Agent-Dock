@@ -42,13 +42,19 @@ const LFS = /^git-lfs (?:clean|smudge|filter-process)(?: -- %f| --skip)?(?: -- %
 /** The repository-scope settings that would run a program, as "key=value" lines; empty when there are none. */
 export async function unsafeRepoConfig(workspace) {
   const { stdout } = await exec("git", [...SAFE_GIT_CONFIG, "config", "-z", "--list", "--show-scope"], { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+  return unsafeConfigEntries(stdout);
+}
+
+/** The same, from `git config -z --list --show-scope` output. */
+export function unsafeConfigEntries(stdout) {
   const found = [];
   // Each entry is the scope and then the key and value (separated by a newline), each ended by NUL.
   const fields = stdout.split("\0");
   for (let i = 0; i + 1 < fields.length; i += 2) {
     const scope = fields[i], rest = fields[i + 1];
     if (!["local", "worktree"].includes(scope)) continue;
-    const newline = rest.indexOf("\n"), key = (newline < 0 ? rest : rest.slice(0, newline)).toLowerCase(), value = newline < 0 ? "" : rest.slice(newline + 1);
+    // A key never holds whitespace: a git that ends it with \r\n still names the same setting.
+    const newline = rest.indexOf("\n"), key = (newline < 0 ? rest : rest.slice(0, newline)).trim().toLowerCase(), value = newline < 0 ? "" : rest.slice(newline + 1);
     if (SIGNS.test(key) ? /^(?:false|no|off|0)$/i.test(value.trim()) : !RUNS_A_PROGRAM.some((re) => re.test(key))) continue;
     if (/^filter\.lfs\.(?:clean|smudge|process)$/.test(key) && LFS.test(value.trim())) continue;
     found.push(`${key}=${value}`);

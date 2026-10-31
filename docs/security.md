@@ -186,7 +186,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   workspace and each folder up to its git root before every start. OpenCode runs with project
   configuration disabled and its own config folders.
 - Codex calls run in an Agent Dock permissions profile (Codex's `default_permissions`) with approvals set to
-  never: writes only in the workspace (read-only roles: none), no network, and no reads of your sign-ins,
+  never: the commands it runs don't inherit its API key or other key/secret/token variables; writes only in the
+  workspace (read-only roles: none), no network, and no reads of your sign-ins,
   Codex's home, Agent Dock's data folder or the project's state. A command the sandbox blocks stays blocked
   instead of being let out by an automatic reviewer. Before use, `codex sandbox` runs a probe under the profile
   (a write outside, a read of the state folder and a connection must fail). A Codex that can't apply the profile

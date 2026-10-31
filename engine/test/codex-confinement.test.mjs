@@ -81,6 +81,9 @@ test("Codex roles run in the probed profile and log what confined them", async (
   const assessment = JSON.parse(await readFile(argsFile, "utf8"));
   assert.ok(assessment.includes(`permissions.${CODEX_PROFILE}.extends=":read-only"`));
   assert.ok(!assessment.find((a) => a.includes(".filesystem=")).includes('"write"'));
+  // The commands Codex runs don't inherit its keys (release review 0.40.0).
+  assert.ok(assessment.includes("shell_environment_policy.ignore_default_excludes=false"));
+  assert.ok(JSON.parse(assessment.find((a) => a.startsWith("shell_environment_policy.exclude=")).split("=")[1]).includes("OPENAI_API_KEY"));
   const log = (await readFile(path.join(root, "action-log.ndjson"), "utf8")).trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.type === "attestation");
   assert.deepEqual(log.map((e) => [e.cli, e.sandbox, e.probe]), [["codex", "codex-profile-write", "passed"], ["codex", "codex-profile-read", "passed"]]);
 });
