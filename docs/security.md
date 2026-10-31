@@ -50,7 +50,10 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   sign-ins, to write outside the project, to open a network connection and, on Windows, to decrypt data you
   protected with DPAPI). A window save or a settings import cannot change it, and turning it off needs a
   native confirmation. A run set to sandbox its checks does not start when the sandbox is not ready, and a
-  check that cannot start in the sandbox fails; it never runs outside. Limits: the account can read what any
+  check that cannot start in the sandbox fails; it never runs outside. The first check in each worktree is
+  preceded by a short probe in the same sandbox session: it must not read a marker file Agent Dock puts in your
+  home folder, a file it writes there must not appear in the real folder, and it must not connect out;
+  otherwise the check fails (a project with no Node on the PATH skips the probe). Limits: the account can read what any
   local account can (system folders and, on many computers, folders on other drives); checks see the
   environment of the sandbox account rather than yours on Windows; agents' own commands are covered by the
   next setting, not this one.
@@ -58,7 +61,10 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   Code call (orchestrator roles, Implementation, manual Elevation) runs its shell
   commands sandboxed. Claude Code gets its own sandbox in the settings Agent Dock passes (the same sandbox
   runtime; on Windows the `srt-sandbox` account): no network, writes only in the workspace, it fails instead
-  of running a command unconfined, and a command cannot ask to leave it. Codex on Windows gets
+  of running a command unconfined, and a command cannot ask to leave it. Its commands also can't read your
+  sign-ins or the protected paths (Claude Code 2.1.221 or later). Claude Code's sandbox doesn't run on native
+  Windows, so sandboxed Claude runs refuse there (use WSL2); elsewhere Agent Dock asks Claude Code for its
+  sandbox status for the run's settings and refuses the run if it reports the sandbox unavailable. Codex on Windows gets
   `windows.sandbox="elevated"` (its own sandbox accounts and firewall rules), which must already be set up;
   Agent Dock checks with `codex doctor` and does not start Codex otherwise. On Linux Codex already confines its
   commands. It turns on after the same setup and self-test as sandboxed checks, cannot be set by a window save
@@ -75,7 +81,10 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   runs with web_search "live" and Claude Code with WebSearch and WebFetch, for Implementation and Assessment only;
   QA runs with web search disabled and without those tools. Off, Codex's web search is disabled outright (its
   own default is a cached search) and Claude Code's web tools are not offered; the guard also refuses them
-  unless the run's policy allows web access, and accepts only http(s) addresses for WebFetch. The search and
+  unless the run's policy allows web access, and accepts only http(s) addresses for WebFetch, without a user
+  name or password, IP addresses, localhost or local names, or names that resolve to a private address when
+  the guard checks them. That narrows what a fetch reaches; it is not an exfiltration boundary (the CLI resolves
+  the name again, and public sites can host anyone's pages). The search and
   fetch run inside the CLI, not as shell commands, so the sandbox for agents' commands keeps those offline.
   Web pages can carry instructions aimed at agents: protected paths, the task's file scope, QA and the
   engine's scope check apply to whatever an agent does next.
@@ -176,9 +185,19 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   hook), nor Cline in one with `.clinerules/hooks/` (Cline runs those without review). It checks the
   workspace and each folder up to its git root before every start. OpenCode runs with project
   configuration disabled and its own config folders.
-- Codex roles that write run in Codex's workspace-write sandbox with approvals set to never: a command
-  the sandbox blocks (network, files outside the workspace) stays blocked instead of being let out by an
-  automatic reviewer.
+- Codex calls run in an Agent Dock permissions profile (Codex's `default_permissions`) with approvals set to
+  never: writes only in the workspace (read-only roles: none), no network, and no reads of your sign-ins,
+  Codex's home, Agent Dock's data folder or the project's state. A command the sandbox blocks stays blocked
+  instead of being let out by an automatic reviewer. Before use, `codex sandbox` runs a probe under the profile
+  (a write outside, a read of the state folder and a connection must fail). A Codex that can't apply the profile
+  (older versions; Windows' unelevated sandbox, which can't deny reads) gets its plain workspace-write or
+  read-only sandbox as before; with sandboxed agent commands on, a probe that shows a leak refuses the run.
+- Each Codex call and each Codex or Claude Code implementation run writes an attestation to the action log:
+  the sandbox used, whether reads are limited and the probe's results. During implementation runs the guard
+  hook reports every decision to the engine over a per-run local endpoint (HMAC-signed with a per-run secret);
+  the engine writes it to the action log before the call may run, and a call it can't record is refused. The
+  hook runs as the same user as the agent, so without an attested sandbox a compromised CLI could forge or
+  skip its own records: the log proves what the engine received.
 - CLIs › Settings: run settings for Codex and Claude Code come from a fixed list, checked by the app
   and again by the engine, with no sandbox, approval, permission, hook, network or MCP setting on it.
   The app does not write the CLIs' own config files or Ollama's settings: it shows where Codex's

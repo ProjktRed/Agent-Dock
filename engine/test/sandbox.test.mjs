@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkSandboxConfig, closeSandbox, toolchainDirs, useSandboxedChecks, useSandboxRuntime } from "../src/sandbox.mjs";
+import { checkSandboxConfig, closeSandbox, sandboxProbe, toolchainDirs, useSandboxedChecks, useSandboxRuntime } from "../src/sandbox.mjs";
 import { runShellCommand } from "../src/qa-packet.mjs";
 import { runCheckCommand } from "../src/qa-runner.mjs";
 import { configureProtection } from "../src/guard/protected-paths.mjs";
@@ -82,9 +82,59 @@ test("both check runners spawn what the sandbox wraps, one check at a time, and 
     assert.match(b.stdout, /sandboxed/);
     const c = await runCheckCommand("npm test", root, { stateDir });
     assert.match(c.output, /sandboxed/);
-    assert.equal(wrapped.length, 3);
+    // The session's probe is wrapped first (it reported nothing here: the fake prints no result), then the checks.
+    assert.equal(wrapped.length, 4);
+    assert.match(wrapped[0], /^node -e "eval\(Buffer\.from\('/);
+    assert.deepEqual(sandboxProbe(), { ran: false });
     assert.equal(initialized, 1, "one session per worktree");
     if (process.platform !== "win32") assert.equal(maxActive, 1, "checks wait for each other");
+  } finally { await closeSandbox(); useSandboxedChecks(false); useSandboxRuntime(null); }
+});
+
+test("a sandbox whose probe reaches your home folder fails the check; one that holds runs it", async () => {
+  const root = temp(), stateDir = temp();
+  execGitInit(root);
+  configureProtection({ workspace: root, stateDir, paths: "[]" });
+  const shell = process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c"] : ["/bin/sh", "-c"];
+  // Leaky: the probe script runs with no sandbox at all (it really reads the marker and writes in your home; its
+  // connection goes to a closed local port). Holding: it reports only errors.
+  const unsandboxed = (command) => Buffer.from(/Buffer\.from\('([^']+)'/.exec(command)[1], "base64").toString().replace('host:"example.com",port:443', 'host:"127.0.0.1",port:9');
+  const holding = `console.log("ADK_PROBE " + JSON.stringify({ outsideWrite: "EPERM", homeRead: "EPERM", network: "EACCES" }))`;
+  const fake = (leaky) => ({ SandboxManager: {
+    initialize: async () => {}, reset: async () => {}, cleanupAfterCommand: () => {},
+    wrapWithSandboxArgv: async (command) => ({ argv: command.startsWith("node -e") ? [process.execPath, "-e", leaky ? unsandboxed(command) : holding] : [...shell, "echo ran"], env: { ...process.env } }),
+  } });
+  useSandboxedChecks(true);
+  try {
+    useSandboxRuntime(fake(true));
+    await assert.rejects(runCheckCommand("npm test", root, { stateDir }), /could not start.*probe inside it was not stopped \(outsideWrite, homeRead\)/);
+    assert.deepEqual(readdirSync(os.homedir()).filter((f) => f.startsWith(".agent-dock-probe-")), [], "the probe's files are removed");
+    await closeSandbox();
+    useSandboxRuntime(fake(false));
+    assert.match((await runCheckCommand("npm test", root, { stateDir })).output, /ran/);
+    assert.equal(sandboxProbe().ran, true);
+  } finally { await closeSandbox(); useSandboxedChecks(false); useSandboxRuntime(null); }
+});
+
+test("a session whose probe fails is not reused: the next check sets it up and probes it again", async () => {
+  const root = temp(), stateDir = temp();
+  execGitInit(root);
+  configureProtection({ workspace: root, stateDir, paths: "[]" });
+  const shell = process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c"] : ["/bin/sh", "-c"];
+  let initialized = 0, probes = 0;
+  useSandboxRuntime({ SandboxManager: {
+    initialize: async () => { initialized++; }, reset: async () => {}, cleanupAfterCommand: () => {},
+    wrapWithSandboxArgv: async (command) => {
+      if (command.startsWith("node -e") && ++probes === 1) throw new Error("probe wrap failed");
+      return { argv: [...shell, "echo ran"], env: { ...process.env } };
+    },
+  } });
+  useSandboxedChecks(true);
+  try {
+    await assert.rejects(runCheckCommand("npm test", root, { stateDir }), /could not start.*probe wrap failed/);
+    assert.match((await runCheckCommand("npm test", root, { stateDir })).output, /ran/);
+    assert.equal(initialized, 2, "set up again");
+    assert.equal(probes, 2, "probed again");
   } finally { await closeSandbox(); useSandboxedChecks(false); useSandboxRuntime(null); }
 });
 

@@ -1,4 +1,6 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { checkEnv } from "./secret-env.mjs";
@@ -99,6 +101,66 @@ export async function sandboxProblem() {
 
 // One configuration at a time (the runtime is per process), kept while checks run in the same worktree.
 let session = null;
+
+// Wraps a command for the session (Linux: srt points the command's TMPDIR at the session's temp folder).
+async function wrapCommand(manager, command, root, windows, windowsShell) {
+  const before = process.env.CLAUDE_CODE_TMPDIR;
+  if (session?.tempDir) process.env.CLAUDE_CODE_TMPDIR = session.tempDir;
+  try {
+    return await manager.wrapWithSandboxArgv(command, windows ? windowsShell : "/bin/sh", undefined, undefined, root);
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_CODE_TMPDIR; else process.env.CLAUDE_CODE_TMPDIR = before;
+  }
+}
+
+/**
+ * Guard plan stage 2: before the first check of a session, a small Node script runs inside the new sandbox. It
+ * must not be able to read a marker file Agent Dock puts in your home folder, its write of a file there must not
+ * appear in the real folder, and it must not open a connection. (Linux hides your home folder behind an empty
+ * stand-in, where reads and writes succeed but reach nothing of yours, so results are checked against the real
+ * folder.) A property that holds nothing back fails the check: the sandbox is not what it claims. A probe that cannot run at all
+ * (no Node on PATH for this project) is noted in session.probe and the checks go on in the sandbox as before.
+ */
+async function probeSession(manager, root, windows, windowsShell) {
+  const home = os.homedir(), name = `.agent-dock-probe-${randomBytes(8).toString("hex")}`;
+  const outside = path.join(home, `${name}-write`), marker = path.join(home, `${name}-read`), token = randomBytes(16).toString("hex");
+  // The script reports what it could do; whether that reached your real folder is judged here, not in there.
+  const script = `const fs=require("fs"),net=require("net"),r={},a=${JSON.stringify({ outside, marker })};`
+    + `try{fs.writeFileSync(a.outside,"x");r.outsideWrite="attempted"}catch(e){r.outsideWrite=e.code||"error"}`
+    + `try{r.homeRead=fs.readFileSync(a.marker,"utf8")}catch(e){r.homeRead=e.code||"error"}`
+    + `const s=net.connect({host:"example.com",port:443});const done=v=>{r.network=v;s.destroy();console.log("ADK_PROBE "+JSON.stringify(r));process.exit(0)};`
+    + `s.setTimeout(4000,()=>done("timeout"));s.on("connect",()=>done("ok"));s.on("error",e=>done(e.code||"error"));`;
+  // Base64 keeps the script one quote-free word for cmd, PowerShell and sh alike.
+  const command = `node -e "eval(Buffer.from('${Buffer.from(script).toString("base64")}','base64').toString())"`;
+  const wrapped = await wrapCommand(manager, command, root, windows, windowsShell);
+  let output = "", wrote = false;
+  try {
+    // A home folder Agent Dock can't write to (read-only homes) only skips the read test.
+    try { writeFileSync(marker, token, { mode: 0o600 }); } catch { /* the probe still checks writes and network */ }
+    output = await new Promise((resolve) => {
+      let out = "";
+      const child = spawn(wrapped.argv[0], wrapped.argv.slice(1), { cwd: root, env: windows ? checkEnv(wrapped.env) : checkEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      const timer = setTimeout(() => { child.kill(); resolve(out); }, 30_000);
+      child.stdout.on("data", (c) => { out += c; });
+      child.on("error", () => { clearTimeout(timer); resolve(out); });
+      child.on("close", () => { clearTimeout(timer); resolve(out); });
+    });
+  } finally {
+    try { if (!windows) manager.cleanupAfterCommand?.(); } finally { wrote = existsSync(outside); for (const file of [outside, marker]) try { rmSync(file, { force: true }); } catch { /* left behind: a hidden dot file */ } }
+  }
+  const line = output.split(/\r?\n/).find((l) => l.startsWith("ADK_PROBE "));
+  // A write that reached your folder counts even when the probe printed nothing.
+  const silent = wrote ? { ran: true, results: {}, leaked: ["outsideWrite"] } : { ran: false };
+  if (!line) return silent;
+  let results;
+  try { results = JSON.parse(line.slice("ADK_PROBE ".length)); } catch { return silent; }
+  const leaked = [...(wrote ? ["outsideWrite"] : []), ...(results.homeRead === token ? ["homeRead"] : []), ...(results.network === "ok" ? ["network"] : [])];
+  if (results.homeRead === token) results.homeRead = "read your file";
+  return { ran: true, results, leaked };
+}
+
+/** What the current session's probe found ({ran:false} when it could not run), or null with no session. */
+export const sandboxProbe = () => session?.probe ?? null;
 let queue = Promise.resolve();
 
 /**
@@ -121,16 +183,18 @@ export async function sandboxedSpawn(command, cwd, { windowsShell = "cmd", env =
       // Linux: a temp folder of the session's own (srt points TMPDIR at it). Windows: the sandbox account has its own.
       const tempDir = windows ? null : mkdtempSync(path.join(os.tmpdir(), "agent-dock-check-"));
       session = { cwd: root, tempDir };
-      await manager.initialize(checkSandboxConfig({ cwd: root, tempDir, srtWinPath: srt.VENDORED_SRT_WIN_EXE }));
+      // A session counts as ready only once it started and its probe held; any failure on the way ends it, so the
+      // next check sets it up (and probes it) again instead of reusing it.
+      try {
+        await manager.initialize(checkSandboxConfig({ cwd: root, tempDir, srtWinPath: srt.VENDORED_SRT_WIN_EXE }));
+        session.probe = await probeSession(manager, root, windows, windowsShell);
+        if (session.probe.leaked?.length) throw new Error(`a probe inside it was not stopped (${session.probe.leaked.join(", ")})`);
+      } catch (error) {
+        await closeSandbox();
+        throw error;
+      }
     }
-    const before = process.env.CLAUDE_CODE_TMPDIR;
-    if (session.tempDir) process.env.CLAUDE_CODE_TMPDIR = session.tempDir;
-    let wrapped;
-    try {
-      wrapped = await manager.wrapWithSandboxArgv(command, windows ? windowsShell : "/bin/sh", undefined, undefined, root);
-    } finally {
-      if (before === undefined) delete process.env.CLAUDE_CODE_TMPDIR; else process.env.CLAUDE_CODE_TMPDIR = before;
-    }
+    const wrapped = await wrapCommand(manager, command, root, windows, windowsShell);
     // Windows: srt's env is for its broker only (the check gets the sandbox account's own environment plus
     // PATH). Linux: the check inherits it, so it gets the same environment an unsandboxed check gets.
     const spawnEnv = windows ? checkEnv(wrapped.env) : { ...checkEnv(), ...env };
