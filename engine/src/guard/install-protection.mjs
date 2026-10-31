@@ -13,7 +13,7 @@ import {actionAsk,hookTimeoutSeconds} from './ask.mjs';
 import {webAccess,codexWebSearchArgs} from '../web-access.mjs';
 import {codexConfinement} from './codex-confinement.mjs';
 import {codexAuthEnv} from '../codex-provider-env.mjs';
-import {appendAction} from '../action-log.mjs';
+import {appendAction,actionLogKeyHex} from '../action-log.mjs';
 
 /** Codex on Windows: its elevated sandbox (separate sandbox accounts and firewall rules) for every command. */
 export const CODEX_WINDOWS_SANDBOX=Object.freeze(['-c','windows.sandbox="elevated"']);
@@ -48,8 +48,8 @@ function claudeSandboxStatus(launcher,settings,workspace){
  * permissions profile, probed (codex-confinement.mjs). Claude with sandboxed commands: Claude Code's own status for
  * the run's settings; a sandbox it reports as unavailable refuses the run (Claude would refuse it anyway).
  */
-async function attest(stateDir,cli,attestation,onAttestation){
-  const entry={cli,...attestation};
+async function attest(stateDir,cli,attestation,onAttestation,decisionLog){
+  const entry={cli,...attestation,...(decisionLog?{decisionLog:actionLogKeyHex()?'signed':'unsigned (no action log key)'}:{})};
   await appendAction(stateDir,{type:'attestation',...entry}).catch(()=>{});
   await onAttestation?.(entry);
 }
@@ -73,12 +73,14 @@ export async function installProtection({cli,workspace,stateDir,invocation,task,
     // The commands Codex runs don't get Codex's own keys (its default shell policy passes everything on): its
     // usual *KEY*/*SECRET*/*TOKEN* exclusions apply, plus the sign-in variables by name (a custom provider's too).
     const keys=codexAuthEnv({env:launcher?.env??process.env});
+    // write_stdin (input to a running command) never reaches the hook, and Codex 0.160 keeps it even with unified
+    // exec off: the guard refuses commands that would read code from input instead (stdin-commands.mjs).
     const args=[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...windows,...codexWebSearchArgs(policy.webAccess),
       '-c','shell_environment_policy.ignore_default_excludes=false','-c',`shell_environment_policy.exclude=${JSON.stringify(keys)}`];
     // codexMode ("write" or "read"): this call's sandbox too, in place of the caller's plain --sandbox.
     if(!codexMode)return args;
     const confinement=await codexConfinement({mode:codexMode,stateDir,launcher,extraArgs:[...codexExtraArgs,...windows],writable:writableDirs,required:sandbox});
-    await attest(stateDir,cli,{hook:'requested',...confinement.attestation,...(windows.length?{windowsSandbox:'elevated'}:{})},onAttestation);
+    await attest(stateDir,cli,{hook:'requested',...confinement.attestation,...(windows.length?{windowsSandbox:'elevated'}:{})},onAttestation,decisionLog);
     return [...args,...confinement.args];
   }
   const settings=claudeProtectionSettings({policyFile,logFile,fast,timeout:hookTimeoutSeconds(policy.ask),
@@ -88,7 +90,7 @@ export async function installProtection({cli,workspace,stateDir,invocation,task,
     // `available`/`installed` describe the native Windows install only; supported, enabled and no unavailableReason
     // are what say the sandbox will confine these commands.
     if(status&&(status.supported===false||status.enabled!==true||status.unavailableReason))throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental), but Claude Code reports its sandbox as unavailable: ${String(status.unavailableReason??status.reasons?.[0]??'no reason given').slice(0,300)}`);
-    await attest(stateDir,cli,{hook:'requested',sandbox:sandbox?'claude-sandbox':'none',readLimits:Boolean(sandbox),probe:sandbox?(status?'Claude Code reports it enabled (its limits are not tested)':'not reported by this Claude Code'):'not run'},onAttestation);
+    await attest(stateDir,cli,{hook:'requested',sandbox:sandbox?'claude-sandbox':'none',readLimits:Boolean(sandbox),probe:sandbox?(status?'Claude Code reports it enabled (its limits are not tested)':'not reported by this Claude Code'):'not run'},onAttestation,decisionLog);
   }
   return ['--settings',JSON.stringify(settings)];
 }

@@ -9,23 +9,28 @@ import { redactText } from "../redact.mjs";
 export const TOOL_CLASSES = Object.freeze(["read", "edit", "command", "web", "inspect", "output", "agent", "mcp", "unknown"]);
 
 export const TOOL_REGISTRY = Object.freeze({
+  // Current and older names (Claude Code renamed Task to Agent and BashOutput to TaskOutput; kadono 0.40.0 probe).
   claude: {
-    Read: "read", Write: "edit", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit", Bash: "command",
-    Glob: "inspect", Grep: "inspect", LS: "inspect", BashOutput: "inspect", WebFetch: "web", WebSearch: "web",
-    TodoWrite: "output", StructuredOutput: "output", ExitPlanMode: "output", Task: "agent",
+    Read: "read", Write: "edit", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit", Bash: "command", PowerShell: "command",
+    Glob: "inspect", Grep: "inspect", LS: "inspect", BashOutput: "inspect", TaskOutput: "inspect", ToolSearch: "inspect", Skill: "read",
+    WebFetch: "web", WebSearch: "web", KillShell: "command", TaskStop: "command", Monitor: "command", EnterWorktree: "command", ExitWorktree: "command",
+    TodoWrite: "output", StructuredOutput: "output", ExitPlanMode: "output", EnterPlanMode: "output", AskUserQuestion: "output",
+    Task: "agent", Agent: "agent", SendMessage: "agent", CronCreate: "agent", CronDelete: "agent", CronList: "inspect",
   },
   codex: {
-    Bash: "command", shell: "command", exec_command: "command", local_shell: "command", apply_patch: "edit",
+    Bash: "command", shell: "command", exec_command: "command", local_shell: "command", exec: "command", write_stdin: "command", apply_patch: "edit",
     read: "read", read_file: "read", read_files: "read", view_image: "read",
-    grep: "inspect", glob: "inspect", grep_files: "inspect", list_dir: "inspect", list_directory: "inspect", search_codebase: "inspect",
-    update_plan: "output", request_user_input: "output", web_search: "web",
+    grep: "inspect", glob: "inspect", grep_files: "inspect", list_dir: "inspect", list_directory: "inspect", search_codebase: "inspect", wait: "inspect",
+    update_plan: "output", request_user_input: "output", create_goal: "output", get_goal: "output", update_goal: "output", web_search: "web",
+    list_mcp_resources: "mcp", list_mcp_resource_templates: "mcp", read_mcp_resource: "mcp",
+    multi_agent_v1: "agent", spawn_agent: "agent", send_message: "agent", wait_agent: "agent", list_agents: "agent", interrupt_agent: "agent", followup_task: "agent",
   },
   cline: {
     run_commands: "command", editor: "edit", apply_patch: "edit", read_files: "read", search_codebase: "inspect",
     ask_question: "output", submit_and_exit: "output",
   },
   opencode: {
-    shell: "command", bash: "command", edit: "edit", write: "edit", patch: "edit", read: "read", glob: "inspect", grep: "inspect", question: "output",
+    shell: "command", bash: "command", edit: "edit", write: "edit", patch: "edit", read: "read", skill: "read", glob: "inspect", grep: "inspect", question: "output",
   },
 });
 

@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isProtectedPath, pathsIn } from "./protected-paths.mjs";
 import { redactText } from "../redact.mjs";
+import { readsCodeFromInput } from "./stdin-commands.mjs";
 
 /**
  * Ask instead of refuse (Settings › Execution & safety, "When the guard cannot verify an action"). A Codex or
@@ -39,8 +40,55 @@ function nameCandidates(word) {
   // Shells join quoted pieces and drop escapes (`.e''nv`, `.e\nv` and PowerShell's .e`nv are all .env): the
   // word with quotes, and with quotes and backslashes, removed is split and checked too. More names only refuse more.
   const joined = [word, expanded].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, "")]);
+  // Brace expansion: `.{env,x}` is `.env` and `.x` (a few levels, bounded).
+  for (let i = 0; i < joined.length && joined.length < 200; i++) {
+    const brace = /\{([^{}]*,[^{}]*)\}/.exec(joined[i]);
+    if (brace) joined.push(...brace[1].split(",").map((alt) => joined[i].slice(0, brace.index) + alt + joined[i].slice(brace.index + brace[0].length)));
+  }
   const pieces = [word, expanded, ...joined].flatMap((w) => w.split(/["'`{}=,]+/)).flatMap((w) => w.split(/(?<!(?:^|[^A-Za-z0-9_])[A-Za-z]):|:(?![\\/])/));
   return [...new Set(pieces.filter(Boolean))];
+}
+
+const GLOB = /[*?[]/;
+const foldCase = process.platform === "win32" || process.platform === "darwin";
+/** A shell or PowerShell wildcard as a regular expression for one name (a leading dot matches too, as in PowerShell). */
+function globPattern(part) {
+  let out = "";
+  for (let i = 0; i < part.length; i++) {
+    const c = part[i];
+    if (c === "*") out += ".*";
+    else if (c === "?") out += ".";
+    else if (c === "[") {
+      // Any bracket expression (POSIX classes like [[:alpha:]] included) counts as any one character: wider only refuses more.
+      const end = part.indexOf("]", part[i + 1] === "[" ? part.indexOf("]", i + 2) + 1 : i + 2);
+      if (end < 0) { out += "\\["; continue; }
+      out += "."; i = end;
+    } else out += c.replace(/[.+^${}()|\\\]]/g, "\\$&");
+  }
+  try { return new RegExp(`^${out}$`, foldCase ? "i" : ""); } catch { return /^$/; }
+}
+
+/**
+ * What a wildcard word could name: its matches on disk (a few levels, bounded), and the protected rules' own names
+ * it fits (`.e*`, `.[e]nv` and `*env` fit `.env*` even before a .env exists). Only refuses more, never allows.
+ */
+function globNames(policy, word, cwd) {
+  const parts = word.replaceAll("\\", "/").split("/");
+  const absolute = path.isAbsolute(word) || /^[A-Za-z]:/.test(word);
+  let found = [absolute ? (parts[0] || "/") : cwd];
+  const start = absolute ? 1 : 0;
+  for (let i = start; i < parts.length && found.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    if (!GLOB.test(part)) { found = found.map((dir) => path.join(dir, part)); continue; }
+    const test = globPattern(part);
+    // Folders only, except for the last part (`*/notes.txt` never looks inside the file .env).
+    const last = i === parts.length - 1;
+    found = found.flatMap((dir) => { try { return readdirSync(dir, { withFileTypes: true }).filter((e) => test.test(e.name) && (last || e.isDirectory())).map((e) => path.join(dir, e.name)); } catch { return []; } }).slice(0, 2000);
+  }
+  const last = globPattern(parts.at(-1) || "");
+  const ruleNames = (policy.protectedPaths ?? []).map((rule) => rule.replaceAll("\\", "/").replace(/\/+$/, "").split("/").at(-1).replace(/[*?]/g, "")).filter(Boolean);
+  return { found, fitsRule: ruleNames.some((name) => last.test(name)) };
 }
 
 function commandText(action) {
@@ -54,6 +102,8 @@ export function definitelyRefused(policy, action) {
   const cwd = action.cwd || policy.workspace;
   const protectedName = (file) => { try { return isProtectedPath(policy, file, cwd); } catch { return true; } };
   if (protectedName(cwd)) return true;
+  // A shell reading code from input would run whatever Codex types into it later, unchecked.
+  if (action.kind === "command" && commandText(action).split("\n").some((line) => readsCodeFromInput(line, cwd))) return true;
   const strings = (value, out = []) => {
     if (typeof value === "string") out.push(value);
     else if (value && typeof value === "object") for (const v of Object.values(value)) strings(v, out);
@@ -62,7 +112,14 @@ export function definitelyRefused(policy, action) {
   const texts = action.kind === "command" ? words(commandText(action)) : strings(action.input).flatMap(words);
   const paths = action.kind === "command" ? [] : pathsIn(action.input);
   // A web address is no file name (the path check reads its colon as a drive and refuses it, to be safe).
-  return [...paths, ...texts.filter((name) => !/^https?:\/\//i.test(name)).flatMap(nameCandidates)].some(protectedName);
+  const names = [...paths, ...texts.filter((name) => !/^https?:\/\//i.test(name)).flatMap(nameCandidates)];
+  if (names.some(protectedName)) return true;
+  // Wildcards: refused outright when they could name a protected path (kadono 0.40.0 probe: `cat .e*`).
+  // An expansion the guard can't resolve could produce a wildcard (`.e${UNSET:-*}`, `X=*; cat .e$X`, `.e$(echo '*')`):
+  // it counts as one (kadono 0.40.1 review).
+  const raw = action.kind === "command" ? commandText(action).split(/\s+/) : [];
+  const expanded = raw.map((w) => w.replace(/\$\{[^}]*\}|\$\([^)]*\)?|`[^`]*`?|\$[@*#?$!0-9-]|\$\w+|\$/g, "*").replace(/["'`]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`]/g, ""));
+  return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => { const { found, fitsRule } = globNames(policy, name, cwd); return fitsRule || found.some(protectedName); });
 }
 
 export function askable(policy, action, decision, adapter) {

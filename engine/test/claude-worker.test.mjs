@@ -89,9 +89,12 @@ test("usage limits become the loop's resumable usage-limit error", () => {
 });
 
 test("helpers strip only Claude session variables", () => {
-  assert.deepEqual(claudeChildEnv({ CLAUDECODE: "1", CLAUDE_PID: "2", CLAUDEX: "keep", PATH: "p" }), { CLAUDEX: "keep", PATH: "p" });
+  // Claude's commands don't get its key: its subprocess scrub is always on (kadono 0.40.0 probe).
+  const scrub = { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" };
+  assert.deepEqual(claudeChildEnv({ CLAUDECODE: "1", CLAUDE_PID: "2", CLAUDEX: "keep", PATH: "p" }), { CLAUDEX: "keep", PATH: "p", ...scrub });
   // The folder CLIs › Claude Code › Config edits; workers must use the same settings and sign-in.
-  assert.deepEqual(claudeChildEnv({ CLAUDE_CONFIG_DIR: "D:\claude", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_CODE_SSE_PORT: "1" }), { CLAUDE_CONFIG_DIR: "D:\claude" });
+  assert.deepEqual(claudeChildEnv({ CLAUDE_CONFIG_DIR: "D:\claude", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_CODE_SSE_PORT: "1" }), { CLAUDE_CONFIG_DIR: "D:\claude", ...scrub });
+  assert.equal(claudeChildEnv({ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "0" }).CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, "1", "an inherited opt-out is overridden");
 });
 
 test("a task without its Task skill line goes back to Assessment once with the reason", async () => {

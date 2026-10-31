@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {installProtection} from './guard/install-protection.mjs';
+import {sweepCodexTemp} from './guard/codex-confinement.mjs';
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -329,6 +330,7 @@ export class CodexWorker {
         // Never resolve on JSON output, final-message events, or even 'exit':
         // 'close' means the process has exited AND its stdio handles are closed.
         child.on("close", (code) => {
+          sweepCodexTemp();
           closed = true;
           closeCode = code ?? 1;
           void finishClosed();

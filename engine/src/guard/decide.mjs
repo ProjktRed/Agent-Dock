@@ -2,6 +2,7 @@ import {approvedPath,approvedCommand,unsafeCommand} from './policy.mjs';
 import {failedResult} from './action.mjs';
 import {webAddressProblem} from '../web-access.mjs';
 import {protectedActionReason} from './protected-paths.mjs';
+import {readsCodeFromInput,stdinCommandReason} from './stdin-commands.mjs';
 import {rememberRead,checkSmallEdit,rememberEditFailure,nativeError} from './edit-discipline.mjs';
 import {cancelPrefix,COMMAND_NOT_APPROVED,UNKNOWN_TOOL,TWO_EDIT_FAILURES,HANDSHAKE_MISSING,COMMAND_SAFETY_FAILED,UNSAFE_COMMAND,UNAPPROVED_TOOL_PATH,SOFT_REJECT,THREE_INVALID_REQUESTS,MISSING_TOOL_INPUT,EDIT_PATH_OUTSIDE,PATCH_PATHS_NOT_EXPLICIT,PATCH_PATH_OUTSIDE} from './reasons.mjs';
 
@@ -56,6 +57,9 @@ export function decide(policy,action,{adapter,mode='hook'}={}){
    mode==='unregistered'||action.kind==='unknown'||
    action.kind==='command'&&!adapter.validCommandInput(policy,action.input)&&!unsafeCommand(JSON.stringify(action.input)??''));
  if(sdkRejected)return decideStateful(policy,action,adapter,mode);
+ // Codex can type into a running command (write_stdin) without a hook call: no shells that read code from input.
+ const typedInto=adapter?.id==='codex'&&action.kind==='command'?action.commands.map(command=>readsCodeFromInput(command,action.cwd||policy.workspace)).find(Boolean):null;
+ if(typedInto)return stop(stdinCommandReason(typedInto));
  const protection=protectedActionReason(policy,action);
  if(protection)return adapter?.capabilities.counters===false?stop(protection):hardStop(policy,protection,action);
  if(policy.protectionOnly)return allow();

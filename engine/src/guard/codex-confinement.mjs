@@ -1,6 +1,6 @@
 import path from "node:path";
 import os from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, rmdirSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -14,8 +14,11 @@ import { CODEX_WRITE_SANDBOX } from "./adapters/codex.mjs";
  * read-only), no network, and commands can't read your sign-ins, Codex's own home or Agent Dock's data (its state
  * folder holds the run's policy and the decision log's secret). Before it is used, the profile is probed with
  * `codex sandbox` at run start: a write outside the workspace, a read of the state folder and a connection must
- * all fail, and a write inside must work. A Codex without profiles, or a failed probe, falls back to the plain
- * sandbox (as before 0.40), and the attestation says so; with "sandbox agents' commands" on it refuses the run.
+ * all fail, and a write inside must work. Some bubblewrap builds can't apply deny rules on more than one file
+ * (".npmrc", ".netrc"…): then the profile is probed again with the folder rules only, and the files it leaves
+ * readable are listed. A Codex without profiles, or a failed probe, falls back to the plain sandbox (as before
+ * 0.40), and the attestation says so. With "sandbox agents' commands" on, anything short of every rule holding
+ * refuses the run.
  */
 export const CODEX_PROFILE = "agent-dock";
 const PROBE_MS = 60_000, CACHE_MS = 10 * 60_000;
@@ -85,7 +88,24 @@ export async function probeCodexProfile({ mode = "write", launcher, profileArgs,
   } finally {
     await out.close().catch(() => {});
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+    sweepCodexTemp();
   }
+}
+
+// On Linux, Codex's profile sandbox makes empty mount points for the folders it keeps read-only (.git, .codex,
+// .agents) in each writable root, the temp folder included, and leaves them behind; a stray /tmp/.git confuses Git
+// in every folder under it (kadono 0.40.0 probe). Removed after each run while still empty, and only those that
+// weren't there before Agent Dock's first profile run.
+const TEMP_MARKERS = [".git", ".codex", ".agents"];
+let tempMarkers = null;
+function noteCodexTemp(platform = process.platform) {
+  if (platform !== "linux" || tempMarkers) return;
+  tempMarkers = TEMP_MARKERS.map((name) => path.join(os.tmpdir(), name)).filter((p) => !existsSync(p));
+  process.once("exit", () => sweepCodexTemp());
+}
+/** Removes the empty mount points Codex left in the temp folder (never a folder with anything in it). */
+export function sweepCodexTemp() {
+  for (const dir of tempMarkers ?? []) { try { rmdirSync(dir); } catch { /* In use, not empty or already gone. */ } }
 }
 
 const probes = new Map();
@@ -101,18 +121,33 @@ export async function codexConfinement({ mode = "write", stateDir, launcher = nu
   const plain = mode === "write" ? [...CODEX_WRITE_SANDBOX] : ["--sandbox", "read-only"];
   if (!launcher?.command || !stateDir) return { args: plain, attestation: { sandbox: `codex-${mode === "write" ? "workspace-write" : "read-only"}`, readLimits: false, probe: "not run" } };
   const denied = codexDeniedPaths({ stateDir, home, env });
-  const profileArgs = codexProfileArgs({ mode, denied, writable });
-  const key = JSON.stringify([launcher.command, launcher.prefixArgs ?? [], profileArgs, extraArgs]);
-  let cached = probes.get(key);
-  if (!cached || Date.now() - cached.at > CACHE_MS) {
-    cached = { at: Date.now(), result: await probe({ mode, launcher, profileArgs, extraArgs, stateDir }).catch((error) => ({ ok: false, reason: error.message })) };
-    // Only a passing probe is reused: a failure is checked again next time (a CLI update may fix it).
-    if (cached.result.ok) probes.set(key, cached); else probes.delete(key);
+  noteCodexTemp();
+  const tryProfile = async (rules) => {
+    const profileArgs = codexProfileArgs({ mode, denied: rules, writable });
+    const key = JSON.stringify([launcher.command, launcher.prefixArgs ?? [], profileArgs, extraArgs]);
+    let cached = probes.get(key);
+    if (!cached || Date.now() - cached.at > CACHE_MS) {
+      cached = { at: Date.now(), result: await probe({ mode, launcher, profileArgs, extraArgs, stateDir }).catch((error) => ({ ok: false, reason: error.message })) };
+      // Only a passing probe is reused: a failure is checked again next time (a CLI update may fix it).
+      if (cached.result.ok) probes.set(key, cached); else probes.delete(key);
+    }
+    return { profileArgs, ...cached.result };
+  };
+  let tried = await tryProfile(denied), uncovered = [];
+  const files = denied.filter((p) => { try { return !statSync(p).isDirectory(); } catch { return false; } });
+  // The profile could not start at all (no result line) with file rules in it: try the folders on their own.
+  if (!tried.ok && !tried.results && files.length) {
+    const folders = await tryProfile(denied.filter((p) => !files.includes(p)));
+    if (folders.ok) { tried = { ...folders, reason: tried.reason }; uncovered = files; }
   }
-  const { ok, results, reason } = cached.result;
-  if (ok) return { args: ["-c", `default_permissions="${CODEX_PROFILE}"`, ...profileArgs, "-c", 'approval_policy="never"'], attestation: { sandbox: `codex-profile-${mode}`, readLimits: true, denied: denied.length, probe: "passed", results } };
-  // Sandboxing required: a probe that saw the sandbox let something through refuses the run; a Codex without
-  // profiles keeps its plain sandbox, as before 0.40.
-  if (required && results) throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental), but Codex's sandbox could not be confirmed: ${reason}`);
+  const { ok, results, reason, profileArgs } = tried;
+  const refuse = (why) => { throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental), but Codex's sandbox could not be confirmed: ${why}`); };
+  if (ok) {
+    if (required && uncovered.length) refuse(`its sandbox could not hide ${uncovered.map((p) => path.basename(p)).join(", ")} (${reason})`);
+    return { args: ["-c", `default_permissions="${CODEX_PROFILE}"`, ...profileArgs, "-c", 'approval_policy="never"'], attestation: { sandbox: `codex-profile-${mode}`, readLimits: true, denied: denied.length - uncovered.length, probe: "passed", results, ...(uncovered.length ? { readable: uncovered.map((p) => path.basename(p)), reason } : {}) } };
+  }
+  // Sandboxing required: no confirmed profile refuses the run (a Codex without profiles too). Otherwise the plain
+  // sandbox, as before 0.40.
+  if (required) refuse(reason);
   return { args: plain, attestation: { sandbox: `codex-${mode === "write" ? "workspace-write" : "read-only"}`, readLimits: false, probe: "failed", reason, ...(results ? { results } : {}) } };
 }

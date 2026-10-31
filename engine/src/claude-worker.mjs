@@ -34,9 +34,14 @@ export const CLAUDE_SETTING_SOURCES = ["--setting-sources", "user"];
 /** Where Claude Code keeps its settings and sign-in: the same folder the app's settings editor opens. */
 const CLAUDE_KEPT_ENV = new Set(["CLAUDE_CONFIG_DIR"]);
 
-/** Child sessions must not inherit the launching Claude session's host/session wiring. */
+/**
+ * Child sessions must not inherit the launching Claude session's host/session wiring. Claude keeps its own key
+ * (ANTHROPIC_API_KEY), but the commands it runs don't get it: Claude Code's subprocess scrub strips Anthropic and
+ * cloud credentials from its commands, hooks and MCP servers (kadono 0.40.0 probe).
+ */
 export function claudeChildEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => CLAUDE_KEPT_ENV.has(key) || !/^CLAUDE(?:CODE$|_)/.test(key)));
+  const kept = Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => CLAUDE_KEPT_ENV.has(key) || !/^CLAUDE(?:CODE$|_)/.test(key)));
+  return { ...kept, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" };
 }
 
 export function extractClaudeResult(stdout) {

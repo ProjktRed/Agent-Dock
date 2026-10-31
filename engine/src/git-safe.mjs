@@ -15,12 +15,14 @@ const exec = promisify(execFile);
  */
 export const SAFE_GIT_CONFIG = Object.freeze(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=user"]);
 const DIFFING = new Set(["diff", "show", "log"]);
+const VALUE_OPTIONS = new Set(["-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"]);
 
 /** The arguments of one git call, hardened. Existing `-c core.fsmonitor=false` pairs are folded in. */
 export function safeGitArgs(args) {
   const rest = [...args];
   while (rest[0] === "-c" && rest[1] === "core.fsmonitor=false") rest.splice(0, 2);
-  const sub = rest.findIndex((arg, i) => !arg.startsWith("-") && rest[i - 1] !== "-c");
+  // The subcommand: the first word that is no option and no option's value (`-C dir diff`, `--git-dir x log`).
+  const sub = rest.findIndex((arg, i) => !arg.startsWith("-") && !VALUE_OPTIONS.has(rest[i - 1]));
   if (sub >= 0 && DIFFING.has(rest[sub])) rest.splice(sub + 1, 0, "--no-ext-diff", "--no-textconv");
   return [...SAFE_GIT_CONFIG, ...rest];
 }

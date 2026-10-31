@@ -34,10 +34,32 @@ export function webAddressProblem(url) {
 }
 
 // Addresses that aren't on the public internet: this computer, private and shared networks, link-local (cloud
-// metadata), unspecified, and IPv6 unique-local; IPv4 inside IPv6 (::ffff:a.b.c.d) is checked as IPv4.
+// metadata), unspecified, and IPv6 unique-local. IPv6 forms that carry an IPv4 address are checked as that address:
+// mapped (::ffff:a.b.c.d, also in hex), compatible (::a.b.c.d), NAT64 (64:ff9b::/96, 64:ff9b:1::/48) and 6to4
+// (2002:AABB:CCDD::); Teredo (2001:0::/32) hides its address, so it counts as private (kadono 0.40.0 probe).
+function ipv6Groups(address) {
+  let text = address.toLowerCase().replace(/%.*$/, "");
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted) text = text.slice(0, dotted.index) + [((+dotted[1] << 8) | +dotted[2]).toString(16), ((+dotted[3] << 8) | +dotted[4]).toString(16)].join(":");
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part) => (part ? part.split(":") : []).map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  const head = parse(halves[0]), tail = halves.length === 2 ? parse(halves[1]) : [];
+  const groups = halves.length === 2 ? [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill(0), ...tail] : head;
+  return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff) ? groups : null;
+}
+
 function privateAddress(address) {
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
-  if (mapped) address = mapped[1];
+  const g = address.includes(":") ? ipv6Groups(address) : null;
+  if (g) {
+    const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const zeros = (n) => g.slice(0, n).every((x) => x === 0);
+    if (zeros(5) && g[5] === 0xffff) address = v4(g[6], g[7]);
+    else if (zeros(6) && (g[6] || g[7] > 1)) address = v4(g[6], g[7]);
+    else if (g[0] === 0x64 && g[1] === 0xff9b && (g[2] === 1 || g.slice(2, 6).every((x) => x === 0))) address = v4(g[6], g[7]);
+    else if (g[0] === 0x2002) address = v4(g[1], g[2]);
+    else if (g[0] === 0x2001 && g[1] === 0) return true;
+  }
   const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(address);
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])];

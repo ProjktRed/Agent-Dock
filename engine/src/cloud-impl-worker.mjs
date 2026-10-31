@@ -13,6 +13,7 @@ import { codexAuthEnv } from "./codex-provider-env.mjs";
 import { redactText } from "./redact.mjs";
 import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
+import {sweepCodexTemp} from './guard/codex-confinement.mjs';
 import {openDecisionLog,crossCheck} from './guard/decision-log.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
@@ -128,7 +129,7 @@ export class CloudImplementationWorker {
       // Stage 2: Codex's sandbox is probed and chosen here; what confines the run is reported and logged. The hook
       // counts as observed only once a decision arrives (guard-records).
       codexMode:this.cli === "codex" ? "write" : null,
-      onAttestation:(entry) => onEvent({ type: "attestation", ...entry, decisionLog: log.signed ? "signed" : "unsigned (no action log key)" })});
+      onAttestation:(entry) => onEvent({ type: "attestation", ...entry })});
     const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env, sandboxArgs: [] });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
@@ -140,7 +141,7 @@ export class CloudImplementationWorker {
       child.stderr.on("data", (chunk) => { stderr += chunk; });
       child.stdin.on("error", () => {});
       child.on("error", (error) => { clearTimeout(timer); reject(error); });
-      child.on("close", (code) => { clearTimeout(timer); resolve(code ?? 1); });
+      child.on("close", (code) => { clearTimeout(timer); sweepCodexTemp(); resolve(code ?? 1); });
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));

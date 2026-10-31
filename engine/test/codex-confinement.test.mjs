@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,7 @@ test("denied folders: sign-ins, a moved Codex home, Agent Dock's data and the st
   assert.ok(!denied.includes(path.join(home, ".aws")), "a missing folder is left out");
 });
 
-test("a passing probe selects the profile; a Codex without profiles keeps the plain sandbox; a leak refuses a required sandbox", async (t) => {
+test("a passing probe selects the profile; a Codex without profiles keeps the plain sandbox unless sandboxing is required; a leak refuses a required sandbox", async (t) => {
   resetCodexProbes();
   t.after(resetCodexProbes);
   const stateDir = await temp(t, "codex-conf-"), launcher = { command: "codex" };
@@ -48,10 +48,11 @@ test("a passing probe selects the profile; a Codex without profiles keeps the pl
   assert.equal(probes, 1, "a passing probe is reused");
 
   const missing = async () => (probes++, { ok: false, reason: "Codex could not apply the profile" });
-  const plain = await codexConfinement({ mode: "read", stateDir, launcher, probe: missing, required: true });
+  const plain = await codexConfinement({ mode: "read", stateDir, launcher, probe: missing });
   assert.deepEqual(plain.args, ["--sandbox", "read-only"]);
   assert.equal(plain.attestation.probe, "failed");
-  await codexConfinement({ mode: "read", stateDir, launcher, probe: missing });
+  // kadono 0.40.0 probe: a probe with no result refused nothing even with sandboxing on.
+  await assert.rejects(codexConfinement({ mode: "read", stateDir, launcher, probe: missing, required: true }), /could not be confirmed: Codex could not apply the profile/);
   assert.equal(probes, 3, "a failed probe is tried again");
 
   const leak = async () => ({ ok: false, results: { insideWrite: "ok", outsideWrite: "ok", deniedRead: "EPERM", network: "EACCES" }, reason: "the sandbox did not hold: outsideWrite" });
@@ -60,6 +61,27 @@ test("a passing probe selects the profile; a Codex without profiles keeps the pl
 
   const none = await codexConfinement({ mode: "write", stateDir });
   assert.equal(none.attestation.probe, "not run");
+});
+
+test("a profile that can't start with file rules is probed with the folder rules; the files it leaves readable are named, and refuse a required sandbox", async (t) => {
+  resetCodexProbes();
+  t.after(resetCodexProbes);
+  const home = await temp(t, "codex-files-"), stateDir = await temp(t, "codex-fstate-");
+  await mkdir(path.join(home, ".ssh"));
+  for (const name of [".npmrc", ".netrc"]) await writeFile(path.join(home, name), "x");
+  const seen = [];
+  // Some bubblewrap builds fail on two or more file rules ("Can't write data to file .../.npmrc").
+  const bwrap = async ({ profileArgs }) => {
+    const rules = profileArgs.find((a) => a.includes(".filesystem="));
+    seen.push(rules);
+    return rules.includes(".npmrc") ? { ok: false, reason: "Codex could not apply the profile (bwrap: Can't write data to file)" } : { ok: true, results: { insideWrite: "ok", outsideWrite: "EPERM", deniedRead: "EPERM", network: "EACCES" } };
+  };
+  const chosen = await codexConfinement({ mode: "write", stateDir, launcher: { command: "codex-files" }, home, env: {}, probe: bwrap });
+  assert.equal(seen.length, 2);
+  assert.ok(seen[1].includes(".ssh") && !seen[1].includes(".netrc"), "the second probe keeps only folder rules");
+  assert.ok(chosen.args.includes(`default_permissions="${CODEX_PROFILE}"`), "folder rules beat the plain sandbox");
+  assert.deepEqual(chosen.attestation.readable.sort(), [".netrc", ".npmrc"]);
+  await assert.rejects(codexConfinement({ mode: "write", stateDir, launcher: { command: "codex-files" }, home, env: {}, probe: bwrap, required: true }), /could not hide (.npmrc, .netrc|.netrc, .npmrc)/);
 });
 
 test("Codex roles run in the probed profile and log what confined them", async (t) => {

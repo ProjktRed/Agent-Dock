@@ -192,7 +192,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   instead of being let out by an automatic reviewer. Before use, `codex sandbox` runs a probe under the profile
   (a write outside, a read of the state folder and a connection must fail). A Codex that can't apply the profile
   (older versions; Windows' unelevated sandbox, which can't deny reads) gets its plain workspace-write or
-  read-only sandbox as before; with sandboxed agent commands on, a probe that shows a leak refuses the run.
+  read-only sandbox as before. A bubblewrap build that can't hide more than one single file gets the profile with
+  folder rules only, and the attestation names the files left readable. With sandboxed agent commands on,
+  anything short of the full profile holding refuses the run.
+- Codex can send input to a command that is still running (write_stdin) without a hook call, so the guard
+  refuses commands that start a shell or interpreter waiting for input (`bash` alone, `powershell` without
+  `-Command`, `python` or `node` without a script, `xargs`, `ssh`), outright. The list covers the common
+  programs, not every program that reads input. Claude Code runs with its subprocess scrub on: its commands and
+  hooks don't inherit its API key or cloud credentials.
 - Each Codex call and each Codex or Claude Code implementation run writes an attestation to the action log:
   the sandbox used, whether reads are limited and the probe's results. During implementation runs the guard
   hook reports every decision to the engine over a per-run local endpoint (HMAC-signed with a per-run secret);

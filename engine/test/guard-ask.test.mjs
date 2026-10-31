@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { askable, askUser, definitelyRefused, hookTimeoutSeconds } from "../src/guard/ask.mjs";
@@ -50,6 +50,25 @@ test("only unverified actions are askable: protected paths and edits stay refuse
   assert.equal(askable(policy, command("rg --files"), stop, { id: "cline" }), false, "Cline's guard cannot wait");
   assert.equal(askable({ ...policy, ask: null }, command("rg --files"), stop, codex), false);
   assert.equal(askable(policy, command("rg --files"), { effect: "allow" }, codex), false);
+});
+
+test("wildcards that could name a protected path, and shells that read code from input, are refused outright (kadono 0.40.0 probe)", async () => {
+  const { policy, workspace } = setup();
+  const command = (text) => ({ kind: "command", tool: "Bash", commands: [text], cwd: workspace });
+  for (const text of ["cat .e*", "cat .en?", "cat .[e]nv", "cat .e[[:alpha:]]v", "cat .{env,txt}", "cat .{git,x}/config", "cat .e${UNSET:-*}", "set -- nv; cat .e$@", "X=*; cat .e$X", "cat .e$(echo '*')", "cat *env", "Get-Content .e*", `cat ${path.join(workspace, ".e*")}`]) assert.equal(definitelyRefused(policy, command(text)), true, text);
+  // Before any .env exists the rule's own name still counts.
+  const empty = setup().policy; const fresh = mkdtempSync(path.join(os.tmpdir(), "guard-ask-")); empty.workspace = fresh; empty.protectedPaths = protectedPathsFor({ workspace: fresh, stateDir: fresh + "-state" });
+  assert.equal(definitelyRefused(empty, { kind: "command", tool: "Bash", commands: ["cat .e*"], cwd: fresh }), true);
+  for (const text of ["rg foo *.js", "ls src/*.ts"]) assert.equal(definitelyRefused(policy, command(text)), false, text);
+  for (const text of ["bash", "powershell -NoProfile", "python", "git status && sh", "xargs cat", "node -r fs", "python -W ignore", "bash -O extglob", "powershell -NoProfile -ExecutionPolicy Bypass", "env -u FOO bash", "sudo -u nobody bash", "nice -n 5 bash", "bash /dev/stdin", "node /proc/self/fd/0", "bash /proc/thread-self/fd/0", "env X='|' bash", "bash /proc/thread-self/fd/'0'", 'echo "foo\\" | bash"; bash', "echo $(bash)", "if true; then bash; fi", "while x; do sh; done", "echo `python`", "env X=\\| bash"]) assert.equal(definitelyRefused(policy, command(text)), true, text);
+  for (const text of ["bash -c 'npm test'", "node build.js", "echo ls | bash", "node --version", "python -V", "pwsh --version", "python -m pytest", "powershell -ExecutionPolicy Bypass -File build.ps1", "cat $HOME/notes.txt", 'rg "node|python" src', "git log --oneline | head", "node --test", "node --run test", "echo 'console.log(42)' | node"]) assert.equal(definitelyRefused(policy, command(text)), false, text);
+  // A link in the workspace to the command's own input is no script.
+  if (process.platform !== "win32") { symlinkSync("/dev/stdin", path.join(workspace, "run.sh")); assert.equal(definitelyRefused(policy, command("bash run.sh")), true, "link to /dev/stdin"); }
+  // The guard itself refuses them for Codex, whatever the mode.
+  const { dir, policyPath, logPath, workspace: ws } = setup();
+  const out = await runHook(codex, { policyPath, logPath, input: bash("bash", ws) });
+  assert.match(JSON.stringify(out), /read their code from input/);
+  assert.throws(() => readdirSync(dir), "never put to you");
 });
 
 test("code inside a command is asked about, not refused as if it named a protected path", () => {

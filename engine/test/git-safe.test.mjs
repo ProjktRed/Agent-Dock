@@ -19,6 +19,9 @@ test("every git call turns off repository-run programs; diff, show and log also 
   const args = safeGitArgs(["-c", "core.fsmonitor=false", "diff", "--cached"]);
   assert.deepEqual(args, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=user", "diff", "--no-ext-diff", "--no-textconv", "--cached"]);
   assert.ok(safeGitArgs(["log", "-1"]).includes("--no-textconv"));
+  // An option's value is no subcommand (kadono 0.40.0 probe).
+  assert.deepEqual(safeGitArgs(["-C", "dir", "diff"]).slice(-5), ["-C", "dir", "diff", "--no-ext-diff", "--no-textconv"]);
+  assert.ok(safeGitArgs(["--git-dir", "x", "log"]).includes("--no-textconv"));
 });
 
 test("a hook, an fsmonitor program and an external diff the repository sets up never run", () => {
