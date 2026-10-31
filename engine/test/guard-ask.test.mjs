@@ -64,9 +64,10 @@ test("code inside a command is asked about, not refused as if it named a protect
   assert.equal(definitelyRefused(policy, command("x=.env cat")), true);
   process.env.GUARD_ASK_TEST_STATE = stateDir;
   try {
-    assert.equal(definitelyRefused(policy, command("type $env:GUARD_ASK_TEST_STATE\\policy.json")), true);
+    // This platform's separator: `\` is part of a file name on Linux.
+    assert.equal(definitelyRefused(policy, command("type $env:GUARD_ASK_TEST_STATE" + path.sep + "policy.json")), true);
     assert.equal(definitelyRefused(policy, command("cat %GUARD_ASK_TEST_STATE%/policy.json")), true);
-    assert.equal(definitelyRefused(policy, command("Get-Content ${env:GUARD_ASK_TEST_STATE}\\policy.json")), true);
+    assert.equal(definitelyRefused(policy, command("Get-Content ${env:GUARD_ASK_TEST_STATE}" + path.sep + "policy.json")), true);
     assert.equal(definitelyRefused(policy, command(`Get-Content -Path:${path.join(stateDir, "policy.json")}`)), true);
     assert.equal(definitelyRefused(policy, command(`cat "${stateDir}${path.sep}policy.json"`)), true);
   } finally { delete process.env.GUARD_ASK_TEST_STATE; }

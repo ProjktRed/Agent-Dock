@@ -146,9 +146,9 @@ test("agents' commands sandboxed: Claude Code's sandbox fails closed with no net
   const { installProtection, CODEX_WINDOWS_SANDBOX } = await import("../src/guard/install-protection.mjs");
   const { useSandboxedAgents } = await import("../src/sandbox.mjs");
   const workspace = temp(), stateDir = temp(), invocation = temp();
-  // A stand-in Claude Code that only answers --version.
-  const fake = path.join(temp(), "fake-claude.mjs");
-  const launcher = (version = "2.1.296") => { writeFileSync(fake, `console.log("${version} (Claude Code)")`); return { command: process.execPath, prefixArgs: [fake] }; };
+  // A stand-in Claude Code that only answers --version; one file per version (versions are read once per CLI).
+  const fakes = temp();
+  const launcher = (version = "2.1.296") => { const fake = path.join(fakes, `claude-${version}.mjs`); writeFileSync(fake, `console.log("${version} (Claude Code)")`); return { command: process.execPath, prefixArgs: [fake] }; };
   const claudeSettings = async (l = launcher()) => JSON.parse((await installProtection({ cli: "claude", workspace, stateDir, invocation, launcher: l }))[1]);
   try {
     assert.equal((await claudeSettings()).sandbox, undefined);
