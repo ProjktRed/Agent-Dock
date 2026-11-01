@@ -61,7 +61,7 @@ test("defaults are unchanged without overrides; fast only appears when enabled",
 test("Codex gets -m, the effort and the priority service tier for a Fast role", async () => {
   const calls = [];
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "role-codex-"));
-  const codex = new CodexWorker({ workspace: stateDir, stateDir, spawnProcess: captureSpawn(calls), ...fakeState });
+  const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: stateDir, stateDir, spawnProcess: captureSpawn(calls), ...fakeState });
   await codex.invoke("p", "read-only", { model: "gpt-6-luna", reasoningEffort: "low", fast: true }).catch(() => {});
   const args = calls[0].args;
   assert.equal(args[args.indexOf("-m") + 1], "gpt-6-luna");

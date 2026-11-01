@@ -213,7 +213,7 @@ export function buildQaPrompt(qaPacket) {
 export class CodexWorker {
   constructor({
     workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox, roleOverrides = {},
-    spawnProcess = spawn, env = process.env, callTimeoutMs = CODEX_CALL_TIMEOUT_MS,
+    spawnProcess = spawn, env = process.env, callTimeoutMs = CODEX_CALL_TIMEOUT_MS, codexFeatures = null,
     writeProcessState = atomicWriteJson,
     clearProcessState = (file) => rm(file, { force: true }),
     isProcessAlive = async (pid) => {
@@ -227,6 +227,7 @@ export class CodexWorker {
     this.stateDir = stateDir;
     this.command = launcher?.command ?? command;
     this.prefixArgs = launcher?.prefixArgs ?? prefixArgs;
+    this.codexFeatures = codexFeatures; // tests: Codex's feature list, in place of asking it
     this.additionalWritableDirs = additionalWritableDirs;
     if (windowsSandbox && !["elevated", "unelevated"].includes(windowsSandbox)) throw new Error("Invalid Windows sandbox mode");
     this.windowsSandbox = windowsSandbox;
@@ -278,7 +279,7 @@ export class CodexWorker {
     // Read-only and workspace-write calls get Agent Dock's probed permissions profile (or the plain sandbox, stage 2).
     const codexMode = sandbox === "workspace-write" ? "write" : sandbox === "read-only" ? "read" : null;
     const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write',
-      codexMode,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:withoutSecrets(this.env,{keep})},
+      codexMode,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:withoutSecrets(this.env,{keep}),...(this.codexFeatures?{features:this.codexFeatures}:{})},
       codexExtraArgs:this.windowsSandbox?["-c",`windows.sandbox=${JSON.stringify(this.windowsSandbox)}`]:[],writableDirs:sandbox==="workspace-write"?this.additionalWritableDirs:[]});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
       ...codexSkillArgs({workspace:this.workspace, env:this.env}),

@@ -175,7 +175,7 @@ test('cloud implementation gets the app run settings before the guard flags, so 
     child.stdin = Object.assign(new EventEmitter(), { end: () => setImmediate(() => { child.stdout.emit('data', JSON.stringify({ type:'result', is_error:false, result:'done' }) + '\n'); child.exitCode = 0; child.emit('close', 0); }) });
     return child;
   };
-  const worker = new CloudImplementationWorker({ cli:'claude', stateDir:root, workspace:root, command:'claude', model:'sonnet', spawnProcess });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli:'claude', stateDir:root, workspace:root, command:'claude', model:'sonnet', spawnProcess });
   await worker.withExclusive(() => worker.run('Add x', { task }));
   assert.equal(env?.DISABLE_TELEMETRY, '1');
 });
@@ -194,7 +194,7 @@ test('cloud implementation worker returns the final message as its summary and n
     } });
     return child;
   };
-  const worker = new CloudImplementationWorker({ cli:'claude', stateDir:root, workspace:root, command:'claude', model:'sonnet', spawnProcess });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli:'claude', stateDir:root, workspace:root, command:'claude', model:'sonnet', spawnProcess });
   let started = null;
   const result = await worker.withExclusive(async () => {
     assert.equal(await worker.withExclusive(async () => 'second'), null, 'a second implementation waits');
@@ -225,7 +225,7 @@ test('a Claude implementation reports the protection hook refusals in Activity, 
     return child;
   };
   const events = [];
-  const worker = new CloudImplementationWorker({ cli:'claude', stateDir:root, workspace:root, command:'claude', model:'haiku', spawnProcess });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli:'claude', stateDir:root, workspace:root, command:'claude', model:'haiku', spawnProcess });
   const result = await worker.run('Add x', { task, onEvent: async (e) => events.push(e) });
   assert.equal(result.exitCode, 0);
   assert.deepEqual(events.filter(e => e.type === 'implementation-scope-blocked'), [{ type:'implementation-scope-blocked', tool:'Read', reason:'Protected-path policy refused this tool call' }]);
@@ -271,7 +271,7 @@ test('Codex implementation runs with the engine-written scope hook and refuses t
     }) });
     return child;
   };
-  const worker = new CloudImplementationWorker({ cli:'codex', stateDir:root, workspace:root, command:'codex', spawnProcess });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli:'codex', stateDir:root, workspace:root, command:'codex', spawnProcess });
   await assert.rejects(worker.run('Add x', { task }), /without the scope hook/);
   await assert.rejects(worker.run('Add x', { task:{ ...task, allowedPaths:[] } }), /allowed paths/);
 });

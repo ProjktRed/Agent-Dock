@@ -87,7 +87,7 @@ test('Codex implementation runs read the provider at each launch', async (t) => 
   t.after(() => rm(root, { recursive: true, force: true }));
   const env = { PATH: 'p', CODEX_HOME: home, AZURE_OPENAI_API_KEY: 'az-value-123456', MISTRAL_API_KEY: 'mi-value-123456', GITHUB_TOKEN: 'gh-value-123456' };
   const seen = [];
-  const worker = new CloudImplementationWorker({ cli: 'codex', stateDir: root, workspace: root, command: 'codex', env, spawnProcess: recordingSpawn(seen) });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli: 'codex', stateDir: root, workspace: root, command: 'codex', env, spawnProcess: recordingSpawn(seen) });
   const task = { id: 't', name: 'T', prompt: 'x', qaCommand: 'node --version', allowedPaths: ['a.txt'] };
   await use('azure', 'AZURE_OPENAI_API_KEY');
   await worker.run('Add x', { task }).catch(() => {});
@@ -107,7 +107,7 @@ test('Codex planning and QA runs keep the active provider key too', async (t) =>
   t.after(() => rm(root, { recursive: true, force: true }));
   await use('azure', 'AZURE_OPENAI_API_KEY');
   const seen = [];
-  const codex = new CodexWorker({ workspace: root, stateDir: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, AZURE_OPENAI_API_KEY: 'az-value-123456', GITHUB_TOKEN: 'gh-value-123456' }, spawnProcess: recordingSpawn(seen) });
+  const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, AZURE_OPENAI_API_KEY: 'az-value-123456', GITHUB_TOKEN: 'gh-value-123456' }, spawnProcess: recordingSpawn(seen) });
   await codex.invoke('{}', 'read-only').catch(() => {});
   assert.equal(seen[0]?.AZURE_OPENAI_API_KEY, 'az-value-123456');
   assert.equal(seen[0]?.GITHUB_TOKEN, undefined);
@@ -126,7 +126,7 @@ test('a Codex role run hides the provider key in the prompt it writes', async (t
   const root = await mkdtemp(path.join(os.tmpdir(), 'codex-role-redact-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await use('a', 'PLAIN_NAME_PROVIDER');
-  const codex = new CodexWorker({ workspace: root, stateDir: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, PLAIN_NAME_PROVIDER: 'vq7-plain-provider-value' }, spawnProcess: recordingSpawn([]) });
+  const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, PLAIN_NAME_PROVIDER: 'vq7-plain-provider-value' }, spawnProcess: recordingSpawn([]) });
   await codex.invoke('use vq7-plain-provider-value please', 'read-only').catch(() => {});
   const [dir] = await readdir(path.join(root, 'codex'));
   assert.equal((await readFile(path.join(root, 'codex', dir, 'prompt.txt'), 'utf8')).includes('vq7-plain-provider-value'), false);
@@ -163,7 +163,7 @@ test('a Codex implementation hides the provider key in the prompt it writes and 
     child.stdin.end = (text) => { sent = String(text); end(); };
     return child;
   };
-  const worker = new CloudImplementationWorker({ cli: 'codex', stateDir: root, workspace: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, OTHER_PLAIN_PROVIDER: 'wx5-other-provider-value' }, spawnProcess });
+  const worker = new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false", cli: 'codex', stateDir: root, workspace: root, command: 'codex', env: { PATH: 'p', CODEX_HOME: home, OTHER_PLAIN_PROVIDER: 'wx5-other-provider-value' }, spawnProcess });
   await worker.run('use wx5-other-provider-value', { task: { id: 't', name: 'T', prompt: 'x', qaCommand: 'node --version', allowedPaths: ['a.txt'] } }).catch(() => {});
   const [dir] = await readdir(path.join(root, 'codex'));
   assert.equal((await readFile(path.join(root, 'codex', dir, 'prompt.txt'), 'utf8')).includes('wx5-other-provider-value'), false);

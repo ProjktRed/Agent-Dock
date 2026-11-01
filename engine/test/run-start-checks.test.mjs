@@ -22,9 +22,11 @@ test("Codex runs without terminals, so it can't type into a running command; a C
   const keepsOn = launcher("keeps-on", { ...process.env, FAKE_CODEX_TTY: "on" });
   await assert.rejects(installProtection({ cli: "codex", workspace, stateDir, invocation, launcher: keepsOn }), /without terminals/);
   assert.deepEqual(codexTtyCheck(keepsOn), { ok: false });
-  // A CLI that can't list its features (an older or wrapped Codex) still gets the setting, unconfirmed.
+  // A CLI that can't list its features is refused: terminals can't be shown to be off (kadono 0.40.3 probe).
   const silent = path.join(stateDir, "silent.mjs"); writeFileSync(silent, "process.exit(2)");
-  assert.deepEqual(codexTtyCheck({ command: process.execPath, prefixArgs: [silent] }), { ok: true, confirmed: false });
+  assert.deepEqual(codexTtyCheck({ command: process.execPath, prefixArgs: [silent] }), { ok: false, unreadable: true });
+  await assert.rejects(installProtection({ cli: "codex", workspace, stateDir, invocation, launcher: { command: process.execPath, prefixArgs: [silent] } }), /could not be confirmed/);
+  // A list without unified exec at all (an older Codex with no write_stdin) goes ahead, unconfirmed.
   const unlisted = path.join(stateDir, "unlisted.mjs"); writeFileSync(unlisted, "console.log('shell_tool  stable  true')");
   assert.deepEqual(codexTtyCheck({ command: process.execPath, prefixArgs: [unlisted] }), { ok: true, confirmed: false });
 });

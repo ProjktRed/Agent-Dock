@@ -45,9 +45,11 @@ export function codexTtyCheck(launcher){
   const key=JSON.stringify([launcher.command,launcher.prefixArgs??[]]),cached=ttyChecks.get(key);
   if(cached&&Date.now()-cached.at<10*60_000)return cached.result;
   const launch=launchSpec(launcher.command,[...(launcher.prefixArgs??[]),...CODEX_NO_TTY,'features','list']);
-  const run=spawnSync(launch.command,launch.args,{...launch.options,env:launcher.env??process.env,windowsHide:true,encoding:'utf8',timeout:30_000});
+  // A feature list given in place of asking the CLI (tests) is read as Codex's answer.
+  const run=typeof launcher.features==='string'?{status:0,stdout:launcher.features}:spawnSync(launch.command,launch.args,{...launch.options,env:launcher.env??process.env,windowsHide:true,encoding:'utf8',timeout:30_000,input:''});
   const features=new Map(String(run.stdout??'').split(/\r?\n/).map(line=>line.trim().split(/\s+/)).filter(f=>/^[a-z_]+$/.test(f[0]??'')&&/^(true|false)$/.test(f.at(-1))).map(f=>[f[0],f.at(-1)]));
-  const result=run.status!==0||!features.size?{ok:true,confirmed:false}
+  // A list that can't be read refuses too (kadono 0.40.3 probe): terminals can't be shown to be off.
+  const result=run.status!==0||!features.size?{ok:false,unreadable:true}
     : features.get('unified_exec_tty')==='false'?{ok:true,confirmed:true}
     : features.has('unified_exec_tty')||features.get('unified_exec')==='true'?{ok:false}
     : {ok:true,confirmed:false};
@@ -57,6 +59,7 @@ export function codexTtyCheck(launcher){
 }
 /** Test hook: forget cached terminal checks. */
 export function resetCodexTtyChecks(){ttyChecks.clear();}
+export const CODEX_TTY_UNCONFIRMED='Agent Dock runs Codex without terminals, so Codex cannot type into a running command, but this Codex did not list its features (codex features list), so that could not be confirmed. Update Codex.';
 export const CODEX_TTY_REFUSED='Agent Dock runs Codex without terminals, so Codex cannot type into a running command, but this Codex keeps them on (features.unified_exec_tty). Update Codex.';
 
 /**
@@ -125,7 +128,7 @@ export async function installProtection({cli,workspace,stateDir,invocation,task,
     // exec off: no terminals (codexTtyCheck), and the guard refuses commands that would read code from input
     // (stdin-commands.mjs).
     const tty=codexTtyCheck(launcher);
-    if(!tty.ok)throw new Error(CODEX_TTY_REFUSED);
+    if(!tty.ok)throw new Error(tty.unreadable?CODEX_TTY_UNCONFIRMED:CODEX_TTY_REFUSED);
     const args=[...codexScopeHookArgs({policyFile,logFile,timeout:hookTimeoutSeconds(policy.ask)}),...CODEX_NO_TTY,...windows,...codexWebSearchArgs(policy.webAccess),
       '-c','shell_environment_policy.ignore_default_excludes=false','-c',`shell_environment_policy.exclude=${JSON.stringify(keys)}`];
     // codexMode ("write" or "read"): this call's sandbox too, in place of the caller's plain --sandbox.

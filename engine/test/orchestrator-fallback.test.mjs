@@ -54,7 +54,7 @@ test("backup worker uses local model/effort/speed without changing primary role 
   const dir = await mkdtemp(path.join(os.tmpdir(), "backup-options-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const before = roleOptions("qa");
-  const backup = new CodexWorker({ workspace: dir, stateDir: dir, roleOverrides: { qa: { model: "gpt-backup", effort: "high", fast: true } } });
+  const backup = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: dir, stateDir: dir, roleOverrides: { qa: { model: "gpt-backup", effort: "high", fast: true } } });
   let options;
   backup.invoke = async (_prompt, _sandbox, opts) => { options = opts; return { status: "pass" }; };
   await backup.review({});

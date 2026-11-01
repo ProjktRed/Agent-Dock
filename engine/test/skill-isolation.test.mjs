@@ -78,11 +78,11 @@ test('Codex canonicalizes linked skill directories and terminates cycles',async 
 for(const cli of ['codex','claude'])for(const kind of ['orchestrator','implementation'])test(`${cli} ${kind} launch carries isolation and protection hooks without moving auth`,async t=>{
  const f=await fixture(t),calls=[],spawnProcess=spawnRecorder(calls,cli),envBefore={...f.env};
  if(kind==='implementation') {
-  const worker=new CloudImplementationWorker({...f,cli,command:cli,env:f.env,spawnProcess});
+  const worker=new CloudImplementationWorker({ codexFeatures: "unified_exec_tty stable false",...f,cli,command:cli,env:f.env,spawnProcess});
   await worker.run(buildInitialPrompt(f.task),{task:f.task});
  }else {
   const Worker=cli==='codex'?CodexWorker:ClaudeWorker;
-  const worker=new Worker({...f,env:f.env,spawnProcess,writeProcessState:async()=>{},clearProcessState:async()=>{}});
+  const worker=new Worker({...f,env:f.env,spawnProcess,writeProcessState:async()=>{},clearProcessState:async()=>{},codexFeatures:'unified_exec_tty stable false'});
   await worker.assess({objective:'Fix x'});
  }
  const call=calls[0];assert.equal(calls.length,1);assert.deepEqual(f.env,envBefore);

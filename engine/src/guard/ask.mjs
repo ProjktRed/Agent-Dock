@@ -133,11 +133,15 @@ export function definitelyRefused(policy, action) {
   // Wildcards: refused outright when they could name a protected path (kadono 0.40.0 probe: `cat .e*`).
   // An expansion the guard can't resolve could produce a wildcard (`.e${UNSET:-*}`, `X=*; cat .e$X`, `.e$(echo '*')`):
   // it counts as one (kadono 0.40.1 review), cmd's %…%, for variables (%A, %~nA) and !…! too (`.g%ComSpec:~0,0%it`
-  // is .git; guard review).
+  // is .git; guard review). A for variable counts only where a cmd `for` loop declares one, so printf's, awk's
+  // and find's %s are left alone (kadono 0.40.3 probe).
   // Wildcards that are nothing but wildcards (`ls *`, `src/*`, `echo $(date)`) single out no protected name, so they
   // are put to you instead (kadono 0.40.1 probe); their plain folders were checked with the names above.
   const raw = action.kind === "command" ? commandText(action).split(/\s+/) : [];
-  const expanded = raw.map((w) => w.replace(/\$\{[^}]*\}|\$\([^)]*\)?|`[^`]*`?|\$[@*#?$!0-9-]|\$\w+|\$|%[^%\s]*%|%~[A-Za-z]+|%[A-Za-z]|![^!\s]*!/g, "*").replace(/["'`^]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`^]/g, ""));
+  // Any `for … %A in (…)`, options between included (`for /f "delims=" %A in (…)`; review).
+  const forLoop = /(?:^|[^\w.-])for\s[^\n]*?%%?~?[A-Za-z]\s+in\s*\(/i.test(commandText(action));
+  const expansion = new RegExp(String.raw`\$\{[^}]*\}|\$\([^)]*\)?|` + "`[^`]*`?" + String.raw`|\$[@*#?$!0-9-]|\$\w+|\$|%[^%\s]*%|![^!\s]*!` + (forLoop ? String.raw`|%%?~[A-Za-z]+|%%?[A-Za-z]` : ""), "g");
+  const expanded = raw.map((w) => w.replace(expansion, "*").replace(/["'`^]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`^]/g, ""));
   return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => {
     const parts = name.replaceAll("\\", "/").split("/");
     if (matchesAll(parts.at(-1)) && parts.every((part) => !GLOB.test(part) || matchesAll(part))) return false;

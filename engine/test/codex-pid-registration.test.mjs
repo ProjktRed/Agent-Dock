@@ -50,7 +50,7 @@ test("Codex PID persistence is awaited before the prompt is sent", async () => {
   let child;
   let args;
   try {
-    const codex = new CodexWorker({
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false",
       workspace: root,
       stateDir: root,
       spawnProcess: (_command, actualArgs) => { args = actualArgs; return child = fakeCodexProcess({ onInput: () => { inputSent = true; } }); },
@@ -71,7 +71,7 @@ test("persisted live Codex state blocks Cline until restart reconciliation confi
   let clineRuns = 0;
   try {
     await atomicWriteJson(path.join(root, "codex-process.json"), { pid: 9911, startedAt: new Date().toISOString(), command: "codex.exe" });
-    const codex = new CodexWorker({ workspace: root, stateDir: root, isProcessAlive: async () => true });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, isProcessAlive: async () => true });
     const outcome = await runNodeLoop({
       workspace: root,
       stateDir: root,
@@ -92,7 +92,7 @@ test("confirmed Codex exit clears persisted process state safely", async () => {
   let cleared = 0;
   try {
     await atomicWriteJson(path.join(root, "codex-process.json"), { pid: 9912, startedAt: new Date().toISOString(), command: "codex.exe" });
-    const codex = new CodexWorker({
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false",
       workspace: root,
       stateDir: root,
       isProcessAlive: async () => false,
@@ -111,7 +111,7 @@ test("PID registration failure sends no prompt and cannot progress to Cline", as
   let clineRuns = 0;
   let child;
   try {
-    const codex = new CodexWorker({
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false",
       workspace: root,
       stateDir: root,
       spawnProcess: () => child = fakeCodexProcess({ onInput: () => { inputSent = true; }, onKill: () => { killed = true; } }),
@@ -138,7 +138,7 @@ test("unresolved persisted Codex liveness blocks workflow progression", async ()
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-pid-unresolved-"));
   try {
     await atomicWriteJson(path.join(root, "codex-process.json"), { pid: 9913, startedAt: new Date().toISOString(), command: "codex.exe" });
-    const codex = new CodexWorker({ workspace: root, stateDir: root, isProcessAlive: async () => { throw new Error("permission denied"); } });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, isProcessAlive: async () => { throw new Error("permission denied"); } });
     await assert.rejects(codex.assertIdle(), /cannot reconcile.*permission denied/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -149,7 +149,7 @@ test("close racing registration completion clears PID state exactly once", async
   let args;
   let clears = 0;
   try {
-    const codex = new CodexWorker({
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false",
       workspace: root,
       stateDir: root,
       spawnProcess: (_command, actualArgs) => {

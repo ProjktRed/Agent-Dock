@@ -17,7 +17,7 @@ const strictResult = (overrides = {}) => ({ status: "done", task: null, output: 
 test("QA invocation does not combine mutually exclusive approval and sandbox flags", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-args-"));
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
     assert.equal((await codex.invoke(JSON.stringify(strictResult({ status: "fail" })), "workspace-write")).status, "fail");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -28,7 +28,7 @@ test("explicit Windows sandbox mode is passed without disabling workspace bounda
   const previous = process.env.FAKE_CODEX_ARGS_FILE;
   process.env.FAKE_CODEX_ARGS_FILE = argsFile;
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")], windowsSandbox: "unelevated" });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")], windowsSandbox: "unelevated" });
     await codex.invoke(JSON.stringify(strictResult({ status: "fail" })), "workspace-write");
     const args = JSON.parse(await readFile(argsFile, "utf8"));
     assert.ok(args.includes('windows.sandbox="unelevated"'));
@@ -36,7 +36,7 @@ test("explicit Windows sandbox mode is passed without disabling workspace bounda
     assert.ok(args.includes("workspace-write") && args.includes('approval_policy="never"'));
     assert.equal(args.includes("--approve-for-me"), false);
     assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
-    assert.throws(() => new CodexWorker({ workspace: root, stateDir: root, windowsSandbox: "disabled" }), /Invalid Windows sandbox/);
+    assert.throws(() => new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, windowsSandbox: "disabled" }), /Invalid Windows sandbox/);
   } finally {
     if (previous === undefined) delete process.env.FAKE_CODEX_ARGS_FILE;
     else process.env.FAKE_CODEX_ARGS_FILE = previous;
@@ -48,7 +48,7 @@ test("a Codex QA or Assessment run that used tools without a single protection h
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-fail-closed-"));
   const previous = process.env.FAKE_CODEX_TOOL;
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
     const result = JSON.stringify(strictResult({ status: "fail" }));
     process.env.FAKE_CODEX_TOOL = "unhooked";
     await assert.rejects(codex.invoke(result, "workspace-write"), /without the scope hook/);
@@ -68,7 +68,7 @@ test("one-shot Sol invocation passes the requested model and medium reasoning co
   const previous = process.env.FAKE_CODEX_ARGS_FILE;
   process.env.FAKE_CODEX_ARGS_FILE = argsFile;
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
     await codex.invoke(JSON.stringify(strictResult({ status: "manual-review" })), "read-only", { model: "gpt-5.6-sol", reasoningEffort: "medium" });
     const args = JSON.parse(await readFile(argsFile, "utf8"));
     assert.deepEqual(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2), ["-m", "gpt-5.6-sol"]);
@@ -87,7 +87,7 @@ test("workspace-write QA adds the linked-worktree Git directory without widening
   process.env.FAKE_CODEX_ARGS_FILE = argsFile;
   try {
     const gitCommonDir = path.join(root, "external-git");
-    const codex = new CodexWorker({
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false",
       workspace: root,
       stateDir: root,
       command: process.execPath,
@@ -113,7 +113,7 @@ test("real child processes: assessment/FAIL/PASS exit fully before every fake Cl
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-lifecycle-"));
   try {
     const pids = path.join(root, "pids.json");
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, pids] });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, pids] });
     let assessments = 0;
     let reviews = 0;
     let clineRuns = 0;
@@ -164,7 +164,7 @@ test("real child processes: assessment/FAIL/PASS exit fully before every fake Cl
 test("a surviving Codex PID from an interrupted manager blocks a new launch", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-orphan-"));
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root });
     await atomicWriteJson(path.join(root, "codex-process.json"), { pid: process.pid });
     await assert.rejects(codex.assertIdle(), /still alive/);
     await assert.rejects(codex.invoke("must not launch"), /still alive/);
@@ -260,7 +260,7 @@ test("a Codex call and a check that never finish are ended with their process tr
   const { existsSync } = await import("node:fs");
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-deadline-"));
   try {
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")], env: { ...process.env, FAKE_CODEX_HANG: "1" }, callTimeoutMs: 1500 });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")], env: { ...process.env, FAKE_CODEX_HANG: "1" }, callTimeoutMs: 1500 });
     await assert.rejects(codex.invoke(JSON.stringify(strictResult()), "read-only"), /did not finish within <1 minutes and was ended/);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     for (const pid of JSON.parse(await readFile(path.join(root, "pids.json"), "utf8"))) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the fake Codex process is gone");

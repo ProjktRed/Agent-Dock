@@ -53,7 +53,7 @@ test('each role prompt carries only its own assigned skills, after the engine gu
  only(buildInitialPrompt(task),'tdd');
  only(buildQaPrompt({task}),'qa-check');
  only(buildRolePrompt({id:'sec',name:'Security',stage:'before-qa',instructions:'Review.'},{}),'sec');
- const worker=new CodexWorker({workspace:os.tmpdir(),stateDir:os.tmpdir()});
+ const worker=new CodexWorker({ codexFeatures: "unified_exec_tty stable false",workspace:os.tmpdir(),stateDir:os.tmpdir()});
  const prompts=[];worker.invoke=async prompt=>{prompts.push(prompt);return {task};};
  await worker.assess({objective:'o'}).catch(()=>{});
  await worker.resolveBlocked({}).catch(()=>{});
@@ -83,7 +83,7 @@ test('automatic skills: Assessment sees only the catalog, the worker gets the on
  assert.throws(()=>parseAssignedSkills({version:1,roles:{},auto:{implementation:[{name:'x',description:' ',instructions:'y'}]}}),/needs a description/);
  useAssignedSkills(parseAssignedSkills({version:1,roles:{implementation:[skill('tdd','Write the test first.')]},
   auto:{implementation:['css','sql','auth','docs'].map(auto).concat([{...auto('tdd')}])}}));
- const worker=new CodexWorker({workspace:os.tmpdir(),stateDir:os.tmpdir()});
+ const worker=new CodexWorker({ codexFeatures: "unified_exec_tty stable false",workspace:os.tmpdir(),stateDir:os.tmpdir()});
  const prompts=[];worker.invoke=async prompt=>{prompts.push(prompt);return {task};};
  await worker.assess({objective:'o'}).catch(()=>{});
  assert.match(prompts[0],/- css: Use for css work\./);

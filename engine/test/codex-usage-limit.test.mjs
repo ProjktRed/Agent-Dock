@@ -53,7 +53,7 @@ test("ordinary Codex exit code 1 remains a genuine error", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-generic-error-"));
   try {
     const { CodexWorker } = await import("../src/codex-worker.mjs");
-    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [genericFailureFixture] });
+    const codex = new CodexWorker({ codexFeatures: "unified_exec_tty stable false", workspace: root, stateDir: root, command: process.execPath, prefixArgs: [genericFailureFixture] });
     await assert.rejects(codex.invoke("ignored"), (error) => {
       assert.equal(error.code, undefined);
       assert.match(error.message, /Codex exited with code 1/);

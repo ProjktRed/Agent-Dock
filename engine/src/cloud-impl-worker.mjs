@@ -73,7 +73,7 @@ function killTree(child) {
 }
 
 export class CloudImplementationWorker {
-  constructor({ cli, stateDir, workspace, command, prefixArgs = [], model = null, effort = null, fast = false, timeoutSeconds = 1_800, toolGuard = true, env = process.env, spawnProcess = spawn }) {
+  constructor({ cli, stateDir, workspace, command, prefixArgs = [], model = null, effort = null, fast = false, timeoutSeconds = 1_800, toolGuard = true, env = process.env, spawnProcess = spawn, codexFeatures = null }) {
     if (!["codex", "claude"].includes(cli)) throw new Error("Implementation CLI must be codex or claude");
     this.cli = cli;
     this.stateDir = path.resolve(stateDir);
@@ -90,6 +90,7 @@ export class CloudImplementationWorker {
     // Codex: credentials are removed at each launch, which keeps the active provider's key (config may change between runs).
     this.env = cli === "claude" ? claudeChildEnv(env) : env;
     this.spawnProcess = spawnProcess;
+    this.codexFeatures = codexFeatures; // tests: Codex's feature list, in place of asking it
     // Same lock file as the Cline worker: one implementation at a time per state folder.
     this.lockPath = path.join(this.stateDir, "cline.busy.lock");
   }
@@ -125,7 +126,7 @@ export class CloudImplementationWorker {
     if (this.cli === "codex") {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
-    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env},decisionLog:log.policy(),
+    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env,...(this.codexFeatures?{features:this.codexFeatures}:{})},decisionLog:log.policy(),
       // Stage 2: Codex's sandbox is probed and chosen here; what confines the run is reported and logged. The hook
       // counts as observed only once a decision arrives (guard-records).
       codexMode:this.cli === "codex" ? "write" : null,

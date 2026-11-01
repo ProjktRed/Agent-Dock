@@ -36,28 +36,29 @@ test("denied folders: sign-ins, a moved Codex home, Agent Dock's data and the st
 test("a passing probe selects the profile; a Codex without profiles keeps the plain sandbox unless sandboxing is required; a leak refuses a required sandbox", async (t) => {
   resetCodexProbes();
   t.after(resetCodexProbes);
-  const stateDir = await temp(t, "codex-conf-"), launcher = { command: "codex" };
+  // A home of its own: sign-in files in the real one would change which rules are tried (kadono 0.40.3 probe).
+  const stateDir = await temp(t, "codex-conf-"), home = await temp(t, "codex-home-"), launcher = { command: "codex" };
   let probes = 0;
   const pass = async ({ mode }) => (probes++, { ok: true, results: { insideWrite: mode === "write" ? "ok" : "EPERM", outsideWrite: "EPERM", deniedRead: "EPERM", network: "EACCES" } });
-  const chosen = await codexConfinement({ mode: "write", stateDir, launcher, probe: pass });
+  const chosen = await codexConfinement({ home, mode: "write", stateDir, launcher, probe: pass });
   assert.deepEqual(chosen.args.slice(0, 2), ["-c", `default_permissions="${CODEX_PROFILE}"`]);
   assert.ok(chosen.args.includes('approval_policy="never"') && !chosen.args.includes("--sandbox"));
   assert.equal(chosen.attestation.probe, "passed");
   assert.equal(chosen.attestation.readLimits, true);
-  await codexConfinement({ mode: "write", stateDir, launcher, probe: pass });
+  await codexConfinement({ home, mode: "write", stateDir, launcher, probe: pass });
   assert.equal(probes, 1, "a passing probe is reused");
 
   const missing = async () => (probes++, { ok: false, reason: "Codex could not apply the profile" });
-  const plain = await codexConfinement({ mode: "read", stateDir, launcher, probe: missing });
+  const plain = await codexConfinement({ home, mode: "read", stateDir, launcher, probe: missing });
   assert.deepEqual(plain.args, ["--sandbox", "read-only"]);
   assert.equal(plain.attestation.probe, "failed");
   // kadono 0.40.0 probe: a probe with no result refused nothing even with sandboxing on.
-  await assert.rejects(codexConfinement({ mode: "read", stateDir, launcher, probe: missing, required: true }), /could not be confirmed: Codex could not apply the profile/);
+  await assert.rejects(codexConfinement({ home, mode: "read", stateDir, launcher, probe: missing, required: true }), /could not be confirmed: Codex could not apply the profile/);
   assert.equal(probes, 3, "a failed probe is tried again");
 
   const leak = async () => ({ ok: false, results: { insideWrite: "ok", outsideWrite: "ok", deniedRead: "EPERM", network: "EACCES" }, reason: "the sandbox did not hold: outsideWrite" });
-  assert.equal((await codexConfinement({ mode: "write", stateDir, launcher: { command: "other" }, probe: leak })).args.includes("workspace-write"), true, "not required: the plain sandbox, as before");
-  await assert.rejects(codexConfinement({ mode: "write", stateDir, launcher: { command: "other" }, probe: leak, required: true }), /could not be confirmed: the sandbox did not hold: outsideWrite/);
+  assert.equal((await codexConfinement({ home, mode: "write", stateDir, launcher: { command: "other" }, probe: leak })).args.includes("workspace-write"), true, "not required: the plain sandbox, as before");
+  await assert.rejects(codexConfinement({ home, mode: "write", stateDir, launcher: { command: "other" }, probe: leak, required: true }), /could not be confirmed: the sandbox did not hold: outsideWrite/);
 
   const none = await codexConfinement({ mode: "write", stateDir });
   assert.equal(none.attestation.probe, "not run");
