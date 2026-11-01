@@ -5,7 +5,7 @@ import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import { redactText } from "./redact.mjs";
-import {installProtection} from './guard/install-protection.mjs';
+import {installProtection,claudeScrubProblem} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
@@ -44,7 +44,33 @@ export function claudeChildEnv(env = process.env) {
   return { ...kept, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" };
 }
 
+/** One run's environment: the scrub turned off where Claude Code's sandbox can't start (claudeScrubProblem). */
+export function claudeRunEnvironment(env, launcher, workspace) {
+  return claudeScrubProblem(launcher, workspace) ? { ...env, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "0" } : env;
+}
+
+/**
+ * The error Claude Code gave a command because its own sandbox failed to start, or null: none of the run's commands
+ * ran, though the run itself reports success (kadono 0.40.1 probe).
+ */
+export function claudeSandboxFailure(stdout) {
+  for (const line of String(stdout).split(/\r?\n/)) {
+    if (!line.includes("failed to initialize")) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    for (const block of Array.isArray(event?.message?.content) ? event.message.content : []) {
+      if (block?.type !== "tool_result" || block.is_error !== true) continue;
+      const text = typeof block.content === "string" ? block.content : Array.isArray(block.content) ? block.content.map((c) => c?.text ?? "").join("\n") : "";
+      const found = /Sandbox is required but failed to initialize[^\n]*/.exec(text);
+      if (found) return found[0].slice(0, 300);
+    }
+  }
+  return null;
+}
+
 export function extractClaudeResult(stdout) {
+  const sandboxFailure = claudeSandboxFailure(stdout);
+  if (sandboxFailure) throw new Error(`Claude Code's sandbox failed to start, so the run's commands did not run: ${sandboxFailure}`);
   let envelope;
   try { envelope = JSON.parse(String(stdout).trim().split(/\r?\n/).filter(Boolean).at(-1)); }
   catch { throw new Error("Claude returned no JSON result envelope: " + String(stdout).slice(-2000)); }
@@ -83,7 +109,9 @@ export class ClaudeWorker extends CodexWorker {
     // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
     if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
-    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env}});
+    const launcher={command:this.command,prefixArgs:this.prefixArgs,env:this.env};
+    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast,launcher});
+    const runEnv=claudeRunEnvironment(this.env,launcher,this.workspace);
     const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
       "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
@@ -100,7 +128,7 @@ export class ClaudeWorker extends CodexWorker {
     try {
       await new Promise((resolve, reject) => {
         const launch = launchSpec(this.command, args);
-        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: { ...this.env, ...claudeRunEnv() }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: { ...runEnv, ...claudeRunEnv() }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false, closed = false, closeCode = 1, registrationError = null, finished = false, timedOut = false;
         const timer = setTimeout(() => { timedOut = true; child.kill(); }, this.timeoutMs);
         child.stdout.on("data", (chunk) => { stdout += chunk; });

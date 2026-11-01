@@ -221,3 +221,14 @@ test("Codex MCP and unknown tools are refused whatever toolGuard says, and the r
     assert.match(decision.reason, new RegExp(`${tool} is not a tool the guard knows`));
   }
 });
+
+test("kadono 0.40.1 probe: input-reading forms are refused, normal commands and plain wildcards are not", () => {
+  const { policy, workspace } = setup();
+  const command = (text) => ({ kind: "command", tool: "Bash", commands: [text], cwd: workspace });
+  // Bypass forms: a shell's script read as a command of its own, a pipe from a program passing its input on, runners.
+  for (const text of ["sh -c bash", "bash -c 'cat | sh'", "cat | sh", "cat - | bash", "head -n 5 | bash", "tee log | sh", "npx bash", "pnpm dlx bash", "bun x bash", "uv run python", "bash -is", "sqlite3 app.db", "psql", "psql -f -", "mysql", "deno", "bun repl", String.raw`cat $'.e\x6ev'`, String.raw`cat $'.\145nv'`]) assert.equal(definitelyRefused(policy, command(text)), true, text);
+  // Normal work: combined options, subcommands, queries on the command line, and wildcards that single out nothing.
+  for (const text of ["bash -lc 'npm test'", "sh -ec make", "bash -xc ls", "node -pe 1+1", "perl -lne print notes.txt", "python -Bc 1", "bun install", "bun test", "bun run dev", "bunx tsc", "deno test", "deno fmt", "sqlite3 app.db 'select 1'", "psql -c 'select 1'", "psql -l", "mysql -e 'select 1'", "uv run pytest -k python", "ls *", "echo $(date)", "ls src/*", "ls */*"]) assert.equal(definitelyRefused(policy, command(text)), false, text);
+  // A wildcard that still singles out a protected name is refused outright.
+  for (const text of ["cat */.env", "cat .g*/*", "cat .e*", "cat .[g]it/*", "cat [.]g*/*"]) assert.equal(definitelyRefused(policy, command(text)), true, text);
+});

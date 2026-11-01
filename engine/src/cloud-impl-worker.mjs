@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { lockHeld, withBusyLock } from "./busy-lock.mjs";
 import path from "node:path";
-import { CLAUDE_SETTING_SOURCES, claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
+import { CLAUDE_SETTING_SOURCES, claudeChildEnv, claudeRunEnvironment, extractClaudeResult } from "./claude-worker.mjs";
 import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
 import codexAdapter, { CODEX_WRITE_SANDBOX, codexScopeHookArgs } from "./guard/adapters/codex.mjs";
@@ -135,7 +135,7 @@ export class CloudImplementationWorker {
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {
       const launch = launchSpec(this.command, args);
-      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...this.env, ...claudeRunEnv() } : withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...claudeRunEnvironment(this.env, { command: this.command, prefixArgs: this.prefixArgs, env: this.env }, this.workspace), ...claudeRunEnv() } : withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
       const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += chunk; });
       child.stderr.on("data", (chunk) => { stderr += chunk; });

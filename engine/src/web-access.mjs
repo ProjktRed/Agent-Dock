@@ -35,7 +35,7 @@ export function webAddressProblem(url) {
 
 // Addresses that aren't on the public internet: this computer, private and shared networks, link-local (cloud
 // metadata), unspecified, and IPv6 unique-local. IPv6 forms that carry an IPv4 address are checked as that address:
-// mapped (::ffff:a.b.c.d, also in hex), compatible (::a.b.c.d), NAT64 (64:ff9b::/96, 64:ff9b:1::/48) and 6to4
+// mapped (::ffff:a.b.c.d, also in hex), translated (::ffff:0:a.b.c.d), compatible (::a.b.c.d), NAT64 (64:ff9b::/96, 64:ff9b:1::/48) and 6to4
 // (2002:AABB:CCDD::); Teredo (2001:0::/32) hides its address, so it counts as private (kadono 0.40.0 probe).
 function ipv6Groups(address) {
   let text = address.toLowerCase().replace(/%.*$/, "");
@@ -55,6 +55,7 @@ function privateAddress(address) {
     const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
     const zeros = (n) => g.slice(0, n).every((x) => x === 0);
     if (zeros(5) && g[5] === 0xffff) address = v4(g[6], g[7]);
+    else if (zeros(4) && g[4] === 0xffff && g[5] === 0) address = v4(g[6], g[7]);
     else if (zeros(6) && (g[6] || g[7] > 1)) address = v4(g[6], g[7]);
     else if (g[0] === 0x64 && g[1] === 0xff9b && (g[2] === 1 || g.slice(2, 6).every((x) => x === 0))) address = v4(g[6], g[7]);
     else if (g[0] === 0x2002) address = v4(g[1], g[2]);

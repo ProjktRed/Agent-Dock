@@ -94,7 +94,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   question appears in the Agent Dock window (a prompt over any page, and on the project's Overview) with the
   exact command, and as Telegram buttons when remote approvals are on; email can only refuse. The hook waits,
   and with no answer before the time limit the call is refused as before. The first answer wins. Anything that
-  names a protected path or runs in one, and any edit, is refused outright and never asked. The request lives
+  names a protected path or runs in one (a wildcard that singles one out, such as `.e*`, too), and any edit, is
+  refused outright and never asked; a wildcard made only of wildcards (`ls *`) is asked about. The request lives
   in the project's state folder, which agents cannot read or write, under a random id they never see. "Allow
   once" runs the call once, as you (inside the sandbox for agents' commands when that is on). "Allow for this
   run" also lets that exact call (same CLI, tool, folder and text) through without asking until the engine run
@@ -195,11 +196,18 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   read-only sandbox as before. A bubblewrap build that can't hide more than one single file gets the profile with
   folder rules only, and the attestation names the files left readable. With sandboxed agent commands on,
   anything short of the full profile holding refuses the run.
-- Codex can send input to a command that is still running (write_stdin) without a hook call, so the guard
-  refuses commands that start a shell or interpreter waiting for input (`bash` alone, `powershell` without
-  `-Command`, `python` or `node` without a script, `xargs`, `ssh`), outright. The list covers the common
-  programs, not every program that reads input. Claude Code runs with its subprocess scrub on: its commands and
-  hooks don't inherit its API key or cloud credentials.
+- Codex can send input to a command that is still running (write_stdin) without a hook call, and only a command
+  started in a terminal keeps its input open. So Codex runs without terminals (`features.unified_exec_tty=false`);
+  a Codex whose feature list shows terminals still on is refused, and one that can't list its features gets the
+  setting unconfirmed (the attestation says so). As a second layer the guard refuses commands that start a shell
+  or interpreter waiting for input (`bash` alone, `powershell` without `-Command`, `python` or `node` without a
+  script, `xargs`, `ssh`, `cat | sh`, `npx bash`), outright. That list covers the common programs, not every
+  program that reads input.
+- Claude Code runs with its subprocess scrub on: its commands and hooks don't inherit its API key or cloud
+  credentials. On Linux and macOS the scrub brings Claude Code's own sandbox, which needs bubblewrap and socat on
+  Linux; where Claude Code reports that sandbox can't start, a run with an Anthropic key in its environment is
+  refused (install bubblewrap and socat, or sign in with /login), and one signed in without a key goes without the
+  scrub (nothing else is left for its commands to see); the attestation says which. A run whose commands failed because that sandbox didn't start is refused.
 - Each Codex call and each Codex or Claude Code implementation run writes an attestation to the action log:
   the sandbox used, whether reads are limited and the probe's results. During implementation runs the guard
   hook reports every decision to the engine over a per-run local endpoint (HMAC-signed with a per-run secret);

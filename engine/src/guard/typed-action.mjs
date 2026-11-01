@@ -16,6 +16,7 @@ export const TOOL_REGISTRY = Object.freeze({
     WebFetch: "web", WebSearch: "web", KillShell: "command", TaskStop: "command", Monitor: "command", EnterWorktree: "command", ExitWorktree: "command",
     TodoWrite: "output", StructuredOutput: "output", ExitPlanMode: "output", EnterPlanMode: "output", AskUserQuestion: "output",
     Task: "agent", Agent: "agent", SendMessage: "agent", CronCreate: "agent", CronDelete: "agent", CronList: "inspect",
+    ScheduleWakeup: "agent", Workflow: "agent", DesignSync: "agent", ListAgents: "inspect", ReportFindings: "output",
   },
   codex: {
     Bash: "command", shell: "command", exec_command: "command", local_shell: "command", exec: "command", write_stdin: "command", apply_patch: "edit",

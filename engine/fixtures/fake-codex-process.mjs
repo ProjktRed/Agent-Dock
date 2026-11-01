@@ -11,6 +11,13 @@ if (process.argv[3] === "sandbox") {
   else console.error("error: unrecognized subcommand 'sandbox'");
   process.exit(process.env.FAKE_CODEX_PROBE === "pass" ? 0 : 2);
 }
+// The run-start terminal check (codex -c features.unified_exec_tty=false features list): a current Codex that takes
+// the setting, unless a test asks for one that keeps terminals on. Not counted as a Codex run.
+if (process.argv.slice(-2).join(" ") === "features list") {
+  const tty = process.env.FAKE_CODEX_TTY === "on" || !process.argv.includes("features.unified_exec_tty=false") ? "true" : "false";
+  console.log(`unified_exec                             stable             true\nunified_exec_tty                         stable             ${tty}`);
+  process.exit(0);
+}
 const pidFile = process.argv[2];
 if (process.env.FAKE_CODEX_ARGS_FILE) {
   await writeFile(process.env.FAKE_CODEX_ARGS_FILE, JSON.stringify(process.argv.slice(3)));

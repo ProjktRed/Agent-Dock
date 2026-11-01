@@ -38,8 +38,9 @@ function nameCandidates(word) {
     .replace(/\$\{env:(\w+)\}|\$env:(\w+)|%(\w+)%|\$\{?(\w+)\}?/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m)
     .replace(/^~(?=$|[\\/])/, process.env.USERPROFILE ?? process.env.HOME ?? "~");
   // Shells join quoted pieces and drop escapes (`.e''nv`, `.e\nv` and PowerShell's .e`nv are all .env): the
-  // word with quotes, and with quotes and backslashes, removed is split and checked too. More names only refuse more.
-  const joined = [word, expanded].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, "")]);
+  // word with quotes, and with quotes and backslashes, removed is split and checked too, and bash's $'…' with its
+  // escapes decoded (`$'.e\x6ev'`; kadono 0.40.1 probe). More names only refuse more.
+  const joined = [word, expanded, ansiC(word)].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, "")]);
   // Brace expansion: `.{env,x}` is `.env` and `.x` (a few levels, bounded).
   for (let i = 0; i < joined.length && joined.length < 200; i++) {
     const brace = /\{([^{}]*,[^{}]*)\}/.exec(joined[i]);
@@ -49,7 +50,21 @@ function nameCandidates(word) {
   return [...new Set(pieces.filter(Boolean))];
 }
 
+// bash's $'…' strings with their escapes decoded (\xHH, \uHHHH, \UHHHHHHHH, octal, \cX and the letter escapes).
+const ESCAPES = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v" };
+function ansiC(word) {
+  return word.replace(/\$'((?:[^'\\]|\\.)*)'?/g, (m, body) => body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c.|.)/g, (e, s) => {
+    if (/^[xuU]/.test(s)) { try { return String.fromCodePoint(parseInt(s.slice(1), 16)); } catch { return ""; } }
+    if (/^[0-7]/.test(s)) return String.fromCharCode(parseInt(s, 8) & 0xff);
+    if (s[0] === "c") return String.fromCharCode(s.charCodeAt(1) & 0x1f);
+    return ESCAPES[s] ?? s;
+  }));
+}
+
 const GLOB = /[*?[]/;
+// A wildcard part that is nothing but * and ? names everything alike, not a protected name; a bracket expression
+// (`[s]*`) narrows it, so it doesn't count (release review 0.40.2).
+const matchesAll = (part) => /^[*?]+$/.test(part);
 const foldCase = process.platform === "win32" || process.platform === "darwin";
 /** A shell or PowerShell wildcard as a regular expression for one name (a leading dot matches too, as in PowerShell). */
 function globPattern(part) {
@@ -116,10 +131,16 @@ export function definitelyRefused(policy, action) {
   if (names.some(protectedName)) return true;
   // Wildcards: refused outright when they could name a protected path (kadono 0.40.0 probe: `cat .e*`).
   // An expansion the guard can't resolve could produce a wildcard (`.e${UNSET:-*}`, `X=*; cat .e$X`, `.e$(echo '*')`):
-  // it counts as one (kadono 0.40.1 review).
+  // it counts as one (kadono 0.40.1 review). Wildcards that are nothing but wildcards (`ls *`, `src/*`, `echo $(date)`)
+  // single out no protected name, so they are put to you instead (kadono 0.40.1 probe); their plain folders were
+  // checked with the names above.
   const raw = action.kind === "command" ? commandText(action).split(/\s+/) : [];
   const expanded = raw.map((w) => w.replace(/\$\{[^}]*\}|\$\([^)]*\)?|`[^`]*`?|\$[@*#?$!0-9-]|\$\w+|\$/g, "*").replace(/["'`]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`]/g, ""));
-  return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => { const { found, fitsRule } = globNames(policy, name, cwd); return fitsRule || found.some(protectedName); });
+  return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => {
+    const parts = name.replaceAll("\\", "/").split("/");
+    if (matchesAll(parts.at(-1)) && parts.every((part) => !GLOB.test(part) || matchesAll(part))) return false;
+    const { found, fitsRule } = globNames(policy, name, cwd); return fitsRule || found.some(protectedName);
+  });
 }
 
 export function askable(policy, action, decision, adapter) {

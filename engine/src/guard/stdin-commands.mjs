@@ -6,15 +6,23 @@ import { realpathSync, statSync } from "node:fs";
  * 0.40.0 probe): `bash` alone, allowed because it names nothing protected, would then run whatever is typed into
  * it unchecked. So a command that starts a shell or interpreter reading its code from input is refused outright;
  * with a script (`bash -c …`, `node file.js`, `powershell -Command …`) it is checked as usual. Input from a pipe
- * comes from the command text itself, which the guard sees, so a program after `|` is fine.
+ * comes from the command text itself, which the guard sees, so a program after `|` is fine, unless the program
+ * before it passes its own input on (`cat | sh`). Codex now runs without terminals, so a running command's input is
+ * closed (install-protection.mjs, kadono 0.40.1 probe); this stays as a second layer.
  */
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh", "busybox", "nu", "elvish", "xonsh"]);
 const INTERPRETERS = new Set(["python", "python2", "python3", "py", "pypy", "pypy3", "node", "nodejs", "deno", "bun", "perl", "ruby", "irb", "php", "lua", "luajit", "tclsh", "wish", "expect", "r", "julia", "ghci", "jshell", "scala", "groovysh", "osascript", "wsl", "wsl.exe"]);
 // Programs whose input decides what runs, with or without arguments.
-const ALWAYS = new Set(["xargs", "parallel", "su", "script", "sqlite3", "psql", "mysql", "ssh", "telnet", "nc", "ncat", "socat", "gdb", "lldb", "ftp", "sftp"]);
-// Words before the program that keep its input: `env A=1 bash`, `sudo bash`, `nohup sh`, `time python`.
+const ALWAYS = new Set(["xargs", "parallel", "su", "script", "ssh", "telnet", "nc", "ncat", "socat", "gdb", "lldb", "ftp", "sftp"]);
+// Words before the program that keep its input: `env A=1 bash`, `sudo bash`, `nohup sh`, `time python`, `npx bash`.
 const KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "coproc", "select"]);
-const WRAPPERS = new Set(["env", "sudo", "doas", "nohup", "exec", "command", "builtin", "time", "nice", "ionice", "stdbuf", "setsid", "chroot", "call"]);
+const WRAPPERS = new Set(["env", "sudo", "doas", "nohup", "exec", "command", "builtin", "time", "nice", "ionice", "stdbuf", "setsid", "chroot", "call", "npx", "pnpx", "bunx", "uvx"]);
+const TWO_WORD_WRAPPERS = new Set(["npm exec", "pnpm exec", "pnpm dlx", "yarn exec", "yarn dlx", "bun x", "pipx run", "uv run"]);
+// Programs that pass their own input on to the next one in a pipe (`tee log | sh`, `head -n 5 | bash`): always, or
+// unless they name a file to read; the scripted ones take their script first (`sed 's/a/b/' | sh`).
+const PASS_INPUT = new Set(["tee", "tr", "pv", "buffer", "mbuffer"]);
+const FILTERS = new Set(["cat", "tac", "head", "tail", "rev", "dd", "base64", "xxd", "od", "sort", "uniq", "cut", "iconv", "fold", "fmt", "nl", "expand", "unexpand", "paste"]);
+const SCRIPTED_FILTERS = new Set(["sed", "awk", "gawk", "mawk", "grep", "egrep", "fgrep", "jq"]);
 
 const words = (segment) => segment.trim().split(/\s+/).map((w) => w.replace(/^["'`]+|["'`]+$/g, "")).filter(Boolean);
 const program = (word) => path.basename(word.replaceAll("\\", "/")).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, "");
@@ -47,12 +55,13 @@ function invocation(segment) {
     // Shell reserved words before the program (`if true; then bash; fi`, `while x; do sh; done`, `! bash`).
     if (KEYWORDS.has(w)) { i++; continue; }
     if (WRAPPERS.has(name)) { wrapped = true; i++; continue; }
+    if (TWO_WORD_WRAPPERS.has(`${name} ${(list[i + 1] ?? "").toLowerCase()}`)) { wrapped = true; i += 2; continue; }
     if (name === "timeout") { wrapped = true; i += 2; continue; }
     break;
   }
-  // A wrapper's option may take a value (`env -u FOO bash`, `sudo -u nobody bash`, `nice -n 5 bash`): every later
-  // word is tried as the program too (kadono 0.40.1 review).
-  if (wrapped) for (let j = i + 1; j < list.length; j++) if (needsInput(list.slice(j))) return list.slice(j);
+  // A wrapper's option may take a value (`env -u FOO bash`, `sudo -u nobody bash`, `nice -n 5 bash`): when an option
+  // comes right before the program, every later word is tried as the program too (kadono 0.40.1 review).
+  if (wrapped && list[i - 1]?.startsWith("-")) for (let j = i + 1; j < list.length; j++) if (needsInput(list.slice(j))) return list.slice(j);
   return list.slice(i);
 }
 
@@ -64,6 +73,11 @@ function needsInput([first, ...args]) {
   if (args.length && args.every((a) => INFO_FLAGS.has(a) || INFO_FLAGS.has(a.toLowerCase()))) return false;
   const name = program(first);
   if (ALWAYS.has(name)) return true;
+  // A database shell runs a query or file given on its command line and exits (`sqlite3 app.db "select 1"`,
+  // `psql -c …`, `mysql -e …`); otherwise it reads them from input (kadono 0.40.1 probe).
+  if (name === "sqlite3") return positionals(args, SQLITE_VALUES).length < 2 || args.includes("-interactive");
+  if (name === "psql") return !args.some((a, i) => /^(-c|--command)$/.test(a) || /^--command=./.test(a) || (/^(-f|--file)$/.test(a) && args[i + 1] && args[i + 1] !== "-") || /^-l$|^--list$/.test(a));
+  if (name === "mysql" || name === "mariadb") return !args.some((a) => /^(-e|--execute)$/.test(a) || /^--execute=./.test(a));
   if (name === "source" || name === ".") return args.some((a) => a === "-" || inputPath(a));
   if (name === "cmd") return !args.some((a) => /^\/c$/i.test(a)) || args.some((a) => /^\/k$/i.test(a));
   if (name === "powershell" || name === "pwsh") {
@@ -75,14 +89,38 @@ function needsInput([first, ...args]) {
   }
   const kind = SHELLS.has(name) ? "shell" : INTERPRETERS.has(name) ? "interpreter" : null;
   if (!kind) return false;
-  // Interactive or stdin flags keep it reading input even with a script.
-  if (args.some((a) => a === "-" || a === "-s" || a === "-i" || a === "--interactive" || a === "repl")) return true;
-  const code = kind === "shell" ? ["-c"] : CODE_FLAGS[name.replace(/\d+(\.\d+)?$/, "")] ?? ["-e"];
-  if (args.some((a) => code.includes(a))) return false;
+  // Interactive or stdin flags keep it reading input even with a script; a shell's combined options too (`bash -is`).
+  const cluster = (a) => /^-[A-Za-z]{2,}$/.test(a);
+  if (args.some((a) => a === "-" || a === "-s" || a === "-i" || a === "--interactive" || a === "repl" || (kind === "shell" && cluster(a) && /[si]/.test(a)))) return true;
+  const base = name.replace(/\d+(\.\d+)?$/, ""), code = kind === "shell" ? ["-c"] : CODE_FLAGS[base] ?? ["-e"];
+  // Code on the command line, in combined options too (`bash -lc`, `sh -ec`, `node -pe`, `perl -lne`, `python -Bc`).
+  const at = args.findIndex((a) => code.includes(a) || (cluster(a) && (kind === "shell" ? a.includes("c") : code.some((f) => /^-[A-Za-z]$/.test(f) && a.endsWith(f[1])))));
+  // A shell's script is checked as a command of its own (`sh -c bash`, `bash -c "cat | sh"`).
+  if (at >= 0) return kind === "shell" ? readsCodeFromInput(args.slice(at + 1).join(" "), baseDir) !== null : false;
+  // bun and deno take subcommands (`bun install`, `deno test`); deno alone and their REPLs read input, and `bun x`
+  // runs a program.
+  if (base === "bun" || base === "deno") {
+    const sub = positional(args, VALUE_OPTIONS[base] ?? new Set());
+    if (sub === "x") return needsInput(args.slice(args.indexOf("x") + 1));
+    return sub === null ? base === "deno" : false;
+  }
   // A script file: the first word that is no option and no option's value, and looks like a file (`node -r fs`,
   // `python -W ignore` and `bash -O extglob` don't name one; kadono 0.40.1 review).
-  const script = positional(args, VALUE_OPTIONS[kind === "shell" ? "shell" : name.replace(/\d+(\.\d+)?$/, "")] ?? new Set());
+  const script = positional(args, VALUE_OPTIONS[kind === "shell" ? "shell" : base] ?? new Set());
   return script === null || inputPath(script) || !(/[\\/]|\.\w+$/.test(script) || isFile(script));
+}
+
+/** Whether a program before `|` passes its own input on to the next one (`cat | sh`, `cat - | sh`). */
+function passesInput([first, ...args]) {
+  if (!first) return false;
+  const name = program(first), files = positionals(args, new Set());
+  if (args.some((a) => a === "-" || inputPath(a))) return true;
+  if (PASS_INPUT.has(name)) return true;
+  // Only a word that looks like a file counts (`head -n 5` reads its input).
+  const named = files.filter((f) => /[\\/]|\.\w+$/.test(f) || isFile(f));
+  if (FILTERS.has(name)) return named.length === 0;
+  if (SCRIPTED_FILTERS.has(name)) return files.length <= 1 || named.length === 0;
+  return false;
 }
 
 // Options whose next word is their value, not a script.
@@ -100,16 +138,21 @@ const CODE_FLAGS = {
   node: ["-e", "--eval", "-p", "--print", "--test", "--run"], nodejs: ["-e", "--eval", "-p", "--print", "--test", "--run"], bun: ["-e", "--eval", "-p", "--print", "run"], deno: ["eval", "run"],
   python: ["-c", "-m"], py: ["-c", "-m"], pypy: ["-c", "-m"], perl: ["-e", "-E"], ruby: ["-e"], php: ["-r"], lua: ["-e"], luajit: ["-e"],
 };
+const SQLITE_VALUES = new Set(["-cmd", "-init", "-separator", "-newline", "-nullvalue", "-vfs", "-maxsize", "-mmap", "-lookaside", "-pagecache", "-heap"]);
 function positional(args, valueOptions) {
+  return positionals(args, valueOptions)[0] ?? null;
+}
+/** The words that are no option and no option's value. */
+function positionals(args, valueOptions) {
   // PowerShell options ignore case; Unix ones don't (`-O` is not `-o`).
-  const caseless = valueOptions === POWERSHELL_VALUES;
+  const caseless = valueOptions === POWERSHELL_VALUES, found = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (valueOptions.has(caseless ? a.toLowerCase() : a)) { i++; continue; }
     if (a.startsWith("-") || a.startsWith("+")) continue;
-    return a;
+    found.push(a);
   }
-  return null;
+  return found;
 }
 
 /** The program in a shell script that would read its code from input, or null. */
@@ -150,20 +193,21 @@ function split(text) {
 }
 
 function check(parts, pipesExempt) {
-  let piped = false;
+  let piped = false, passes = false;
   // Commands and separators alternate: odd places are separators.
   for (const [index, part] of parts.entries()) {
-    if (index % 2) { piped = pipesExempt && part === "|"; continue; }
+    if (index % 2) { piped = pipesExempt && part === "|" && !passes; passes = false; continue; }
     if (!part.trim()) continue;
     // Quotes removed; backslashes kept (Windows paths) and removed (`\0` is `0` to a shell): either reading counts.
     const unquoted = part.replace(/["']/g, "");
     for (const reading of new Set([unquoted, unquoted.replace(/\\/g, "")])) {
       const call = invocation(reading.replace(/^[\s{]+|[\s}]+$/g, ""));
       if (!piped && needsInput(call)) return program(call[0]);
+      passes ||= passesInput(call);
     }
     piped = false;
   }
   return null;
 }
 
-export const stdinCommandReason = (name) => `Commands that read their code from input (here ${name}) are refused: Codex can type into a running command without the guard seeing it. Run a script instead (for example \`${name} -c "…"\` or a file).`;
+export const stdinCommandReason = (name) => `Commands that read their code from input (here ${name}) are refused: Codex could type into a running command without the guard seeing it. Run a script instead (for example \`${name} -c "…"\` or a file).`;

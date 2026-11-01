@@ -95,12 +95,13 @@ export async function probeCodexProfile({ mode = "write", launcher, profileArgs,
 // On Linux, Codex's profile sandbox makes empty mount points for the folders it keeps read-only (.git, .codex,
 // .agents) in each writable root, the temp folder included, and leaves them behind; a stray /tmp/.git confuses Git
 // in every folder under it (kadono 0.40.0 probe). Removed after each run while still empty, and only those that
-// weren't there before Agent Dock's first profile run.
+// weren't there before Agent Dock's first profile run: in /tmp and in TMPDIR's folder when it is elsewhere
+// (kadono 0.40.1 probe).
 const TEMP_MARKERS = [".git", ".codex", ".agents"];
 let tempMarkers = null;
 function noteCodexTemp(platform = process.platform) {
   if (platform !== "linux" || tempMarkers) return;
-  tempMarkers = TEMP_MARKERS.map((name) => path.join(os.tmpdir(), name)).filter((p) => !existsSync(p));
+  tempMarkers = [...new Set(["/tmp", os.tmpdir()])].flatMap((dir) => TEMP_MARKERS.map((name) => path.join(dir, name))).filter((p) => !existsSync(p));
   process.once("exit", () => sweepCodexTemp());
 }
 /** Removes the empty mount points Codex left in the temp folder (never a folder with anything in it). */

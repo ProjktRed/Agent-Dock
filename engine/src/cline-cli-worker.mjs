@@ -9,7 +9,7 @@ import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
 import { assertNoRepoCliConfig } from "./guard/repo-config.mjs";
-import { withoutSecrets } from "./secret-env.mjs";
+import { checkEnv } from "./secret-env.mjs";
 import { clineUsage, noteUsage } from "./run-budget.mjs";
 import { clineRunOptions } from "./cli-run-settings.mjs";
 
@@ -502,9 +502,10 @@ export async function launchCline({
     thinking,
   });
   // No inherited credentials: a cloud provider's variable comes only from launchEnv (the broker's token), so an
-  // OPENROUTER_API_KEY or OPENAI_API_KEY set for something else never reaches Cline.
+  // OPENROUTER_API_KEY or OPENAI_API_KEY set for something else never reaches Cline. Nor do the indirect ones (an SSH
+  // agent, password helpers, npm's user config), as for check commands (kadono 0.40.1 probe).
   // OPENCODE_* (key, server password, config) is OpenCode's, as the OpenCode worker strips it too.
-  const inherited = Object.fromEntries(Object.entries(withoutSecrets(process.env)).filter(([name]) => !name.toUpperCase().startsWith("OPENCODE_")));
+  const inherited = Object.fromEntries(Object.entries(checkEnv(process.env)).filter(([name]) => !name.toUpperCase().startsWith("OPENCODE_")));
   const env = { ...inherited, ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
   const isolation = await clineSkillEnv(env, {dataDir, configDir});
