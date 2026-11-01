@@ -125,7 +125,9 @@ export function definitelyRefused(policy, action) {
     else if (value && typeof value === "object") for (const v of Object.values(value)) strings(v, out);
     return out;
   };
-  const texts = action.kind === "command" ? words(commandText(action)) : strings(action.input).flatMap(words);
+  // cmd joins a line ending in a caret to the next (`type .e^<newline>nv`; review), so words are read both ways.
+  const commandTexts = action.kind === "command" ? [...new Set([commandText(action), commandText(action).replace(/\^\r?\n/g, "")])] : [];
+  const texts = action.kind === "command" ? commandTexts.flatMap(words) : strings(action.input).flatMap(words);
   const paths = action.kind === "command" ? [] : pathsIn(action.input);
   // A web address is no file name (the path check reads its colon as a drive and refuses it, to be safe).
   const names = [...paths, ...texts.filter((name) => !/^https?:\/\//i.test(name)).flatMap(nameCandidates)];
@@ -137,11 +139,22 @@ export function definitelyRefused(policy, action) {
   // and find's %s are left alone (kadono 0.40.3 probe).
   // Wildcards that are nothing but wildcards (`ls *`, `src/*`, `echo $(date)`) single out no protected name, so they
   // are put to you instead (kadono 0.40.1 probe); their plain folders were checked with the names above.
-  const raw = action.kind === "command" ? commandText(action).split(/\s+/) : [];
-  // Any `for … %A in (…)`, options between included (`for /f "delims=" %A in (…)`; review).
-  const forLoop = /(?:^|[^\w.-])for\s[^\n]*?%%?~?[A-Za-z]\s+in\s*\(/i.test(commandText(action));
-  const expansion = new RegExp(String.raw`\$\{[^}]*\}|\$\([^)]*\)?|` + "`[^`]*`?" + String.raw`|\$[@*#?$!0-9-]|\$\w+|\$|%[^%\s]*%|![^!\s]*!` + (forLoop ? String.raw`|%%?~[A-Za-z]+|%%?[A-Za-z]` : ""), "g");
-  const expanded = raw.map((w) => w.replace(expansion, "*").replace(/["'`^]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`^]/g, ""));
+  const raw = [...new Set(commandTexts.flatMap((t) => t.split(/\s+/)))];
+  // Any `for … %A in (…)`, options between included (`for /f "delims=" %A in (…)`; review), read after cmd removes its
+  // carets: `f^or` and `^f^o^r` run as a for loop (kadono 0.40.4 probe; checked on Windows 11), and a caret ending a
+  // line joins the next one. cmd also separates with , ; and = (`for,%A,in,(…)`), and expands %X% and !X! before it
+  // looks for `for`, so any such expansion could be the keyword (`%X% %A in (…)`; review, both checked on Windows 11).
+  // A loop variable can be any one character, not just a letter (`%_`, `%#`, `%1`; review, checked on Windows 11).
+  // A caret escapes the next character (`^^` is a caret, which can be a loop variable: `%^^`; review).
+  const uncaret = (text) => text.replace(/\^\r?\n/g, "").replace(/\^([\s\S])/g, "$1");
+  const cmdText = uncaret(commandText(action));
+  const forLoop = /(?:^|[^\w.-])for[\s,;=][^\n]*?%%?[^\s%,;=][\s,;=]+in[\s,;=]*\(/i.test(cmdText) || /%[^%\s]+%|![^!\s]+!/.test(cmdText);
+  const expansion = new RegExp(String.raw`\$\{[^}]*\}|\$\([^)]*\)?|` + "`[^`]*`?" + String.raw`|\$[@*#?$!0-9-]|\$\w+|\$|%[^%\s]*%|![^!\s]*!` + (forLoop ? String.raw`|%%?~[A-Za-z$:]*[^\s%]|%%?[^\s%]` : ""), "g");
+  // Expansions are read with cmd's carets removed too, which can sit inside one (`.e%^Av`; review). In a for loop the
+  // pairing of % signs is cmd's own business (`.e%Av%ComSpec:~0,0%` is .env; review), so each % and what follows it,
+  // up to the next %, is also read as a wildcard.
+  const readings = (v) => [v.replace(expansion, "*"), ...(forLoop ? [v.replace(/%[^%\s]*/g, "*")] : [])];
+  const expanded = raw.flatMap((w) => [w, uncaret(w)].flatMap(readings).map((v) => v.replace(/["'`^]/g, "")).filter((v) => v !== w.replace(/["'`^]/g, "")));
   return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => {
     const parts = name.replaceAll("\\", "/").split("/");
     if (matchesAll(parts.at(-1)) && parts.every((part) => !GLOB.test(part) || matchesAll(part))) return false;
