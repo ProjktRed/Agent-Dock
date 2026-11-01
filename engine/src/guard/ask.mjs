@@ -37,10 +37,11 @@ function nameCandidates(word) {
   const expanded = word
     .replace(/\$\{env:(\w+)\}|\$env:(\w+)|%(\w+)%|\$\{?(\w+)\}?/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m)
     .replace(/^~(?=$|[\\/])/, process.env.USERPROFILE ?? process.env.HOME ?? "~");
-  // Shells join quoted pieces and drop escapes (`.e''nv`, `.e\nv` and PowerShell's .e`nv are all .env): the
-  // word with quotes, and with quotes and backslashes, removed is split and checked too, and bash's $'…' with its
-  // escapes decoded (`$'.e\x6ev'`; kadono 0.40.1 probe). More names only refuse more.
-  const joined = [word, expanded, ansiC(word)].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, "")]);
+  // Shells join quoted pieces and drop escapes (`.e''nv`, `.e\nv`, PowerShell's .e`nv and cmd's .e^nv are all
+  // .env): the word with quotes, and with quotes and backslashes or carets, removed is split and checked too, and
+  // bash's $'…' with its escapes decoded (`$'.e\x6ev'`; kadono 0.40.1 probe; cmd's ^, guard review). More names
+  // only refuse more.
+  const joined = [word, expanded, ansiC(word)].flatMap((w) => [w.replace(/["'`]/g, ""), w.replace(/["'`\\]/g, ""), w.replace(/["'`^]/g, "")]);
   // Brace expansion: `.{env,x}` is `.env` and `.x` (a few levels, bounded).
   for (let i = 0; i < joined.length && joined.length < 200; i++) {
     const brace = /\{([^{}]*,[^{}]*)\}/.exec(joined[i]);
@@ -131,11 +132,12 @@ export function definitelyRefused(policy, action) {
   if (names.some(protectedName)) return true;
   // Wildcards: refused outright when they could name a protected path (kadono 0.40.0 probe: `cat .e*`).
   // An expansion the guard can't resolve could produce a wildcard (`.e${UNSET:-*}`, `X=*; cat .e$X`, `.e$(echo '*')`):
-  // it counts as one (kadono 0.40.1 review). Wildcards that are nothing but wildcards (`ls *`, `src/*`, `echo $(date)`)
-  // single out no protected name, so they are put to you instead (kadono 0.40.1 probe); their plain folders were
-  // checked with the names above.
+  // it counts as one (kadono 0.40.1 review), cmd's %…%, for variables (%A, %~nA) and !…! too (`.g%ComSpec:~0,0%it`
+  // is .git; guard review).
+  // Wildcards that are nothing but wildcards (`ls *`, `src/*`, `echo $(date)`) single out no protected name, so they
+  // are put to you instead (kadono 0.40.1 probe); their plain folders were checked with the names above.
   const raw = action.kind === "command" ? commandText(action).split(/\s+/) : [];
-  const expanded = raw.map((w) => w.replace(/\$\{[^}]*\}|\$\([^)]*\)?|`[^`]*`?|\$[@*#?$!0-9-]|\$\w+|\$/g, "*").replace(/["'`]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`]/g, ""));
+  const expanded = raw.map((w) => w.replace(/\$\{[^}]*\}|\$\([^)]*\)?|`[^`]*`?|\$[@*#?$!0-9-]|\$\w+|\$|%[^%\s]*%|%~[A-Za-z]+|%[A-Za-z]|![^!\s]*!/g, "*").replace(/["'`^]/g, "")).filter((w, i) => w !== raw[i].replace(/["'`^]/g, ""));
   return [...new Set([...names, ...texts.map((w) => w.replace(/["'`]/g, "")), ...expanded])].filter((name) => GLOB.test(name)).some((name) => {
     const parts = name.replaceAll("\\", "/").split("/");
     if (matchesAll(parts.at(-1)) && parts.every((part) => !GLOB.test(part) || matchesAll(part))) return false;

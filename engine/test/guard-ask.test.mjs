@@ -232,3 +232,14 @@ test("kadono 0.40.1 probe: input-reading forms are refused, normal commands and 
   // A wildcard that still singles out a protected name is refused outright.
   for (const text of ["cat */.env", "cat .g*/*", "cat .e*", "cat .[g]it/*", "cat [.]g*/*"]) assert.equal(definitelyRefused(policy, command(text)), true, text);
 });
+
+test("cmd.exe escapes and variable expansions that hide a protected name are refused outright, from Codex and from PowerShell", () => {
+  const { policy, workspace } = setup();
+  const command = (text, tool = "Bash") => ({ kind: "command", tool, commands: [text], cwd: workspace });
+  for (const text of ["cmd /d /s /c type .g^it", "cmd /c type .e^nv", "type .g%ComSpec:~0,0%it", "cmd /c type .e%X%nv", "cmd /v:on /c type .e!X:~0,0!nv", "cmd /d /c for %A in (n) do @type .e%Av", "for %A in (x) do type .g%~nAit"]) assert.equal(definitelyRefused(policy, command(text)), true, text);
+  const codexCmd = codex.toAction({ tool_name: "exec_command", tool_input: { command: ["cmd.exe", "/d", "/s", "/c", "type .g^it"] }, cwd: workspace });
+  assert.equal(definitelyRefused(policy, { ...codexCmd, cwd: workspace }), true);
+  assert.equal(definitelyRefused(policy, command("Get-Content .g^it", "PowerShell")), true);
+  // Ordinary uses of ^, % and ! stay askable.
+  for (const text of ["git log HEAD^", "printf %s x", "echo done!"]) assert.equal(definitelyRefused(policy, command(text)), false, text);
+});
