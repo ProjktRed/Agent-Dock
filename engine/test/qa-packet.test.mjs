@@ -143,3 +143,12 @@ test("scope violations are explicit and only approved files enter the scoped dif
     assert.doesNotMatch(packet.diff.text, /forbidden/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('a scope failure names the first paths and counts the rest', async () => {
+  const { listPaths } = await import('../src/qa-packet.mjs');
+  const paths = Array.from({ length: 10_000 }, (_, i) => `node_modules/f${i}.js`);
+  const text = listPaths(paths);
+  assert.ok(text.length < 1_000);
+  assert.match(text, /node_modules\/f0\.js, .* and 9980 more$/);
+  assert.equal(listPaths(['a', 'b']), 'a, b');
+});

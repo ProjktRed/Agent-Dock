@@ -304,11 +304,15 @@ test("Cline remaps the Agent Dock key to OpenCode Console's expected environment
 
     assert.equal(runtime.provider, "openai-compatible");
     assert.equal(runtime.model, "deepseek-v4.1-flash-free");
-    assert.equal(runtime.baseUrl, "https://opencode.ai/inference/openai/v1");
-    assert.deepEqual(runtime.providerEnv, { OPENAI_API_KEY: "unit" });
+    // Cline talks to the key broker with the run's token; the key itself stays in the engine.
+    assert.match(runtime.baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/v1$/);
+    assert.notEqual(process.env.AGENT_DOCK_PROVIDER_KEY, "unit");
+    assert.deepEqual(runtime.providerEnv, { OPENAI_API_KEY: process.env.AGENT_DOCK_PROVIDER_KEY });
     assert.equal(settings.providers["openai-compatible"].settings.model, "deepseek-v4.1-flash-free");
     assert.equal(settings.providers["openai-compatible"].settings.baseUrl, runtime.baseUrl);
+    assert.ok(!JSON.stringify(settings).includes("unit"));
   } finally {
+    (await import("../src/runtime/provider.mjs")).resetKeyBrokers();
     if (priorKey === undefined) delete process.env.AGENT_DOCK_PROVIDER_KEY;
     else process.env.AGENT_DOCK_PROVIDER_KEY = priorKey;
     await rm(stateDir, { recursive: true, force: true });

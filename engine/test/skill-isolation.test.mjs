@@ -137,6 +137,10 @@ test('OpenCode closes compatibility/home discovery and removes the skill tool fr
  assert.ok(!config.experimental.policies.some(rule=>rule.action==='tool.use'&&rule.resource==='skill:*'&&rule.effect==='allow'));
  assert.equal(opencode.allowedTools.includes('skill'),false);assert.equal(opencode.toAction({tool:'skill',input:{name:'probe'}}).kind,'unknown');
  assert.equal(hostile.OPENCODE_CONFIG_DIR,f.home);
+ // Other credentials in the engine's environment never reach OpenCode or its tools; its own provider variable does.
+ const withKeys=openCodeChildEnv({...f.env,AGENT_DOCK_PROVIDER_KEY:'token',AGENT_DOCK_SUPERVISOR_KEY:'sv',ANTHROPIC_API_KEY:'a',OPENAI_API_KEY:'o'},guard,'AGENT_DOCK_PROVIDER_KEY');
+ assert.equal(withKeys.AGENT_DOCK_PROVIDER_KEY,'token');
+ for(const name of ['AGENT_DOCK_SUPERVISOR_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY'])assert.equal(withKeys[name],undefined,name);
 });
 
 test('Codex skill scan skips broken links and non-folder skill paths instead of failing the launch',async t=>{

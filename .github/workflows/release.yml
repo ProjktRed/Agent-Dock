@@ -179,13 +179,30 @@ jobs:
           name: AgentDock-${{ env.VERSION }}-linux-dry-run
           path: dist/AgentDock-${{ env.VERSION }}-linux-x86_64.AppImage
           retention-days: 7
+      - name: AppImage patch from the previous release
+        # 0.38: a binary patch of the previous release's AppImage (scripts/release-delta.mjs appimage), signed
+        # into the manifest. Apps on exactly that version download it instead of the whole AppImage.
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 20 --json tagName --jq '.[].tagName' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vx "$GITHUB_REF_NAME" | sort -V -r | head -1 || true)
+          from="${previous#v}"
+          if [ -n "$previous" ] && gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern "AgentDock-$from-linux-x86_64.AppImage" --dir previous; then
+            patch="AgentDock-$VERSION-from-$from-linux-x86_64.adpatch"
+            node scripts/release-delta.mjs appimage --previous "previous/AgentDock-$from-linux-x86_64.AppImage" --file "dist/AgentDock-$VERSION-linux-x86_64.AppImage" --out "$patch"
+            if [ -f "$patch" ]; then
+              echo "SIGN_EXTRA=--delta $patch --delta-from $from" >> "$GITHUB_ENV"
+              echo "LINUX_PATCH=$patch" >> "$GITHUB_ENV"
+            fi
+          fi
       - name: Sign
         if: env.DRY_RUN != 'true'
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-        run: node scripts/sign-release.mjs --platform linux-x64 --zip "dist/AgentDock-$VERSION-linux-x86_64.AppImage" --version "$VERSION" --commit "$GITHUB_SHA" --out .
+        run: node scripts/sign-release.mjs --platform linux-x64 --zip "dist/AgentDock-$VERSION-linux-x86_64.AppImage" --version "$VERSION" --commit "$GITHUB_SHA" --out . $SIGN_EXTRA
       - name: Add to the release
         if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-$VERSION-linux-x86_64.AppImage" manifest-linux-x64.json manifest-linux-x64.sig
+        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "dist/AgentDock-$VERSION-linux-x86_64.AppImage" manifest-linux-x64.json manifest-linux-x64.sig ${LINUX_PATCH:+"$LINUX_PATCH"}

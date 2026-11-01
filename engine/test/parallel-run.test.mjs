@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,mkdirSync} from 'node:fs';
-import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
-import {execFileSync} from 'node:child_process';
+import {mkdtemp,readFile,rm,stat,utimes,writeFile} from 'node:fs/promises';
+import {execFileSync,spawn} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {childArgs,endStepDown,forwardControl,freeWorktree,runParallel,worktreeFor} from '../src/parallel-run.mjs';
+import {childArgs,childEnv,defaultRunCheck,shareElevations,forwardControl,freeWorktree,readChildRecord,runParallel,spawnChildEngine,stopOrphanChildren,worktreeFor,writeChildRecord} from '../src/parallel-run.mjs';
+import {deferTask} from '../src/defer-task.mjs';
 import {DashboardState} from '../src/dashboard-state.mjs';
-import {STEP_DOWN,TUNING,loadStepDown,parseTuning,stepDown,useTuning} from '../src/engine-tuning.mjs';
+
 import {RUN,useRunLimits,watchUsage} from '../src/run-budget.mjs';
 
 async function repo(t){
@@ -27,9 +28,9 @@ const commitIn=async(git,{task,worktree})=>{
 const started=(events,id)=>events.find(e=>e.type==='parallel-task-started'&&e.taskId===id)?.worktree;
 const readJson=file=>readFile(file,'utf8').then(JSON.parse,()=>({}));
 
-test('child engines get the parent arguments for one task in its worktree, without step-down',()=>{
+test('child engines get the parent arguments for one task in its worktree',()=>{
  const args=childArgs(['--workspace','C:/p','--objective','Build','--parallel','3','--auto-continue','false','--step-down','true','--task','old.json'],{worktree:'C:/p-parallel/A',stateDir:'C:/s/A',taskFile:'C:/s/A/task.json'});
- assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--step-down','false']);
+ assert.deepEqual(args,['--objective','Build','--workspace','C:/p-parallel/A','--state-dir','C:/s/A','--task','C:/s/A/task.json','--single-task','true','--auto-continue','true','--supervisor','off','--local-server-managed','external','--parallel-child','true']);
  assert.equal(worktreeFor(path.join('C:','work','proj'),'T 1-2'),path.join('C:','work','proj-parallel','T_1-2'));
 });
 
@@ -176,6 +177,57 @@ test('each task engine\'s tokens and spend count toward the run and the day, onc
  assert.equal(day.costUsd,1);
 });
 
+test("the run's Elevation limit is split between a round's task engines and their Elevations count toward it",async t=>{
+ assert.deepEqual(shareElevations({max:0,used:0},2),[null,null]);
+ assert.deepEqual(shareElevations({max:3,used:0},2),[2,1]);
+ assert.deepEqual(shareElevations({max:1,used:0},2),[1,0]);
+ assert.deepEqual(shareElevations({max:2,used:5},2),[0,0]);
+ const base=['--objective','B','--max-elevations','2','--sol-reassessment','true'];
+ const opts={worktree:'W',stateDir:'S',taskFile:'T'};
+ const flag=(args,name)=>args.filter((_,i)=>args[i-1]===name);
+ assert.deepEqual(flag(childArgs(base,opts),'--max-elevations'),['2'],'no limit: unchanged');
+ assert.deepEqual(flag(childArgs(base,{...opts,elevations:1}),'--max-elevations'),['1']);
+ const none=childArgs(base,{...opts,elevations:0});
+ assert.deepEqual([flag(none,'--max-elevations'),flag(none,'--sol-reassessment')],[[],['false']]);
+ const {ws,stateDir,git}=await repo(t);
+ let assessments=0,used=0;const given=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,maxRounds:1,
+  elevations:()=>({max:3,used}),addElevations:n=>{used+=n;},
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:assessments===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async run=>{given.push(run.elevations);await writeFile(path.join(run.stateDir,'run-report.json'),JSON.stringify({elevations:1}));return commitIn(git,run);},
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async()=>{},readControl:async()=>({})});
+ assert.notEqual(result.status,'blocked',result.output);
+ assert.deepEqual(given.sort(),[1,2]);
+ assert.equal(used,2);
+});
+
+test('a merged task carries its attempts, and its engine\'s usage reaches the run per role',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const when=new Date('2026-10-01T10:00:00Z');
+ let assessments=0;const events=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:{status:'done'}),
+  runChild:async run=>{
+   // The task engine's QA call and its Implementation metrics: a partial sample, then the final one.
+   const call=path.join(run.stateDir,'codex','qa-call');mkdirSync(call,{recursive:true});
+   await writeFile(path.join(call,'prompt.txt'),'You are QA for task A.\n'+'x'.repeat(5000));
+   await writeFile(path.join(call,'events.ndjson'),'{"type":"error","message":"usage limit reached"}\n{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":5}}\n');
+   await utimes(path.join(call,'events.ndjson'),when,when);
+   const metric=(extra)=>JSON.stringify({type:'cline-provider-metrics',timestamp:'2026-10-01T09:00:00.000Z',runStartedAt:'r1',promptTokens:10,generatedTokens:1,...extra});
+   await writeFile(path.join(run.stateDir,'activity.ndjson'),[metric({partial:true}),metric({promptTokens:90,generatedTokens:9}),'{"type":"qa-pass"}'].join('\n')+'\n');
+   return{...(await commitIn(git,run)),attempts:2};
+  },
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async e=>events.push(e),readControl:async()=>({})});
+ assert.equal(result.status,'done');
+ assert.equal(events.find(e=>e.type==='qa-pass').attempt,2);
+ const metrics=events.filter(e=>e.type==='cline-provider-metrics');
+ assert.deepEqual(metrics.map(e=>[e.taskId,e.promptTokens,e.timestamp]),[['A',90,'2026-10-01T09:00:00.000Z']],'the final sample of the attempt, once, at its own time');
+ const copy=path.join(stateDir,'codex','qa-call');
+ assert.equal(await readFile(path.join(copy,'events.ndjson'),'utf8'),'{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":5}}\n','only the usage lines');
+ assert.match(await readFile(path.join(copy,'prompt.txt'),'utf8'),/^You are QA for task A\./);
+ assert.equal((await stat(path.join(copy,'events.ndjson'))).mtimeMs,when.getTime(),'dated as the call was');
+});
+
 test('a task that fails to merge in two rounds stops for you',async t=>{
  const {ws,stateDir,git}=await repo(t);
  let assessments=0;
@@ -217,31 +269,6 @@ test('a second unapproved check command in a row blocks the run',async t=>{
 });
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-test('a merged task ends a saved step-down, and while it lasts task engines work at the stepped-down size',async t=>{
- const {ws,stateDir,git}=await repo(t);
- t.after(()=>useTuning());
- mkdirSync(stateDir,{recursive:true});
- useTuning(parseTuning({'task-mode':'standard'}));
- await loadStepDown(stateDir);
- stepDown({id:'Big',name:'Big',planItems:['Add a']});await STEP_DOWN.saving;
- await writeFile(path.join(stateDir,'deferred-tasks.json'),JSON.stringify([{id:'Big',name:'Big',reason:'Failed review twice',stash:null,stepDown:{from:'standard',to:'eco'}}]));
- const sizing=STEP_DOWN.active?TUNING:null;
- assert.deepEqual(childArgs(['--objective','B','--task-mode','standard','--task-max-files','12'],{worktree:'W',stateDir:'S',taskFile:'T',sizing}),
-  ['--objective','B','--task-mode','eco','--task-max-files','1','--task-max-new-lines','200','--task-max-read-files','3','--workspace','W','--state-dir','S','--task','T','--single-task','true','--auto-continue','true','--step-down','false']);
- const objectives=[],events=[];let n=0;
- const onEvent=async e=>events.push(e);
- const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,
-  assess:async({objective})=>{objectives.push(objective);return ++n===1?{status:'task',task:task('A','a.txt',{planItems:['Add a']})}:{status:'done'};},
-  runChild:async run=>commitIn(git,run),runCheck:async()=>({exitCode:0,output:''}),onEvent,readControl:async()=>({}),onMerged:endStepDown(onEvent)});
- assert.equal(result.status,'done');
- assert.match(objectives[0],/Stepped down: Big/);
- assert.doesNotMatch(objectives[1],/Stepped down/,'the next round plans at the configured size again');
- assert.deepEqual(events.filter(e=>e.type==='task-mode-restored').map(({mode,from})=>({mode,from})),[{mode:'standard',from:'eco'}]);
- assert.equal(TUNING.taskMode,'standard');
- await STEP_DOWN.saving;
- assert.ok(!existsSync(path.join(stateDir,'step-down.json')));
-});
 
 test('Resume reaches a task engine waiting out a usage limit, and the run says once which task waits',async t=>{
  const {ws,stateDir,git}=await repo(t);
@@ -304,4 +331,352 @@ test('control forwarded to one task engine queues its writes, so none is lost',a
  const state=new DashboardState({stateDir:dir});
  await Promise.all([1,2,3,4,5].map(()=>forwardControl([state],'resume')));
  assert.equal((await state.readControl()).resumeGeneration,5);
+});
+
+// ---- Parallel-run fixes: endings recorded, usage-limit wait cleared, quiet children, safe merges, orphans.
+const done=n=>async()=>(n-->0?{status:'task',task:task('A','a.txt')}:{status:'done'});
+const parentState=async(stateDir)=>{const state=new DashboardState({stateDir});await state.initialize({task:{id:'assessment',name:'Assessing',prompt:'p'},workspace:'w'});return state;};
+
+test('a parallel run that ends blocked or for your attention records it, as the normal loop does',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ // Blocked: the working tree is not clean.
+ await writeFile(path.join(ws,'dirty.txt'),'x\n');
+ let state=await parentState(stateDir);const events=[];
+ let result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,assess:done(1),runChild:async()=>{throw new Error('must not run');},
+  onEvent:async e=>{events.push(e);await state.record(e);},readControl:async()=>({})});
+ assert.equal(result.status,'blocked');
+ assert.deepEqual(events.filter(e=>e.type==='blocked').map(e=>e.qa),[result.output]);
+ assert.equal((await state.readLive()).stage,'BLOCKED');
+ await rm(path.join(ws,'dirty.txt'));
+ // Blocked: Assessment found no safe task.
+ events.length=0;
+ result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,assess:async()=>({status:'blocked',output:'No safe task'}),runChild:async()=>{throw new Error('must not run');},
+  onEvent:async e=>{events.push(e);await state.record(e);},readControl:async()=>({})});
+ assert.equal(result.status,'blocked');assert.equal(events.at(-1).type,'blocked');assert.equal(events.at(-1).qa,'No safe task');
+ // Attention: nothing merged.
+ state=await parentState(stateDir);events.length=0;
+ result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,assess:done(1),runChild:async()=>({status:'user-attention',output:'QA failed'}),
+  onEvent:async e=>{events.push(e);await state.record(e);},readControl:async()=>({})});
+ assert.equal(result.status,'user-attention');
+ assert.equal(events.at(-1).type,'user-attention');assert.equal(events.at(-1).qa,result.output);
+ const live=await state.readLive();
+ assert.equal(live.stage,'USER_ATTENTION');assert.equal(live.userAttention,true);assert.equal(live.userAttentionReason,result.output);
+ assert.equal(git(ws,'status','--porcelain'),'');
+});
+
+test('the run leaves the usage-limit wait once no task waits any more, and never ends in it',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const state=await parentState(stateDir);
+ let resumes=0;const events=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:10,assess:done(1),
+  runChild:async run=>{
+   const child=new DashboardState({stateDir:run.stateDir});
+   await child.initialize({task:run.task,workspace:run.worktree});
+   await child.record({type:'waiting-for-codex',operation:'implementation',message:'Usage limit reached'});
+   for(let i=0;i<500&&!((await child.readControl()).resumeGeneration>0);i++)await sleep(10);
+   await child.record({type:'cline-started'});
+   // Still working after the wait: the run must say so before the task ends.
+   for(let i=0;i<300&&!events.some(e=>e.type==='parallel-limit-cleared');i++)await sleep(10);
+   return commitIn(git,run);},
+  runCheck:async()=>({exitCode:0,output:''}),
+  onEvent:async e=>{events.push(e);await state.record(e);if(e.type==='waiting-for-codex')setTimeout(()=>{resumes=1;},30);},
+  readControl:async()=>({resumeGeneration:resumes})});
+ assert.equal(result.status,'done');
+ const at=type=>events.findIndex(e=>e.type===type);
+ assert.ok(at('waiting-for-codex')>=0&&at('waiting-for-codex')<at('parallel-limit-cleared'),'the wait is cleared');
+ assert.ok(at('parallel-limit-cleared')<at('parallel-task-finished'),'while the task still works');
+ assert.equal((await state.readLive()).stage,'complete');
+ // In the live state too: the clearing event takes the run out of WAITING_FOR_LIMIT and drops the limit message.
+ const s2=await parentState(path.join(stateDir,'s2'));
+ await s2.record({type:'waiting-for-codex',taskId:'A',parallel:true,message:'Usage limit reached'});
+ assert.equal((await s2.readLive()).stage,'WAITING_FOR_LIMIT');
+ await s2.record({type:'parallel-limit-cleared',parallel:true});
+ const live=await s2.readLive();assert.equal(live.stage,'waiting');assert.equal(live.codexLimitMessage,null);
+});
+
+test('a run stopped while a task waits out a usage limit ends stopped, not waiting',async t=>{
+ const {ws,stateDir}=await repo(t);
+ const state=await parentState(stateDir);
+ let stop=false;const events=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:10,assess:done(1),
+  runChild:async run=>{
+   const child=new DashboardState({stateDir:run.stateDir});
+   await child.initialize({task:run.task,workspace:run.worktree});
+   await child.record({type:'waiting-for-codex',operation:'qa',message:'Usage limit reached'});
+   for(let i=0;i<300&&!events.some(e=>e.type==='waiting-for-codex');i++)await sleep(10);
+   stop=true;
+   for(let i=0;i<300&&!(await child.readControl()).stopAfterSafePoint;i++)await sleep(10);
+   return{status:'stopped'};},
+  onEvent:async e=>{events.push(e);await state.record(e);},readControl:async()=>({stopAfterSafePoint:stop})});
+ assert.equal(result.status,'stopped');
+ assert.ok(events.some(e=>e.type==='parallel-limit-cleared'));
+ assert.equal((await state.readLive()).stage,'stopped');
+});
+
+test('task engines run without the Supervisor or the notification channels, and with protected paths in their worktree',()=>{
+ const ws=path.resolve('C:/work/proj'),wt=path.resolve('C:/work/proj-parallel/A');
+ const args=childArgs(['--workspace',ws,'--supervisor','pause','--supervisor-review','act','--supervisor-reviewer','claude','--supervisor-may-defer','true','--sv-digest-hours','2','--sv-stall-minutes','5','--objective','B',
+  '--protected-paths',JSON.stringify([path.join(ws,'secrets'),path.resolve('C:/elsewhere/keys'),'.env',ws])],{worktree:wt,stateDir:'S',taskFile:'T'});
+ assert.deepEqual(args.filter(a=>/^--(supervisor|sv-)/.test(a)),['--supervisor'],'only the Supervisor off flag');
+ assert.equal(args[args.indexOf('--supervisor')+1],'off');
+ assert.deepEqual(JSON.parse(args[args.indexOf('--protected-paths')+1]),[path.join(wt,'secrets'),path.resolve('C:/elsewhere/keys'),'.env',wt],'absolute paths in the project name the same path in the worktree');
+ assert.deepEqual(childEnv({AGENT_DOCK_NOTIFY:'{"discord":"x"}',PATH:'p',AGENT_DOCK_PROVIDER_KEY:'k'}),{PATH:'p',AGENT_DOCK_PROVIDER_KEY:'k'});
+});
+
+test('a task engine gets no notification settings and records its pid',async t=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'parallel-spawn-'));
+ t.after(()=>rm(dir,{recursive:true,force:true}));
+ const cli=path.join(dir,'fake-cli.mjs'),childState=path.join(dir,'child');mkdirSync(childState);
+ // A stand-in engine: reports what it inherited and its own pid as its loop result.
+ await writeFile(cli,"import {writeFileSync} from 'node:fs';import path from 'node:path';const dir=process.argv[process.argv.indexOf('--state-dir')+1];writeFileSync(path.join(dir,'loop-result.json'),JSON.stringify({status:'passed',notify:process.env.AGENT_DOCK_NOTIFY??null,pid:process.pid}));\n");
+ const result=await spawnChildEngine({cliPath:cli,args:['--state-dir',childState],stateDir:childState,env:{...process.env,AGENT_DOCK_NOTIFY:'{"discord":"https://discord.com/api/webhooks/1/x"}'}});
+ assert.equal(result.notify,null,'AGENT_DOCK_NOTIFY is not passed on');
+ const record=readChildRecord(childState);
+ assert.equal(record.pid,result.pid);assert.equal(record.parentPid,process.pid);assert.ok(record.startedAt&&record.exitedAt);
+});
+
+test('the parent\'s Supervisor hears of the task engines\' activity during a round',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ let beats=0;
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:10,assess:done(1),
+  runChild:async run=>{
+   const child=new DashboardState({stateDir:run.stateDir});
+   await child.initialize({task:run.task,workspace:run.worktree});
+   for(let i=0;i<5;i++){await child.record({type:'cline-running'});await sleep(40);}
+   return commitIn(git,run);},
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async()=>{},readControl:async()=>({}),onChildActivity:async()=>{beats++;}});
+ assert.equal(result.status,'done');
+ assert.ok(beats>=2,`activity reported (${beats})`);
+});
+
+test('a merge commit that fails is rolled back, and the other tasks still merge',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ // Repository hooks never run for Agent Dock's git (git-safe.mjs), so the commit fails on an empty author name.
+ const name=git(ws,'config','user.name');
+ let checks=0,n=0;const events=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
+  assess:async()=>(++n===1?{status:'task',task:task('A','a.txt')}:n===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async run=>commitIn(git,run),
+  // A's check passes, then its commit is refused; by B's check the name is back.
+  runCheck:async()=>{git(ws,'config','user.name',++checks===1?'':name);return{exitCode:0,output:''};},
+  onEvent:async e=>events.push(e),readControl:async()=>({})});
+ assert.equal(result.status,'done');
+ assert.deepEqual(git(ws,'log','--format=%s').split('\n'),['QA: B','base']);
+ assert.equal(git(ws,'status','--porcelain'),'','nothing of A stays staged');
+ const failed=events.find(e=>e.type==='parallel-merge-failed');
+ assert.equal(failed.taskId,'A');assert.match(failed.message,/could not be committed/);
+ assert.match(git(ws,'branch','--list','agent-dock/*'),/parallel-A-/,'A is kept on its branch');
+});
+
+test('when the rollback after a failed check leaves the change, only its own files are restored',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,assess:done(1),
+  runChild:async run=>commitIn(git,run),
+  // The check edits the file the change added and fails: git reset --merge refuses to drop that edit.
+  runCheck:async(command,cwd)=>{await writeFile(path.join(cwd,'a.txt'),'edited by the check\n');await writeFile(path.join(cwd,'base.txt'),'changed by the check\n');await writeFile(path.join(cwd,'report.txt'),'r\n');return{exitCode:1,output:'1 failing test'};},
+  onEvent:async()=>{},readControl:async()=>({})});
+ assert.equal(result.status,'user-attention');
+ assert.match(result.output,/A its check failed/);
+ assert.equal(git(ws,'status','--porcelain','--untracked-files=all'),'M base.txt\n?? report.txt','other files are left alone');
+ assert.ok(!existsSync(path.join(ws,'a.txt')),'the change itself is gone');
+ assert.equal(await readFile(path.join(ws,'base.txt'),'utf8'),'changed by the check\n');
+ assert.match(result.output,/base\.txt, report\.txt/);
+ assert.equal(git(ws,'log','--format=%s'),'base');
+});
+
+test('files a passing check creates or changes are left alone and stop the round',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,assess:done(1),
+  runChild:async run=>commitIn(git,run),
+  runCheck:async(command,cwd)=>{await writeFile(path.join(cwd,'base.txt'),'changed by the check\n');mkdirSync(path.join(cwd,'coverage'));await writeFile(path.join(cwd,'coverage','lcov.info'),'x\n');return{exitCode:0,output:''};},
+  onEvent:async()=>{},readControl:async()=>({})});
+ assert.equal(result.status,'user-attention');
+ assert.equal(git(ws,'log','-1','--format=%s'),'QA: A');
+ assert.match(result.output,/base\.txt/);
+ assert.equal(await readFile(path.join(ws,'base.txt'),'utf8'),'changed by the check\n','a file that may be yours is never restored');
+ assert.ok(existsSync(path.join(ws,'coverage','lcov.info')),'nor deleted');
+ assert.equal(await readFile(path.join(ws,'a.txt'),'utf8'),'A\n','the merged change stays');
+});
+
+test('a working tree that cannot be restored after a merge stops for you and merges nothing more',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ let n=0;
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
+  assess:async()=>(++n===1?{status:'task',task:task('A','a.txt')}:n===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async run=>commitIn(git,run),
+  // The check leaves a folder git cannot restore file by file (a nested repository).
+  runCheck:async(command,cwd)=>{execFileSync('git',['init','-q',path.join(cwd,'nested')]);await writeFile(path.join(cwd,'nested','x.txt'),'x\n');return{exitCode:0,output:''};},
+  onEvent:async()=>{},readControl:async()=>({})});
+ assert.equal(result.status,'user-attention');
+ assert.match(result.output,/after merging A, the working tree still differs from HEAD in nested\//);
+ assert.match(result.output,/Not merged yet: B \(branch agent-dock\/parallel-B-/);
+ assert.deepEqual(git(ws,'log','--format=%s').split('\n'),['QA: A','base']);
+});
+
+test('tasks set aside at the same time in parallel worktrees each get their own stash entry',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ const trees=['A','B','C'].map(id=>{const wt=path.join(path.dirname(ws),'wt-'+id);git(ws,'worktree','add','-q','-b','b-'+id,wt);return{id,wt};});
+ for(const {id,wt} of trees){await writeFile(path.join(wt,'base.txt'),'edit '+id+'\n');await writeFile(path.join(wt,'new-'+id+'.txt'),'new '+id+'\n');}
+ const entries=await Promise.all(trees.map(({id,wt})=>deferTask({workspace:wt,stateDir:path.join(stateDir,id),task:{id,name:id},reason:'Parallel '+id}).then(r=>r.entry)));
+ assert.equal(new Set(entries.map(e=>e.stash.ref)).size,3,'three distinct stash commits');
+ for(const [i,{id,wt}] of trees.entries()){
+  assert.equal(git(wt,'status','--porcelain','--untracked-files=all'),'',`${id}'s worktree is clean`);
+  const ref=entries[i].stash.ref;
+  assert.equal(git(ws,'show',`${ref}:base.txt`),'edit '+id,'its own tracked change');
+  assert.equal(git(ws,'show',`${ref}^3:new-${id}.txt`),'new '+id,'and its own untracked file');
+ }
+ const list=git(ws,'stash','list','--format=%H %gs');
+ for(const e of entries)assert.ok(list.includes(e.stash.ref),'each is in the stash list');
+ // A stash built this way applies as one from git stash push.
+ const a=trees[0];git(a.wt,'stash','apply',entries[0].stash.ref);
+ assert.equal(await readFile(path.join(a.wt,'new-A.txt'),'utf8'),'new A\n');
+ assert.equal(await readFile(path.join(a.wt,'base.txt'),'utf8'),'edit A\n');
+});
+
+test('usage a crashed run never counted is counted once at the next round start',async t=>{
+ const {ws,stateDir}=await repo(t);
+ const left=path.join(stateDir,'parallel','A-old');mkdirSync(left,{recursive:true});
+ await writeFile(path.join(left,'child.json'),JSON.stringify({pid:999999,parentPid:1,startedAt:new Date().toISOString(),exitedAt:new Date().toISOString()}));
+ await writeFile(path.join(left,'task.json'),JSON.stringify(task('A','a.txt')));
+ await writeFile(path.join(left,'run-report.json'),JSON.stringify({usage:{input:10,output:2,calls:1}}));
+ // An earlier run's folder without a record is never counted (its usage was counted then).
+ const old=path.join(stateDir,'parallel','B-older');mkdirSync(old,{recursive:true});
+ await writeFile(path.join(old,'run-report.json'),JSON.stringify({usage:{input:99,output:9,calls:1}}));
+ const added=[];
+ const run=()=>runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,assess:done(0),runChild:async()=>{throw new Error('must not run');},
+  onEvent:async()=>{},readControl:async()=>({}),addUsage:async u=>added.push(u)});
+ assert.equal((await run()).status,'done');
+ assert.deepEqual(added,[{input:10,cached:0,output:2,costUsd:0,estimatedUsd:0,calls:1}]);
+ assert.equal(readChildRecord(left).usageImported,true);
+ await run();
+ assert.equal(added.length,1,'once');
+});
+
+test('a task engine that returns without a result still counts its usage, and only once',async t=>{
+ const {ws,stateDir}=await repo(t);
+ const added=[];
+ await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,assess:done(1),
+  runChild:async run=>{writeChildRecord(run.stateDir,{pid:999999,parentPid:process.pid,startedAt:new Date().toISOString(),exitedAt:new Date().toISOString()});return{status:'blocked',output:'The task\'s engine ended without a result.',usage:{input:5,output:1,calls:1}};},
+  onEvent:async()=>{},readControl:async()=>({}),addUsage:async u=>added.push(u)});
+ assert.deepEqual(added,[{input:5,cached:0,output:1,costUsd:0,estimatedUsd:0,calls:1}]);
+ await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,assess:done(0),runChild:async()=>({}),onEvent:async()=>{},readControl:async()=>({}),addUsage:async u=>added.push(u)});
+ assert.equal(added.length,1,'not again at the next run');
+});
+
+test('task engines a crashed run left at work are stopped before a new round starts',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ // Two stand-in engines of a crashed parent: one stops at Stop, one ignores it and is ended.
+ const script=path.join(path.dirname(ws),'fake-child.mjs');
+ await writeFile(script,"import {readFileSync} from 'node:fs';import path from 'node:path';const [dir,obey]=process.argv.slice(2);setInterval(()=>{let c={};try{c=JSON.parse(readFileSync(path.join(dir,'control.json'),'utf8'));}catch{}if(obey==='1'&&c.stopAfterSafePoint)process.exit(0);},20);\n");
+ const kids=[];
+ for(const [name,obey] of [['A-old','1'],['B-old','0']]){
+  const dir=path.join(stateDir,'parallel',name);mkdirSync(dir,{recursive:true});
+  const child=spawn(process.execPath,[script,dir,obey],{stdio:'ignore',windowsHide:true});
+  t.after(()=>{try{process.kill(child.pid);}catch{}});
+  await writeFile(path.join(dir,'child.json'),JSON.stringify({pid:child.pid,parentPid:999999,startedAt:new Date().toISOString(),exitedAt:null}));
+  kids.push({name,dir,child,exited:new Promise(r=>child.on('exit',r))});
+ }
+ const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
+ const order=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,
+  assess:async()=>{order.push(kids.map(k=>alive(k.child.pid)));return order.length===1?{status:'task',task:task('C','c.txt')}:{status:'done'};},
+  runChild:async run=>commitIn(git,run),runCheck:async()=>({exitCode:0,output:''}),
+  onEvent:async e=>order.push(e.type==='parallel-orphans-stopped'?[e.type,e.count,e.folders.sort()]:e.type),readControl:async()=>({}),
+  stopOrphans:o=>stopOrphanChildren({...o,waitMs:1500,pollMs:50})});
+ assert.equal(result.status,'done');
+ assert.deepEqual(order[0],['parallel-orphans-stopped',2,['A-old','B-old']],'found before anything else');
+ assert.deepEqual(order[1],[false,false],'both ended before Assessment ran');
+ await Promise.all(kids.map(k=>k.exited));
+ assert.ok(kids.every(k=>readChildRecord(k.dir).exitedAt),'recorded as ended');
+ assert.equal((await readJson(path.join(kids[0].dir,'control.json'))).stopAfterSafePoint,true,'they got Stop first');
+ assert.equal(order.filter(e=>Array.isArray(e)&&e[0]==='parallel-orphans-stopped').length,1,'the next round finds none');
+});
+
+// ---- One budget for the whole run (Unattended mode too), the combined check through the QA runner, the round's live view.
+
+test('task engines run without budget limits of their own; the run keeps its limits and pricing',()=>{
+ const args=childArgs(['--workspace','C:/p','--objective','Build','--parallel','2','--max-rounds','3','--unattended','true','--max-tokens','1000','--max-cost','2','--max-tokens-day','5000','--max-cost-day','9','--max-tasks','4','--max-hours','2','--prices','[]','--limit-retry-minutes','15','--max-elevations','1'],{worktree:'C:/p-parallel/A',stateDir:'C:/s/A',taskFile:'C:/s/A/task.json'});
+ for(const flag of ['--max-rounds','--max-tokens','--max-cost','--max-tokens-day','--max-cost-day','--max-tasks','--max-hours','--parallel'])assert.ok(!args.includes(flag),flag+' is the run\'s own');
+ const at=flag=>args[args.indexOf(flag)+1];
+ assert.equal(at('--unattended'),'true');assert.equal(at('--prices'),'[]');assert.equal(at('--limit-retry-minutes'),'15');assert.equal(at('--max-elevations'),'1');
+});
+
+test('a run budget reached mid-round stops every task engine, and each task\'s usage counts once',async t=>{
+ const {ws,stateDir}=await repo(t);
+ t.after(()=>useRunLimits());
+ useRunLimits({unattended:true,maxTokens:1000});
+ let stop=false;
+ await watchUsage({setControl:async action=>{if(action==='stop')stop=true;},record:async()=>{}},stateDir);
+ let assessments=0;const seen=[];
+ const usage=(input,output,calls)=>({input,cached:0,output,costUsd:0.25*calls,estimatedUsd:0,calls});
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:10,
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:assessments===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async({task:{id},stateDir:childState})=>{
+   // Each engine records its usage as it works: 600 counted tokens each crosses the run's 1000.
+   await writeFile(path.join(childState,'run-usage.json'),JSON.stringify(usage(500,100,2)));
+   for(let i=0;i<300;i++){if((await readJson(path.join(childState,'control.json'))).stopAfterSafePoint){seen.push(id);break;}await new Promise(r=>setTimeout(r,10));}
+   // Its final report: what it had recorded plus the call that finished after Stop.
+   return{status:'stopped',usage:{tokens:700,...usage(580,120,3)}};},
+  onEvent:async()=>{},readControl:async()=>({stopAfterSafePoint:stop})});
+ assert.equal(result.status,'stopped');
+ assert.deepEqual(seen.sort(),['A','B'],'both task engines got Stop');
+ assert.equal(RUN.limit?.limit,'tokens');
+ assert.deepEqual({...RUN.usage,costUsd:Math.round(RUN.usage.costUsd*100)/100},{input:1160,cached:0,output:240,costUsd:1.5,estimatedUsd:0,calls:6},'live and final usage counted once');
+ assert.equal(RUN.day.tokens,1400);
+ assert.equal((await readJson(path.join(stateDir,'usage-day.json'))).tokens,1400,'the day total lives in the run\'s state folder only');
+});
+
+test('a round limit ends the run between rounds',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ let assessments=0;
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:1,pollMs:20,maxRounds:1,
+  assess:async()=>({status:'task',task:task(`T${++assessments}`,`t${assessments}.txt`)}),
+  runChild:async run=>commitIn(git,run),runCheck:async()=>({exitCode:0,output:''}),onEvent:async()=>{},readControl:async()=>({})});
+ assert.equal(result.status,'stopped');
+ assert.match(result.output,/^Round limit reached: 1 parallel round\./);
+ assert.equal(assessments,1);
+});
+
+test('the combined check runs through the QA runner: an unapproved command never runs, an approved one gets no secrets',async t=>{
+ const {ws,stateDir}=await repo(t);
+ const marker=path.join(ws,'ran.txt');
+ const refused=await defaultRunCheck(`node -e "require('fs').writeFileSync(${JSON.stringify(marker)},'x')"`,ws,{stateDir});
+ assert.equal(refused.exitCode,1);
+ assert.match(refused.output,/not an approved project check/);
+ assert.equal(existsSync(marker),false);
+ await writeFile(path.join(ws,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(process.env.CODEX_QA===\'1\'&&!process.env.AGENT_DOCK_PROVIDER_KEY?0:7)"'}}));
+ const before=process.env.AGENT_DOCK_PROVIDER_KEY;process.env.AGENT_DOCK_PROVIDER_KEY='sk-test';
+ t.after(()=>{if(before===undefined)delete process.env.AGENT_DOCK_PROVIDER_KEY;else process.env.AGENT_DOCK_PROVIDER_KEY=before;});
+ const passed=await defaultRunCheck('npm test',ws,{stateDir});
+ assert.equal(passed.exitCode,0,passed.output);
+ assert.equal(typeof passed.output,'string');
+});
+
+test('a combined check that hangs is ended after its timeout and fails',async t=>{
+ const {ws,stateDir}=await repo(t);
+ await writeFile(path.join(ws,'package.json'),JSON.stringify({scripts:{test:'node -e "setTimeout(()=>{},600000)"'}}));
+ const started=Date.now();
+ const hung=await defaultRunCheck('npm test',ws,{stateDir,timeoutMs:1500});
+ assert.equal(hung.exitCode,1);
+ assert.match(hung.output,/ended after <1 minutes without finishing/);
+ assert.ok(Date.now()-started<60_000);
+});
+
+test('parallel-round.json follows the round: each task, its folder and branch, and how it ended',async t=>{
+ const {ws,stateDir,git}=await repo(t);
+ let assessments=0;const during=[];
+ const result=await runParallel({workspace:ws,stateDir,objective:'Build it',lanes:2,pollMs:20,
+  assess:async()=>(++assessments===1?{status:'task',task:task('A','a.txt')}:assessments===2?{status:'task',task:task('B','b.txt')}:{status:'done'}),
+  runChild:async run=>{
+   if(run.task.id==='B'){for(let i=0;i<300;i++){const r=await readJson(path.join(stateDir,'parallel-round.json'));if(r.tasks?.every(x=>x.status==='running')){during.push(r);break;}await new Promise(r=>setTimeout(r,10));}return{status:'user-attention',output:'QA failed'};}
+   for(let i=0;i<300&&!during.length;i++)await new Promise(r=>setTimeout(r,10));
+   return commitIn(git,run);},
+  runCheck:async()=>({exitCode:0,output:''}),onEvent:async()=>{},readControl:async()=>({})});
+ assert.equal(result.status,'done');
+ assert.equal(during.length,1,'both tasks showed as running at once');
+ assert.equal(during[0].round,1);assert.equal(during[0].endedAt,null);
+ for(const t of during[0].tasks){assert.ok(existsSync(path.join(stateDir,'parallel',t.folder)),'its state folder');assert.match(t.branch,/^agent-dock\/parallel-/);assert.ok(t.startedAt);}
+ const last=await readJson(path.join(stateDir,'parallel-round.json'));
+ assert.ok(last.endedAt,'the round is marked ended');
+ assert.deepEqual(last.tasks.map(x=>[x.id,x.status]),[['A','merged'],['B','failed']]);
 });

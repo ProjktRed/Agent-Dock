@@ -1,9 +1,10 @@
-import type { Agent, CliConnection, EngineTuning, Project, Role, Settings, WorkflowRole, WorkflowSettings } from "@shared/types";
+import type { Agent, CliConnection, Project, Role, Settings, WorkflowRole, WorkflowSettings } from "@shared/types";
 import path from "node:path";
 import type { EngineRoleEntry } from "@shared/api";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
 import { SECOND_OPINION_ROLE_ID } from "@shared/workflow-templates";
 import { maxLimitsOf, taskModeOf } from "@shared/task-mode";
+import { cleanRunSettings, type RunSettingKind } from "@shared/cli-settings";
 
 export type EngineRole = Exclude<Role, "custom">;
 
@@ -56,16 +57,6 @@ function opencodeConsoleBaseUrl(location: string): string | null {
   }
 }
 
-/** Engine flags for loop limits that differ from the engine defaults (passed only with guardrails off). */
-export const TUNING_FLAGS: [keyof EngineTuning, string][] = [
-  ["elevationAfter", "--elevation-after"],
-  ["resolverMaxStrategies", "--resolver-max-strategies"],
-  ["maxCorrections", "--max-corrections"],
-  ["taskMaxFiles", "--task-max-files"],
-  ["taskMaxNewLines", "--task-max-new-lines"],
-  ["taskMaxReadFiles", "--task-max-read-files"],
-];
-
 /** The agent running a workflow role: an enabled agent with role "custom" whose customRole is the role's id (or its name). */
 export function agentForWorkflowRole(role: WorkflowRole, agents: Agent[]): Agent | null {
   const name = role.name.trim().toLowerCase();
@@ -102,6 +93,8 @@ export function buildEngineArgs(input: {
   settings: Settings;
   roles?: WorkflowRole[];
   protectedRoots?: string[];
+  /** Telegram approvals are set up: an unattended run can still ask (Settings › Ask instead of refuse). */
+  remoteApprovals?: boolean;
 }): EngineLaunchPlan {
   const { project, agents, clis, settings, roles: workflowRoles = [] } = input;
   const problems: string[] = [];
@@ -257,21 +250,19 @@ export function buildEngineArgs(input: {
       }
     }
   }
-  // Workflow roles: read-only reviews run by the agent assigned to each role (Codex or Claude Code).
+  // Second review (Workflow): one read-only review before QA, run by the agent assigned to it (Codex or Claude Code).
+  // Custom roles from earlier versions (planners, after-pass reports, other reviews) are not run any more.
   const roleEntries: EngineRoleEntry[] = [];
-  for (const role of workflowRoles.filter((r) => r.enabled)) {
-    const secondOpinion = role.id === SECOND_OPINION_ROLE_ID;
-    if (secondOpinion && (role.stage !== "before-qa" || !role.gate || !role.instructions.trim())) {
-      problems.push("Second-opinion QA must be a before-QA gate with review instructions.");
-      continue;
-    }
-    const roleProblem = (message: string) => (secondOpinion ? problems : warnings).push(message);
-    if (!role.instructions.trim()) { warnings.push(`Workflow role “${role.name}” has no instructions and is skipped.`); continue; }
+  const retired = workflowRoles.filter((r) => r.enabled && r.id !== SECOND_OPINION_ROLE_ID);
+  if (retired.length) warnings.push(`Custom workflow roles are no longer run: ${retired.map((r) => r.name).join(", ")}. Workflow has one Second review before QA.`);
+  for (const role of workflowRoles.filter((r) => r.enabled && r.id === SECOND_OPINION_ROLE_ID)) {
+    const roleProblem = (message: string) => problems.push(message);
+    if (!role.instructions.trim()) { problems.push("The Second review needs instructions (Workflow)."); continue; }
     const agent = agentForWorkflowRole(role, agents);
     const kind = orchestratorKind(agent);
-    if (!agent) { roleProblem(`Workflow role “${role.name}” has no enabled agent (Workflow › ${role.name} › Runs on).`); continue; }
-    if (!kind) { roleProblem(`Workflow role “${role.name}”: agent “${agent.name}” must use Codex CLI or Claude Code.`); continue; }
-    if (secondOpinion && kind === orchestrator) { problems.push("Second-opinion QA must use a different CLI from the QA agent."); continue; }
+    if (!agent) { roleProblem("The Second review has no enabled agent (Workflow › Runs on)."); continue; }
+    if (!kind) { roleProblem(`The Second review's agent “${agent.name}” must use Codex CLI or Claude Code.`); continue; }
+    if (kind === orchestrator) { problems.push("The Second review must use a different CLI from the QA agent."); continue; }
     const model = agent.model.trim();
     if (model && wrongProviderModel(kind, model)) {
       guard(`${agent.name}: “${model}” is not a ${kind === "claude" ? "Claude Code" : "Codex"} model.`);
@@ -279,7 +270,7 @@ export function buildEngineArgs(input: {
     }
     usedKinds.add(kind);
     useConnection(agent, role.name);
-    roleEntries.push({ id: role.id, name: role.name, stage: role.stage, gate: role.gate, ...(role.stage === "before-qa" && role.gate && role.fix ? { fix: true } : {}), cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
+    roleEntries.push({ id: role.id, name: role.name, stage: "before-qa", gate: true, cli: kind, ...(model ? { model } : {}), ...(agent.reasoning ? { effort: agent.reasoning } : {}), fast: Boolean(agent.fast), instructions: role.instructions });
   }
   if (roleEntries.length) args.push("--roles-file", path.join(project.stateDir, "workflow-roles.json"));
   // Assigned skills per engine role. bounded-task-handoff is the engine's own and always included.
@@ -290,7 +281,7 @@ export function buildEngineArgs(input: {
     if (names.length) skills[key] = [...new Set(names)];
     const text = agent?.instructions?.trim();
     if (text) {
-      if (text.length > AGENT_NOTES_MAX_CHARS) problems.push(`Custom instructions for ${agent!.name} are longer than ${AGENT_NOTES_MAX_CHARS.toLocaleString()} characters; shorten them.`);
+      if (text.length > AGENT_NOTES_MAX_CHARS) problems.push(`Custom instructions for ${agent!.name} are longer than ${AGENT_NOTES_MAX_CHARS.toLocaleString("en-US")} characters; shorten them.`);
       else notes[key] = text;
     }
   };
@@ -303,20 +294,28 @@ export function buildEngineArgs(input: {
   // "When relevant" skills: Assessment sees their descriptions and picks per task; always-assigned ones are not repeated.
   const autoSkills = [...new Set((impl?.autoSkills ?? []).filter((name) => name !== "bounded-task-handoff" && !skills.implementation?.includes(name)))];
   const autoAllImported = Boolean(impl) && impl!.autoAllImported !== false;
-  if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
-  // Parallel tasks: cloud Implementation agents only (a local model server answers one request at a time),
-  // and not in Unattended mode, whose run limits count one engine.
-  const parallel = Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  // The project skill (src/main/project-skill.ts) goes into the same file for every role; the app adds it when it writes the file.
+  if (Object.keys(skills).length || Object.keys(notes).length || autoSkills.length || autoAllImported || project.projectSkill === true) args.push("--skills-file", path.join(project.stateDir, "assigned-skills.json"));
+  // Parallel tasks. Unattended mode too: the run keeps one budget for all its tasks, whose engines run without
+  // limits of their own. On a local model server (0.38) the engine runs at most as many tasks as the server
+  // answers at once: llama.cpp's slots, or the requests at once set on the Ollama connection.
+  // Approve each task (not when unattended: nobody is there to answer) runs one task at a time.
+  const approveTasks = workflow.approveTasks === true && workflow.unattended !== true;
+  const parallel = approveTasks ? 1 : Math.min(4, Math.max(1, Math.floor(Number(workflow.parallelTasks) || 1)));
+  if (approveTasks) args.push("--approve-tasks", "true");
+  if (approveTasks && Number(workflow.parallelTasks) > 1) warnings.push("Approve each task is on, so tasks run one at a time.");
   if (parallel > 1) {
+    args.push("--parallel", String(parallel));
     const local = (implCli?.kind === "cline" || implCli?.kind === "opencode") && impl?.provider !== "openai";
-    if (unattended) warnings.push(`Parallel tasks are off in Unattended mode; tasks run one at a time.`);
-    else if (local) warnings.push(`Parallel tasks need a cloud Implementation agent (a local model server works on one request at a time); tasks run one at a time.`);
-    else args.push("--parallel", String(parallel));
+    if (local && impl?.provider === "ollama") {
+      const at = Math.max(1, Math.floor(Number(clis.find((c) => c.kind === "ollama")?.parallelRequests) || 1));
+      args.push("--ollama-parallel", String(at));
+      if (at < parallel) warnings.push(`Ollama answers ${at} request${at === 1 ? "" : "s"} at once as set on its connection (CLIs › Ollama, OLLAMA_NUM_PARALLEL), so at most ${at} task${at === 1 ? " runs" : "s run"} at once.`);
+    }
   }
-  // Task size: eco uses the tunable sizing below; standard its fixed sizing; max only the limits you set.
+  // Task size: eco and standard use the engine's own sizing; max only the limits you set.
   const taskMode = taskModeOf(workflow);
   if (taskMode !== "eco") args.push("--task-mode", taskMode);
-  if (taskMode !== "eco" && workflow.stepDown === false) args.push("--step-down", "false");
   if (taskMode === "max") {
     const max = maxLimitsOf(workflow);
     if (max.files) args.push("--task-max-files", String(max.files));
@@ -326,23 +325,27 @@ export function buildEngineArgs(input: {
     const at = args.indexOf("--timeout-seconds");
     if (max.timeoutMinutes && at >= 0) args[at + 1] = String(max.timeoutMinutes * 60);
   }
-  // Loop limits: fixed with guardrails on (engine defaults); passed when they differ with guardrails off.
-  if (!guarded) {
-    for (const [key, flag] of TUNING_FLAGS) {
-      if (taskMode !== "eco" && key.startsWith("taskMax")) continue;
-      const value = settings.tuning?.[key];
-      if (typeof value === "number" && value !== DEFAULT_SETTINGS.tuning[key]) args.push(flag, String(value));
-    }
-  }
   // Custom executable locations for every orchestrator CLI in use.
   for (const [kind, conn] of usedConnections) {
     if (conn?.location && conn.location !== kind) args.push(kind === "claude" ? "--claude-command" : "--codex-exe", conn.location);
   }
+  // Per-run settings of those CLIs and of a Cline or OpenCode implementation (CLIs › Settings); the engine
+  // checks them against its own list again.
+  const settingConnections: [RunSettingKind, CliConnection][] = [...usedConnections];
+  if (impl && implCli && (implCli.kind === "cline" || implCli.kind === "opencode")) settingConnections.push([implCli.kind, implCli]);
+  const runSettings = Object.fromEntries(settingConnections.map(([kind, conn]) => [kind, cleanRunSettings(kind, conn.runSettings)]).filter(([, s]) => Object.keys(s).length));
+  if (Object.keys(runSettings).length) args.push("--cli-settings", JSON.stringify(runSettings));
   if (project.pendingTaskFile) args.push("--task", project.pendingTaskFile);
   args.push("--sol-reassessment", String(automaticElevation));
   const retentionDays = input.settings.general.retentionDays ?? DEFAULT_SETTINGS.general.retentionDays ?? 30;
   args.push("--retention-days", String(Number.isFinite(retentionDays) && retentionDays >= 0 ? retentionDays : 30));
   args.push("--tool-guard", String(unattended || workflow.toolGuard));
+  if (settings.safety?.sandboxChecks === true) args.push("--sandbox-checks", "true");
+  if (settings.safety?.sandboxAgents === true) args.push("--sandbox-agents", "true");
+  if (settings.safety?.webAccess === true) args.push("--web-access", "true");
+  // Ask instead of refuse: unattended, only where an answer can come (Telegram); otherwise refused at once as before.
+  const askMinutes = Math.min(60, Math.max(0, Math.floor(Number(settings.safety?.askMinutes ?? 0)) || 0));
+  if (askMinutes > 0 && (workflow.unattended !== true || input.remoteApprovals === true)) args.push("--ask-minutes", String(askMinutes));
   const sv = { ...DEFAULT_SETTINGS.workflow.supervisor!, ...workflow.supervisor };
   const count = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
   args.push("--supervisor", ["off", "alert", "pause", "stop"].includes(sv.mode) ? sv.mode : "alert");
@@ -350,19 +353,6 @@ export function buildEngineArgs(input: {
     args.push("--sv-stall-minutes", String(count(sv.stallMinutes)), "--sv-repeat-failures", String(Math.floor(count(sv.repeatFailures))), "--sv-refusals", String(Math.floor(count(sv.refusals))),
       "--sv-tokens-per-task", String(Math.round(count(sv.millionTokensPerTask) * 1_000_000)), "--sv-plan-drift", String(Math.floor(count(sv.planDrift))),
       "--sv-scope-paths", String(Math.floor(count(sv.scopePaths))), "--sv-digest-hours", String(count(sv.digestHours)));
-    const review = sv.review === "propose" || sv.review === "act" ? sv.review : "off";
-    args.push("--supervisor-review", review);
-    if (review !== "off") {
-      if (sv.reviewer && sv.reviewer !== "auto") args.push("--supervisor-reviewer", sv.reviewer);
-      if (sv.reviewerModel?.trim()) args.push("--supervisor-model", sv.reviewerModel.trim());
-      if (sv.reviewer === "local") {
-        if (!sv.reviewerBaseUrl?.trim()) problems.push("The local Supervisor reviewer needs a server URL.");
-        else args.push("--supervisor-base-url", sv.reviewerBaseUrl.trim());
-        if (!sv.reviewerModel?.trim()) problems.push("The local Supervisor reviewer needs a model name.");
-      }
-      args.push("--supervisor-may-defer", String(sv.mayDefer === true), "--sv-review-max", String(Math.floor(count(sv.reviewMax ?? 6))),
-        "--sv-plan-proposals", String(sv.planProposals !== false));
-    }
   }
   if (unattended) {
     const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...workflow.unattendedLimits };

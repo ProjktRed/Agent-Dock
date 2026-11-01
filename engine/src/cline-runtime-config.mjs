@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { createProviderDescriptor } from "./runtime/provider.mjs";
+import { brokerProviderKey, createProviderDescriptor } from "./runtime/provider.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 // llama-server's own default port.
@@ -49,12 +49,16 @@ export function findLlamaServer(env = process.env, platform = process.platform, 
   return null;
 }
 
+export const LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
+
 /**
  * Arguments for starting llama-server directly (no launcher script): router mode over the models folder,
  * on the connection's host and port, with metrics for token counts and the context the worker is told.
  */
 export function llamaServerArgs({ baseUrl, modelsDir, contextTokens = null, thinking = "none" }) {
   const url = new URL(baseUrl);
+  // A server Agent Dock starts has no API key, so it listens on this computer only.
+  if (!LOOPBACK_HOST.test(url.hostname)) throw new Error(`Agent Dock starts llama.cpp only on this computer (127.0.0.1), not on ${url.hostname}. Start a server for a network address yourself, with an API key.`);
   const args = ["--models-dir", modelsDir, "--host", url.hostname, "--port", url.port || "80", "--metrics"];
   if (contextTokens) args.push("--ctx-size", String(contextTokens));
   if (thinking && thinking !== "none") args.push("--reasoning", "on", "--reasoning-effort", thinking);
@@ -176,6 +180,9 @@ export async function prepareClineRuntime({
   thinking = "none",
   providerBaseUrl,
   providerApiKeyEnv = "AGENT_DOCK_PROVIDER_KEY",
+  // A parallel task (0.38, --local-server-managed external): the run checked the server before the round,
+  // so this engine never starts one (several task engines starting it at once would race).
+  externalServer = false,
 }) {
   if (provider === "llamacpp") {
     const baseUrl = llamaCppUrl.replace(/\/$/, "");
@@ -186,6 +193,7 @@ export async function prepareClineRuntime({
         await checkLlamaCpp({ fetchImpl, baseUrl, model });
       } catch (error) {
         if (error.code !== "LLAMACPP_UNAVAILABLE") throw error;
+        if (externalServer) throw new Error(`${error.message}. A parallel task uses the llama.cpp server the run started or found, and never starts one itself.`);
         // A launcher script wins; otherwise llama-server from PATH serves the models folder directly.
         const server = llamaCppLauncher ? null : llamaCppModelsDir ? findServerImpl() : null;
         if (llamaCppLauncher) await startServerImpl(llamaCppLauncher, llamaCppLauncherArgs({ modelsDir: llamaCppModelsDir, thinking }));
@@ -257,9 +265,11 @@ export async function prepareClineRuntime({
     };
   }
   if (provider === "openrouter" || provider === "opencode" || provider === "openai") {
+    // Cline gets the key broker's address and token, never the key (key-broker.mjs).
+    const broker = await brokerProviderKey({ provider, providerBaseUrl, providerApiKeyEnv });
     const descriptor = createProviderDescriptor({
       provider, model, contextTokens, maxOutputTokens, timeoutSeconds,
-      providerBaseUrl, providerApiKeyEnv, fetchImpl,
+      providerBaseUrl, providerApiKeyEnv, fetchImpl, broker,
     });
     const remoteModel = descriptor.model;
     const dataDir = path.join(path.resolve(stateDir), "cline-data");
@@ -275,6 +285,8 @@ export async function prepareClineRuntime({
         provider: clineProvider,
         model: remoteModel,
         ...(provider === "openai" || provider === "opencode" ? { client: "openai-compatible", protocol: "openai-chat", baseUrl: descriptor.baseUrl } : {}),
+        // OpenRouter keeps Cline's own provider (its cost reporting) with the broker's address in place of its default.
+        ...(provider === "openrouter" && descriptor.brokered ? { baseUrl: descriptor.baseUrl } : {}),
         contextWindow: contextTokens,
         maxTokens: maxOutputTokens,
         timeout: timeoutSeconds * 1000,
@@ -317,8 +329,9 @@ export async function prepareClineRuntime({
       requestedProvider: provider, provider: clineProvider, model: remoteModel,
       baseUrl: descriptor.baseUrl, port: Number(new URL(descriptor.baseUrl).port || (new URL(descriptor.baseUrl).protocol === "https:" ? 443 : 80)),
       ensureReady, cleanupAfterRun, readMetrics: null, providerDescriptor: descriptor,
-      // opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY (not OPENCODE_API_KEY).
-      ...((provider === "openrouter" && descriptor.apiKeyEnv !== "OPENROUTER_API_KEY") || ((provider === "openai" || provider === "opencode") && descriptor.apiKeyEnv !== "OPENAI_API_KEY")
+      // The one variable Cline reads (opencode maps to Cline's openai-compatible client, which reads OPENAI_API_KEY,
+      // not OPENCODE_API_KEY), holding the broker's token. cline-cli-worker.mjs strips every other credential it would inherit.
+      ...(provider === "openrouter" || provider === "openai" || provider === "opencode"
         ? { providerEnv: { [provider === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"]: key } }
         : {}),
     };

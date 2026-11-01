@@ -3,17 +3,20 @@ import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { flushActionLog, verifyActionLog } from "./action-log.mjs";
 import { redactText } from "./redact.mjs";
-import { STEP_DOWN, TUNING } from "./engine-tuning.mjs";
+import { TUNING } from "./engine-tuning.mjs";
 
 // Unattended mode: run-wide limits the engine enforces itself. A limit asks for Stop, so the loop ends at
 // its next safe point (never mid-task), and the end-of-run report says which limit ended it.
 export const RUN = {
   unattended: false, limitRetryMinutes: null, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0, prices: [],
-  startedAt: Date.now(), tasksPassed: 0, planItems: 0, stepDowns: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
+  startedAt: Date.now(), tasksPassed: 0, planItems: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
   usage: { input: 0, cached: 0, output: 0, costUsd: 0, estimatedUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 },
 };
 const NO_LIMITS = { unattended: false, limitRetryMinutes: null, maxTasks: 0, maxHours: 0, maxElevations: 0, maxTokens: 0, maxCost: 0, maxTokensDay: 0, maxCostDay: 0, prices: [] };
 let watched = null; // { state, stateDir } once the run is watched for its token and spend budget
+export const RUN_USAGE_FILE = "run-usage.json";
+/** Budget flags a parallel task's engine runs without: the parent enforces one budget for the whole run. */
+export const BUDGET_FLAGS = ["--max-tasks", "--max-hours", "--max-tokens", "--max-cost", "--max-tokens-day", "--max-cost-day"];
 let dayWrite = Promise.resolve();
 
 function count(value, flag, { decimal = false } = {}) {
@@ -65,7 +68,7 @@ export function parseRunLimits(options) {
 }
 
 export function useRunLimits(limits = {}) {
-  Object.assign(RUN, { ...NO_LIMITS, ...limits, startedAt: Date.now(), tasksPassed: 0, planItems: 0, stepDowns: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
+  Object.assign(RUN, { ...NO_LIMITS, ...limits, startedAt: Date.now(), tasksPassed: 0, planItems: 0, failures: 0, corrections: 0, elevations: 0, attention: 0, limit: null, approved: [],
     usage: { input: 0, cached: 0, output: 0, costUsd: 0, estimatedUsd: 0, calls: 0 }, day: { date: null, tokens: 0, costUsd: 0 } });
   watched = null;
 }
@@ -124,8 +127,9 @@ export async function addRunUsage({ input = 0, cached = 0, output = 0, costUsd =
   if (RUN.day.date !== today()) RUN.day = { date: today(), tokens: 0, costUsd: 0 };
   RUN.day.tokens += countedTokens({ input, cached, output }); RUN.day.costUsd += costUsd;
   if (!watched) return;
-  const { state, stateDir } = watched, day = { ...RUN.day };
-  dayWrite = dayWrite.then(() => atomicWriteJson(path.join(stateDir, "usage-day.json"), day)).catch(() => {});
+  const { state, stateDir } = watched, day = { ...RUN.day }, run = { ...RUN.usage, updatedAt: new Date().toISOString() };
+  // run-usage.json: the run's totals so far, which a parallel run reads from each task's engine while it works.
+  dayWrite = dayWrite.then(() => atomicWriteJson(path.join(stateDir, "usage-day.json"), day)).then(() => atomicWriteJson(path.join(stateDir, RUN_USAGE_FILE), run)).catch(() => {});
   await dayWrite;
   if (RUN.maxTokens && runTokens() >= RUN.maxTokens) await reachLimit(state, "tokens", `Token budget reached: ${n(runTokens())} of ${n(RUN.maxTokens)} tokens this run.`);
   else if (RUN.maxCost && RUN.usage.costUsd >= RUN.maxCost) await reachLimit(state, "cost", `Spend budget reached: ${money(RUN.usage.costUsd)} of ${money(RUN.maxCost)} this run.`);
@@ -194,6 +198,10 @@ export function elevationAllowed() {
   return !RUN.maxElevations || RUN.elevations < RUN.maxElevations;
 }
 
+/** A parallel run's Elevation limit (0: none) and what its task engines used of it so far. */
+export const elevationBudget = () => ({ max: RUN.maxElevations, used: RUN.elevations });
+export function addRunElevations(count) { if (Number.isInteger(count) && count > 0) RUN.elevations += count; }
+
 async function reachLimit(state, limit, detail) {
   if (RUN.limit) return;
   RUN.limit = { limit, detail, at: new Date().toISOString() };
@@ -203,19 +211,18 @@ async function reachLimit(state, limit, detail) {
 
 /** Counts the run's outcomes from loop events and stops the run once a limit is reached. */
 export async function trackRunEvent(state, event) {
-  if (event.type === "task-stepped-down") RUN.stepDowns++;
   if (event.type === "qa-pass") { RUN.tasksPassed++; RUN.planItems += Array.isArray(event.planItems) ? event.planItems.length : 0; RUN.approved.push({ taskId: event.taskId ?? state?.live?.task?.id ?? null, name: state?.live?.task?.name ?? null, at: new Date().toISOString() }); }
   else if (event.type === "qa-fail") RUN.failures++;
   else if (event.type === "retry") RUN.corrections++;
   else if (event.type === "sol-reassessment-started") RUN.elevations++;
   else if (event.type === "user-attention" || event.type === "blocked") RUN.attention++;
-  if (event.type === "qa-pass" && RUN.maxTasks && RUN.tasksPassed >= RUN.maxTasks) await reachLimit(state, "tasks", `Task limit reached: ${RUN.tasksPassed} approved task(s).`);
+  if (event.type === "qa-pass" && RUN.maxTasks && RUN.tasksPassed >= RUN.maxTasks) await reachLimit(state, "tasks", `Task limit reached: ${RUN.tasksPassed} approved task${RUN.tasksPassed === 1 ? "" : "s"}.`);
 }
 
 /** Asks for Stop when the run's time limit passes; the current task still finishes. */
 export function startDeadline(state) {
   if (!RUN.maxHours) return null;
-  const timer = setTimeout(() => void reachLimit(state, "hours", `Time limit reached: ${RUN.maxHours} hour(s).`), RUN.maxHours * 3_600_000);
+  const timer = setTimeout(() => void reachLimit(state, "hours", `Time limit reached: ${RUN.maxHours} hour${RUN.maxHours === 1 ? "" : "s"}.`), RUN.maxHours * 3_600_000);
   timer.unref();
   return timer;
 }
@@ -227,8 +234,7 @@ export async function writeRunReport(stateDir, result) {
     unattended: RUN.unattended, startedAt: new Date(RUN.startedAt).toISOString(), endedAt: ended.toISOString(),
     hours: Math.round(((ended.getTime() - RUN.startedAt) / 3_600_000) * 100) / 100,
     status: result.status, reason: RUN.limit?.detail ?? result.output ?? null, limit: RUN.limit?.limit ?? null,
-    // The configured task size (a step-down still in force at the end does not change it).
-    taskMode: STEP_DOWN.active?.configured.taskMode ?? TUNING.taskMode, planItems: RUN.planItems, stepDowns: RUN.stepDowns,
+    taskMode: TUNING.taskMode, planItems: RUN.planItems,
     tasksApproved: RUN.tasksPassed, qaFailures: RUN.failures, corrections: RUN.corrections, elevations: RUN.elevations, needsAttention: RUN.attention,
     supervisorAlerts: result.supervisorAlerts ?? 0,
     approved: RUN.approved.slice(-200),
@@ -244,7 +250,7 @@ export async function writeRunReport(stateDir, result) {
   const line = (label, value) => `- ${label}: ${value}`;
   await writeFile(path.join(stateDir, "run-report.md"), [
     `# Run report`, "",
-    line("Mode", report.unattended ? "Unattended" : "Attended"), line("Task size", `${report.taskMode}${report.stepDowns ? ` (${report.stepDowns} step-down(s))` : ""}`), line("Started", report.startedAt), line("Ended", `${report.endedAt} (${report.hours} h)`),
+    line("Mode", report.unattended ? "Unattended" : "Attended"), line("Task size", report.taskMode), line("Started", report.startedAt), line("Ended", `${report.endedAt} (${report.hours} h)`),
     line("Result", report.status), line("Why it ended", String(report.reason ?? "").split(/\r?\n/)[0].slice(0, 300) || "finished"), "",
     line("Tasks approved", report.tasksApproved), line("Plan items finished", report.planItems), line("QA failures", report.qaFailures), line("Corrections", report.corrections), line("Elevations", report.elevations), line("Stops for attention", report.needsAttention), line("Supervisor alerts", `${report.supervisorAlerts} (see supervisor-digest.md)`), "",
     line("Tokens", `${n(report.usage.tokens)} counted toward limits (new input ${n(report.usage.input - report.usage.cached)} + output ${n(report.usage.output)}); ${n(report.usage.cached)} more read from prompt caches, not counted; ${report.usage.calls} call(s)`),

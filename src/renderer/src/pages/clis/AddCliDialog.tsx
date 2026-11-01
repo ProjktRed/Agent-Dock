@@ -3,6 +3,7 @@ import type { CliConnection, CliHealth, CliKind, PathDetection } from "@shared/t
 import { cleanError, useApp } from "../../store";
 import { connectionMeta, uid } from "../../lib/format";
 import { Modal, Spinner, St } from "../../components/ui";
+import { CAPPED_KEY_HINT } from "@shared/key-limit";
 
 const TYPES: { kind: CliKind; label: string; desc: string; exe: boolean; defaultLocation: string }[] = [
   { kind: "codex", label: "Codex CLI", desc: "OpenAI coding agent · orchestrator", exe: true, defaultLocation: "codex" },
@@ -127,7 +128,7 @@ export function AddCliDialog({ onClose }: { onClose: () => void }) {
             <label className="field"><span>Startup timeout (s)</span><input className="input" inputMode="numeric" value={startup} onChange={(e) => setStartup(Number(e.target.value) || 15)} /></label>
             <label className="field"><span>Request timeout (s)</span><input className="input" inputMode="numeric" value={request} onChange={(e) => setRequest(Number(e.target.value) || 8)} /></label>
             {kind === "openai" ? (
-              <label className="field" style={{ gridColumn: "1 / -1" }}><span>API key (optional)</span><input className="input mono" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Saved encrypted with Windows DPAPI; never shown again" /></label>
+              <label className="field" style={{ gridColumn: "1 / -1" }}><span>API key (optional)</span><input className="input mono" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Saved encrypted with Windows DPAPI; never shown again" /><span className="hint">{CAPPED_KEY_HINT}</span></label>
             ) : (
               <div className="banner" style={{ gridColumn: "1 / -1" }}><span className="dot info" style={{ marginTop: 5 }} /><span>{type.exe ? "Authentication is handled by the CLI itself. If the test reports sign-in required, sign in from a terminal (e.g. codex login, claude auth login)." : "Local runtimes need no credentials."}</span></div>
             )}

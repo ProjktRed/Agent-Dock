@@ -1,4 +1,44 @@
-import type { ConnectionState, RunState } from "@shared/types";
+import type { ConnectionState, ProjectStatus, RunState } from "@shared/types";
+
+/** The UI is in English, so dates and numbers are too, whatever the Windows region. */
+const LOCALE = "en-US";
+
+/** A whole count with thousands separators: 98,304. */
+export function num(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString(LOCALE);
+}
+
+/** "1 skill", "2 skills"; `many` for irregular plurals ("branch" → "branches"). */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** An engine status word in sentence case: "NOT RUN" → "Not run", "not_run" → "Not run". Mixed-case text stays as it is. */
+export function sentenceCase(value: string): string {
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) return value;
+  return value.replace(/[_]+/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
+/** Oct 20 */
+export function shortDate(when: string | number | Date): string {
+  return new Date(when).toLocaleDateString(LOCALE, { month: "short", day: "numeric" });
+}
+
+/** Oct 20, 2026 */
+export function longDate(when: string | number | Date): string {
+  return new Date(when).toLocaleDateString(LOCALE, { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** Oct 20, 2026, 14:05 */
+export function dateTime(when: string | number | Date): string {
+  return new Date(when).toLocaleString(LOCALE, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+/** 14:05 */
+export function hourMinute(when: string | number | Date): string {
+  return new Date(when).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
 
 export function tokens(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -23,12 +63,12 @@ export function ago(iso: string | null | undefined): string {
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return shortDate(iso);
 }
 
 export function clock(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(iso).toLocaleTimeString(LOCALE, { hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export const runTone: Record<RunState, { dot: string; text: string; live?: boolean }> = {
@@ -43,6 +83,17 @@ export const runTone: Record<RunState, { dot: string; text: string; live?: boole
   blocked: { dot: "err", text: "err" },
   "waiting-limit": { dot: "warn", text: "warn" },
 };
+
+/**
+ * A finished run (Overview's header and Progress): the engine is not running, nothing was interrupted
+ * mid-step, and it either reported "Objective complete" or stopped/idled with every plan item checked.
+ * Attention, blocked, paused and waiting states never count.
+ */
+export function runFinished(s: Pick<ProjectStatus, "processAlive" | "runState" | "plan" | "interrupted">): boolean {
+  if (s.processAlive || s.interrupted) return false;
+  const planDone = s.plan.total > 0 && s.plan.completed >= s.plan.total;
+  return s.runState === "complete" || (planDone && (s.runState === "idle" || s.runState === "stopped"));
+}
 
 export const connectionMeta: Record<ConnectionState, { label: string; tone: string }> = {
   connected: { label: "Connected", tone: "ok" },
@@ -97,4 +148,9 @@ const STAGE_LABELS: Record<string, string> = {
 export function engineStageLabel(stage: string | null | undefined): string {
   if (!stage) return "—";
   return STAGE_LABELS[stage] ?? stage.replace(/[-_]+/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
+/** Changed files in the working tree: all of them, though the status lists only the first ones. */
+export function changedCount(git: { changedFiles: unknown[]; changedTotal?: number }): number {
+  return git.changedTotal ?? git.changedFiles.length;
 }

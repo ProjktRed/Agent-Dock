@@ -1,0 +1,308 @@
+/* Cyberpunk interface style: neon on black, angled edges, terminal type. No neumorphic shadows.
+   Active when <html data-ui="cyberpunk">; Darker shade adds data-theme="darker". The accent (--a) is set by the app.
+   Every rule is scoped under :root[data-ui="cyberpunk"] so the neumorphic and standard styles are untouched.
+
+   Cut corners use clip-path, which also clips outlines, outer shadows and overflowing children (tooltips, menus).
+   So: only elements that host nothing overflowing are cut, cards holding a [data-tip] tooltip stay square,
+   and cut controls show focus with an inset ring instead of the global outline. */
+
+/* ---------- tokens ---------- */
+:root[data-ui="cyberpunk"] {
+  --cp-bg: #0a0614;
+  --cp-surf: #120b26;
+  --cp-raised: #1a1035;
+  --cp-sunk: #07040f;
+  --cp-line: #2e2356;
+  --cp-on-a: #0a0614;
+  --cp-knob: #4a3f7a;
+  --cp-struct: color-mix(in srgb, var(--a) 40%, transparent);
+  --cp-ui: "Chakra Petch", "Segoe UI", sans-serif;
+  --cp-head: Orbitron, sans-serif;
+  --cp-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  --b: var(--cp-bg);
+  --d: var(--cp-line);
+  --l: var(--cp-raised);
+  --t: #ece8ff;
+  --t2: #a8a1cf;
+  --t-soft: #c9c3ec;
+  --ok: #3dffa2;
+  --warn: #ffb000;
+  --attn: #ff7a1a;
+  --err: #ff3864;
+  --lav: #b98cff;
+  --danger: #ff3864;
+  --c1: #00e5ff; --c2: #ff2bd6; --c3: #c6ff00; --c4: #ffb000; --c5: #ff7a1a; --c6: #ff3864;
+  --sel-bg: color-mix(in srgb, var(--a) 8%, transparent);
+  --sel-edge: inset 2px 0 0 var(--a);
+  --edge: var(--cp-line);
+  /* Zero-size shadows rather than "none", so neumorphic compound shadows ("var(--in-s), 0 0 0 1px …") stay valid. */
+  --out: 0 0 #0000;
+  --out-s: 0 0 #0000;
+  --in: 0 0 #0000;
+  --in-s: 0 0 #0000;
+  --ring: 0 0 0 1px var(--a);
+  /* Tokens read by inline styles in the TSX (fallbacks there keep the neumorphic values). */
+  --radius-ctl: 0;
+  --radius-well-sm: 0;
+  --add-edge: var(--cp-line);
+}
+:root[data-ui="cyberpunk"][data-theme="darker"] {
+  --cp-bg: #05030b;
+  --cp-surf: #0b0718;
+  --cp-raised: #120a26;
+  --cp-sunk: #030207;
+  --cp-line: #241b45;
+}
+
+/* ---------- base ---------- */
+:root[data-ui="cyberpunk"] body { background: var(--cp-bg); color: var(--t); font-family: var(--cp-ui); }
+:root[data-ui="cyberpunk"] a { color: var(--a); }
+:root[data-ui="cyberpunk"] a:hover { color: var(--t); text-shadow: 0 0 8px color-mix(in srgb, var(--a) 60%, transparent); }
+:root[data-ui="cyberpunk"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+:root[data-ui="cyberpunk"] ::-webkit-scrollbar-thumb { background: var(--cp-line); border-radius: 0; border: 0; }
+:root[data-ui="cyberpunk"] ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--a) 50%, var(--cp-line)); }
+:root[data-ui="cyberpunk"] ::selection { background: color-mix(in srgb, var(--a) 35%, transparent); color: var(--t); }
+:root[data-ui="cyberpunk"] .mono { font-family: var(--cp-mono); }
+
+/* ---------- cut corners ---------- */
+:root[data-ui="cyberpunk"] .card { --cut: 14px; }
+:root[data-ui="cyberpunk"] .secnav, :root[data-ui="cyberpunk"] .opt { --cut: 12px; }
+:root[data-ui="cyberpunk"] .btn, :root[data-ui="cyberpunk"] .nav, :root[data-ui="cyberpunk"] .sec { --cut: 8px; }
+/* The diagonal edge has no border of its own, so a 1px line is painted along it with two corner gradients in --cut-c. */
+:root[data-ui="cyberpunk"] :is(.card:not(:has([data-tip])), .secnav, .opt, .btn:not(.ghost), .nav.on, .sec.on) {
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  background-image:
+    linear-gradient(to bottom left, transparent calc(50% - 0.25px), var(--cut-c, var(--cp-line)) 50%, var(--cut-c, var(--cp-line)) calc(50% + 1px), transparent calc(50% + 1.5px)),
+    linear-gradient(to top right, transparent calc(50% - 0.25px), var(--cut-c, var(--cp-line)) 50%, var(--cut-c, var(--cp-line)) calc(50% + 1px), transparent calc(50% + 1.5px));
+  background-position: top right, bottom left;
+  background-size: var(--cut) var(--cut);
+  background-repeat: no-repeat;
+  background-origin: border-box;
+  background-clip: border-box;
+}
+/* Clipped controls: the outline would be cut off, so focus is an inset ring. */
+:root[data-ui="cyberpunk"] :is(.opt, .btn:not(.ghost), .nav.on, .sec.on):focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--a); }
+:root[data-ui="cyberpunk"] :is(.btn.primary, .btn.danger-fill):focus-visible { box-shadow: inset 0 0 0 2px var(--cp-on-a), inset 0 0 0 3px var(--t); }
+
+/* ---------- type ---------- */
+:root[data-ui="cyberpunk"] .h1, :root[data-ui="cyberpunk"] h1 { font-family: var(--cp-head); font-weight: 800; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: 0 0 14px color-mix(in srgb, var(--a) 50%, transparent); }
+:root[data-ui="cyberpunk"] .h2, :root[data-ui="cyberpunk"] h2 { font-family: var(--cp-head); font-weight: 600; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--a); }
+/* Dialog titles carry an inline 17px size; Orbitron caps at that size crowd the close button. */
+:root[data-ui="cyberpunk"] .modal .h2 { font-size: 15px !important; }
+:root[data-ui="cyberpunk"] .h3 { font-weight: 600; letter-spacing: 0.02em; }
+:root[data-ui="cyberpunk"] .eyebrow, :root[data-ui="cyberpunk"] .menu-h { font-family: var(--cp-mono); font-size: 10.5px; letter-spacing: 0.1em; }
+:root[data-ui="cyberpunk"] .stat b { font-family: var(--cp-head); font-weight: 600; font-size: 17px; letter-spacing: 0.04em; }
+
+/* ---------- shell ---------- */
+:root[data-ui="cyberpunk"] .app { background: var(--cp-bg); }
+:root[data-ui="cyberpunk"] .titlebar { border-bottom: 1px solid var(--cp-struct); box-shadow: none; }
+:root[data-ui="cyberpunk"] .brand span { font-family: var(--cp-head); font-weight: 800; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t); text-shadow: 0 0 10px color-mix(in srgb, var(--a) 45%, transparent); }
+:root[data-ui="cyberpunk"] .side { border-right: 1px solid var(--cp-struct); box-shadow: none; }
+:root[data-ui="cyberpunk"] .statusbar { border-top: 1px solid var(--cp-struct); box-shadow: none; font-family: var(--cp-mono); font-size: 11px; }
+:root[data-ui="cyberpunk"] .statusbar .linkish { font-family: var(--cp-mono); }
+
+:root[data-ui="cyberpunk"] .projsel { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; }
+:root[data-ui="cyberpunk"] .projsel:hover, :root[data-ui="cyberpunk"] .projsel.open { border-color: var(--a); box-shadow: none; }
+:root[data-ui="cyberpunk"] .projsel:disabled { border-color: var(--cp-line); box-shadow: none; opacity: 0.6; }
+
+:root[data-ui="cyberpunk"] .prompt { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; font-family: var(--cp-mono); font-size: 11.5px; }
+:root[data-ui="cyberpunk"] .prompt:hover { border-color: color-mix(in srgb, var(--a) 50%, transparent); }
+:root[data-ui="cyberpunk"] .prompt .i { color: var(--a); }
+:root[data-ui="cyberpunk"] .kbd { font-family: var(--cp-mono); font-size: 10px; border: 1px solid color-mix(in srgb, var(--a) 50%, transparent); border-radius: 0; background: transparent; box-shadow: none; color: var(--a); }
+
+:root[data-ui="cyberpunk"] .menu, :root[data-ui="cyberpunk"] .pop { border: 1px solid var(--cp-struct); border-radius: 0; background: var(--cp-raised); box-shadow: 0 0 24px color-mix(in srgb, var(--a) 18%, transparent), 0 10px 30px rgba(0, 0, 0, 0.6); }
+:root[data-ui="cyberpunk"] .menu-i { border-radius: 0; }
+:root[data-ui="cyberpunk"] .menu-i:hover { box-shadow: none; background: color-mix(in srgb, var(--a) 8%, transparent); color: var(--a); }
+:root[data-ui="cyberpunk"] .menu-i.on { background: color-mix(in srgb, var(--a) 12%, transparent); color: var(--a); box-shadow: inset 2px 0 0 var(--a); }
+:root[data-ui="cyberpunk"] .menu-i.on .mut { color: var(--t2); }
+:root[data-ui="cyberpunk"] .menu-sep { background: var(--cp-line); box-shadow: none; }
+
+:root[data-ui="cyberpunk"] .pill { border: 1px solid color-mix(in srgb, var(--ok) 50%, transparent); border-radius: 0; background: transparent; box-shadow: none; font-family: var(--cp-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+:root[data-ui="cyberpunk"] .pill.attn { border-color: color-mix(in srgb, var(--attn) 55%, transparent); box-shadow: none; }
+
+:root[data-ui="cyberpunk"] .wc:hover { background: var(--cp-raised); }
+:root[data-ui="cyberpunk"] .wc.close:hover { background: var(--err); color: var(--cp-on-a); }
+
+:root[data-ui="cyberpunk"] .updnote { border: 1px solid color-mix(in srgb, var(--attn) 50%, transparent); border-radius: 0; background: transparent; box-shadow: none; }
+
+/* sidebar and section navigation */
+:root[data-ui="cyberpunk"] .nav, :root[data-ui="cyberpunk"] .sec { border: 1px solid transparent; border-radius: 0; text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; --cut-c: color-mix(in srgb, var(--a) 50%, transparent); }
+:root[data-ui="cyberpunk"] .nav:hover, :root[data-ui="cyberpunk"] .sec:hover { color: var(--t); box-shadow: none; background-color: color-mix(in srgb, var(--a) 5%, transparent); }
+:root[data-ui="cyberpunk"] .nav.on, :root[data-ui="cyberpunk"] .sec.on,
+:root[data-ui="cyberpunk"] .nav.on:hover, :root[data-ui="cyberpunk"] .sec.on:hover { border-color: color-mix(in srgb, var(--a) 50%, transparent); background-color: color-mix(in srgb, var(--a) 10%, transparent); color: var(--a); font-weight: 600; box-shadow: none; text-shadow: 0 0 8px color-mix(in srgb, var(--a) 40%, transparent); }
+:root[data-ui="cyberpunk"] .nav.on .i { color: var(--a); }
+:root[data-ui="cyberpunk"] .nav.on .badge { font-weight: 400; box-shadow: none; text-shadow: none; }
+:root[data-ui="cyberpunk"] .badge { font-family: var(--cp-mono); font-size: 10px; border: 1px solid var(--cp-line); border-radius: 0; background: transparent; box-shadow: none; }
+:root[data-ui="cyberpunk"] .badge.err { border-color: color-mix(in srgb, var(--err) 50%, transparent); }
+:root[data-ui="cyberpunk"] .badge.attn { border-color: color-mix(in srgb, var(--attn) 50%, transparent); }
+:root[data-ui="cyberpunk"] .sidefoot { border: 1px dashed var(--cp-line); border-radius: 0; box-shadow: none; font-family: var(--cp-mono); font-size: 10.5px; }
+:root[data-ui="cyberpunk"] .secnav { border: 1px solid var(--cp-line); border-radius: 0; background-color: var(--cp-surf); box-shadow: none; --cut-c: var(--cp-line); }
+
+/* ---------- surfaces ---------- */
+:root[data-ui="cyberpunk"] .card { background-color: var(--cp-surf); border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; --cut-c: var(--cp-line); }
+:root[data-ui="cyberpunk"] .well { background: var(--cp-sunk); border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; }
+:root[data-ui="cyberpunk"] .banner { background: var(--cp-sunk); border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; }
+:root[data-ui="cyberpunk"] .banner.warnb { border-color: color-mix(in srgb, var(--warn) 50%, transparent); box-shadow: inset 2px 0 0 var(--warn); }
+:root[data-ui="cyberpunk"] .banner.errb { border-color: color-mix(in srgb, var(--err) 50%, transparent); box-shadow: inset 2px 0 0 var(--err); }
+:root[data-ui="cyberpunk"] .banner.attnb { border-color: color-mix(in srgb, var(--attn) 50%, transparent); box-shadow: inset 2px 0 0 var(--attn); }
+:root[data-ui="cyberpunk"] .log { background: var(--cp-sunk); border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; color: var(--t-soft); font-family: var(--cp-mono); }
+:root[data-ui="cyberpunk"] .changelog { font-family: var(--cp-mono); font-size: 11.5px; }
+:root[data-ui="cyberpunk"] .skel { border-radius: 0; background: linear-gradient(90deg, var(--cp-surf), var(--cp-line), var(--cp-surf)); background-size: 200% 100%; }
+:root[data-ui="cyberpunk"] .spin { border-radius: 0; border-color: color-mix(in srgb, var(--a) 25%, transparent); border-top-color: var(--a); }
+
+/* ---------- buttons ---------- */
+:root[data-ui="cyberpunk"] .btn { border: 1px solid var(--a); border-radius: 0; background-color: transparent; box-shadow: none; color: var(--a); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; --cut-c: var(--a); }
+:root[data-ui="cyberpunk"] .btn:hover { color: var(--a); background-color: color-mix(in srgb, var(--a) 12%, transparent); box-shadow: none; text-shadow: 0 0 8px color-mix(in srgb, var(--a) 50%, transparent); }
+:root[data-ui="cyberpunk"] .btn:active, :root[data-ui="cyberpunk"] .btn.pressed { background-color: color-mix(in srgb, var(--a) 22%, transparent); box-shadow: none; }
+:root[data-ui="cyberpunk"] .btn.sm { font-size: 11px; }
+:root[data-ui="cyberpunk"] .btn.primary { background-color: var(--a); color: var(--cp-on-a); font-weight: 700; }
+:root[data-ui="cyberpunk"] .btn.primary:hover { color: var(--cp-on-a); background-color: var(--a); filter: brightness(1.12); text-shadow: none; box-shadow: none; }
+:root[data-ui="cyberpunk"] .btn.primary:active { box-shadow: none; filter: brightness(0.92); }
+:root[data-ui="cyberpunk"] .btn.danger { border-color: var(--err); color: var(--err); --cut-c: var(--err); }
+:root[data-ui="cyberpunk"] .btn.danger:hover { color: var(--err); background-color: color-mix(in srgb, var(--err) 12%, transparent); text-shadow: 0 0 8px color-mix(in srgb, var(--err) 50%, transparent); }
+:root[data-ui="cyberpunk"] .btn.danger-fill { border-color: var(--err); background-color: var(--err); color: var(--cp-on-a); font-weight: 700; --cut-c: var(--err); }
+:root[data-ui="cyberpunk"] .btn.danger-fill:hover { color: var(--cp-on-a); background-color: var(--err); filter: brightness(1.12); text-shadow: none; }
+/* Ghost: a low-priority link, no outline and no cut. */
+:root[data-ui="cyberpunk"] .btn.ghost { border-color: transparent; background-color: transparent; color: var(--t2); }
+:root[data-ui="cyberpunk"] .btn.ghost:hover { color: var(--a); background-color: color-mix(in srgb, var(--a) 8%, transparent); text-shadow: none; }
+/* Disabled: dimmed but still outlined, whichever variant. */
+:root[data-ui="cyberpunk"] .btn:disabled, :root[data-ui="cyberpunk"] .btn:disabled:hover { opacity: 0.4; box-shadow: none; filter: none; text-shadow: none; cursor: not-allowed; }
+:root[data-ui="cyberpunk"] .btn:not(.primary):not(.danger-fill):disabled:hover { background-color: transparent; }
+:root[data-ui="cyberpunk"] .btn.primary:disabled, :root[data-ui="cyberpunk"] .btn.primary:disabled:hover { background-color: var(--a); color: var(--cp-on-a); }
+:root[data-ui="cyberpunk"] .btn.danger-fill:disabled, :root[data-ui="cyberpunk"] .btn.danger-fill:disabled:hover { background-color: var(--err); color: var(--cp-on-a); }
+:root[data-ui="cyberpunk"] .btn.danger:disabled { color: var(--err); }
+:root[data-ui="cyberpunk"] .btn.ghost:disabled { opacity: 0.4; }
+
+/* ---------- inputs ---------- */
+:root[data-ui="cyberpunk"] .ta, :root[data-ui="cyberpunk"] .input, :root[data-ui="cyberpunk"] .sel { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; }
+:root[data-ui="cyberpunk"] .ta:focus, :root[data-ui="cyberpunk"] .input:focus, :root[data-ui="cyberpunk"] .sel:focus { border-color: var(--a); box-shadow: 0 0 0 1px color-mix(in srgb, var(--a) 35%, transparent), 0 0 10px color-mix(in srgb, var(--a) 22%, transparent); }
+:root[data-ui="cyberpunk"] .sel:focus-visible { outline: none; }
+:root[data-ui="cyberpunk"] .sel option { background: var(--cp-raised); color: var(--t); }
+:root[data-ui="cyberpunk"] .input::placeholder, :root[data-ui="cyberpunk"] .ta::placeholder { color: #6d6699; }
+:root[data-ui="cyberpunk"] .input.bad { border-color: var(--err); box-shadow: 0 0 0 1px color-mix(in srgb, var(--err) 35%, transparent); }
+:root[data-ui="cyberpunk"] .pop .ta { font-family: var(--cp-mono); font-size: 12px; }
+
+/* ---------- tabs / segmented ---------- */
+:root[data-ui="cyberpunk"] .tabs { gap: 3px; padding: 3px; border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; }
+:root[data-ui="cyberpunk"] .tab { height: 28px; border-radius: 0; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; }
+:root[data-ui="cyberpunk"] .tab.sm { height: 24px; font-size: 10.5px; }
+:root[data-ui="cyberpunk"] .tab:hover { color: var(--a); }
+:root[data-ui="cyberpunk"] .tab.on, :root[data-ui="cyberpunk"] .tab.on:hover { background: var(--a); color: var(--cp-on-a); font-weight: 600; box-shadow: 0 0 10px color-mix(in srgb, var(--a) 35%, transparent); }
+
+/* ---------- chips, tags, support ---------- */
+:root[data-ui="cyberpunk"] .chip { border: 1px solid color-mix(in srgb, currentColor 45%, transparent); border-radius: 0; background: transparent; box-shadow: none; font-family: var(--cp-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+:root[data-ui="cyberpunk"] .chip.dash { border: 1px dashed color-mix(in srgb, currentColor 55%, transparent); }
+:root[data-ui="cyberpunk"] .chip.raised { background: var(--cp-raised); box-shadow: none; }
+:root[data-ui="cyberpunk"] .chip.btnlike { border: 1px solid color-mix(in srgb, currentColor 45%, transparent); }
+:root[data-ui="cyberpunk"] .chip.btnlike:hover { border-color: var(--a); color: var(--a); }
+:root[data-ui="cyberpunk"] .support { border: 1px solid color-mix(in srgb, var(--a) 45%, transparent); border-radius: 0; box-shadow: none; color: var(--a); font-family: var(--cp-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+/* The dot keeps the support kind's own tone so engine / app / saved stay distinguishable. */
+:root[data-ui="cyberpunk"] .support.ok .dot { color: var(--ok); }
+:root[data-ui="cyberpunk"] .support.mut .dot { color: var(--t2); }
+:root[data-ui="cyberpunk"] .lock { font-family: var(--cp-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ---------- dots and status icons ---------- */
+:root[data-ui="cyberpunk"] .dot { border-radius: 0; width: 7px; height: 7px; box-shadow: 0 0 6px currentColor; }
+:root[data-ui="cyberpunk"] .dot.mut { box-shadow: none; }
+:root[data-ui="cyberpunk"] .st { border-radius: 0; }
+:root[data-ui="cyberpunk"] .st.done { box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 60%, transparent); }
+:root[data-ui="cyberpunk"] .st.done::after { border-color: var(--cp-on-a); }
+:root[data-ui="cyberpunk"] .st.active { box-shadow: 0 0 6px color-mix(in srgb, var(--a) 60%, transparent); }
+:root[data-ui="cyberpunk"] .st.active::after { border-radius: 0; }
+:root[data-ui="cyberpunk"] .st.pending { border-color: var(--cp-knob); }
+:root[data-ui="cyberpunk"] .st.blocked { border-color: var(--err); }
+:root[data-ui="cyberpunk"] .st.blocked::after { background: var(--err); }
+:root[data-ui="cyberpunk"] .st.attn::after { background: var(--cp-on-a); box-shadow: 0 6px 0 var(--cp-on-a); border-radius: 0; }
+
+/* ---------- toggle, radio, swatch ---------- */
+:root[data-ui="cyberpunk"] .tg { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; }
+:root[data-ui="cyberpunk"] .tg::after { top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 0; background: var(--cp-knob); box-shadow: none; }
+:root[data-ui="cyberpunk"] .tg.on { border-color: var(--a); background: color-mix(in srgb, var(--a) 20%, transparent); box-shadow: none; }
+:root[data-ui="cyberpunk"] .tg.on::after { left: 21px; background: var(--a); box-shadow: 0 0 8px var(--a); }
+:root[data-ui="cyberpunk"] .tg.danger.on { border-color: var(--err); background: color-mix(in srgb, var(--err) 20%, transparent); }
+:root[data-ui="cyberpunk"] .tg.danger.on::after { background: var(--err); box-shadow: 0 0 8px var(--err); }
+:root[data-ui="cyberpunk"] .tg:disabled { opacity: 0.4; filter: none; }
+:root[data-ui="cyberpunk"] .tg:disabled::after { box-shadow: none; }
+:root[data-ui="cyberpunk"] .radio { border-radius: 0; }
+:root[data-ui="cyberpunk"] .radio .rd { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-sunk); box-shadow: none; }
+:root[data-ui="cyberpunk"] .radio.on .rd { border-color: var(--a); }
+:root[data-ui="cyberpunk"] .radio.on .rd::after { inset: 3px; border-radius: 0; box-shadow: 0 0 6px var(--a); }
+/* Swatches carry their own color as inline color, so the selected ring and glow use currentColor. */
+:root[data-ui="cyberpunk"] .swatch { border-radius: 0; box-shadow: none; outline: 1px solid var(--cp-line); outline-offset: 2px; }
+:root[data-ui="cyberpunk"] .swatch.on { box-shadow: 0 0 12px currentColor; outline: 2px solid currentColor; outline-offset: 3px; }
+:root[data-ui="cyberpunk"] .swatch:focus-visible { outline: 2px solid var(--t); outline-offset: 3px; }
+
+/* ---------- progress ---------- */
+:root[data-ui="cyberpunk"] .bar { border-radius: 0; background: var(--cp-sunk); box-shadow: inset 0 0 0 1px var(--cp-line); overflow: visible; }
+:root[data-ui="cyberpunk"] .bar > i { border-radius: 0; max-width: 100%; }
+/* Glow only on the plain accent fill; series-colored fills (inline background) stay flat. */
+:root[data-ui="cyberpunk"] .bar:not(.est):not(.man) > i:not([style*="background"]) { box-shadow: 0 0 6px var(--a); }
+:root[data-ui="cyberpunk"] .bar.est > i { background: repeating-linear-gradient(135deg, var(--lav) 0 4px, color-mix(in srgb, var(--lav) 35%, transparent) 4px 8px); }
+:root[data-ui="cyberpunk"] .ctx { border-radius: 0; background: var(--cp-sunk); box-shadow: inset 0 0 0 1px var(--cp-line); }
+:root[data-ui="cyberpunk"] .ctx .cfg { border-radius: 0; background: color-mix(in srgb, var(--a) 25%, transparent); }
+:root[data-ui="cyberpunk"] .ctx .used { border-radius: 0; box-shadow: 0 0 6px var(--a); }
+:root[data-ui="cyberpunk"] .ctx .used.hot { box-shadow: 0 0 6px var(--warn); }
+:root[data-ui="cyberpunk"] .ctx .cap { border-radius: 0; }
+
+/* ---------- rows, lists, items ---------- */
+:root[data-ui="cyberpunk"] .setrow { border-bottom: 1px dashed var(--cp-line); box-shadow: none; }
+:root[data-ui="cyberpunk"] .setrow:last-child { border-bottom: 0; }
+:root[data-ui="cyberpunk"] .item { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-surf); box-shadow: none; }
+:root[data-ui="cyberpunk"] .card .item { background: var(--cp-raised); }
+:root[data-ui="cyberpunk"] .item:hover { border-color: color-mix(in srgb, var(--a) 45%, transparent); }
+:root[data-ui="cyberpunk"] .opt { border: 1px solid var(--cp-line); border-radius: 0; background-color: var(--cp-surf); box-shadow: none; --cut-c: var(--cp-line); }
+:root[data-ui="cyberpunk"] .card .opt, :root[data-ui="cyberpunk"] .modal .opt { background-color: var(--cp-raised); }
+:root[data-ui="cyberpunk"] .opt:hover { border-color: color-mix(in srgb, var(--a) 45%, transparent); --cut-c: color-mix(in srgb, var(--a) 45%, transparent); }
+:root[data-ui="cyberpunk"] .opt b, :root[data-ui="cyberpunk"] .opt > span:only-child, :root[data-ui="cyberpunk"] .opt > .row { text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; }
+:root[data-ui="cyberpunk"] .item.on, :root[data-ui="cyberpunk"] .opt.on, :root[data-ui="cyberpunk"] .stage.pick.on,
+:root[data-ui="cyberpunk"] .card .item.on, :root[data-ui="cyberpunk"] .card .opt.on, :root[data-ui="cyberpunk"] .modal .opt.on { border-color: var(--a); background-color: var(--sel-bg); box-shadow: none; --cut-c: var(--a); }
+:root[data-ui="cyberpunk"] .tree-btn, :root[data-ui="cyberpunk"] .task { border-radius: 0; }
+:root[data-ui="cyberpunk"] .tree-btn.cur, :root[data-ui="cyberpunk"] .task.cur { background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--a); }
+:root[data-ui="cyberpunk"] .disc { text-transform: none; }
+
+/* ---------- tables ---------- */
+:root[data-ui="cyberpunk"] .tbl th { font-family: var(--cp-mono); font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 1px solid var(--cp-line); }
+:root[data-ui="cyberpunk"] .tbl td { border-bottom: 1px solid color-mix(in srgb, var(--cp-line) 70%, transparent); }
+:root[data-ui="cyberpunk"] .tbl tbody tr:hover td { background: color-mix(in srgb, var(--a) 5%, transparent); }
+:root[data-ui="cyberpunk"] .tbl tbody tr.sel td { background: var(--sel-bg); }
+:root[data-ui="cyberpunk"] .tbl tbody tr.sel td:first-child { box-shadow: var(--sel-edge); }
+
+/* ---------- stage diagram ---------- */
+:root[data-ui="cyberpunk"] .stage { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-raised); box-shadow: none; }
+:root[data-ui="cyberpunk"] .stage.active { border-color: var(--a); box-shadow: 0 0 10px color-mix(in srgb, var(--a) 35%, transparent); }
+:root[data-ui="cyberpunk"] .stage.paused { border-color: var(--warn); box-shadow: 0 0 10px color-mix(in srgb, var(--warn) 25%, transparent); }
+:root[data-ui="cyberpunk"] .stage.done { border-color: var(--ok); box-shadow: 0 0 10px color-mix(in srgb, var(--ok) 35%, transparent); }
+:root[data-ui="cyberpunk"] .stage.pick:hover { border-color: color-mix(in srgb, var(--a) 45%, transparent); }
+:root[data-ui="cyberpunk"] .arrow { color: color-mix(in srgb, var(--a) 55%, var(--cp-line)); }
+:root[data-ui="cyberpunk"] .loop { border-color: color-mix(in srgb, var(--a) 40%, transparent); border-radius: 0; }
+:root[data-ui="cyberpunk"] .loop-l { font-family: var(--cp-mono); font-size: 10.5px; letter-spacing: 0.06em; }
+
+/* ---------- overview pieces ---------- */
+:root[data-ui="cyberpunk"] .stat { border-right: 1px solid var(--cp-line); box-shadow: none; }
+:root[data-ui="cyberpunk"] .stat:last-child { border-right: 0; }
+:root[data-ui="cyberpunk"] .chart { border-bottom: 1px solid var(--cp-line); }
+:root[data-ui="cyberpunk"] .colb i { border-radius: 0; }
+:root[data-ui="cyberpunk"] .sw { border-radius: 0; }
+:root[data-ui="cyberpunk"] [data-tip] { border-bottom-color: color-mix(in srgb, var(--t2) 60%, transparent); }
+:root[data-ui="cyberpunk"] [data-tip]:hover::after { border: 1px solid var(--cp-struct); border-radius: 0; background: var(--cp-raised); box-shadow: 0 0 16px color-mix(in srgb, var(--a) 15%, transparent), 0 8px 24px rgba(0, 0, 0, 0.6); }
+/* Cards are clipped, so the attention flash tints the background instead of drawing an outer ring. */
+:root[data-ui="cyberpunk"] #attention-panel.flash { animation: cp-attention-flash 1.2s ease-out; }
+@keyframes cp-attention-flash { 0% { background-color: color-mix(in srgb, var(--a) 28%, var(--cp-surf)); } 100% { background-color: var(--cp-surf); } }
+
+/* ---------- dialogs, popovers, toasts ---------- */
+:root[data-ui="cyberpunk"] .modal-back { background: rgba(3, 2, 7, 0.78); }
+:root[data-ui="cyberpunk"] .modal { border: 1px solid var(--cp-struct); border-radius: 0; background: var(--cp-surf); box-shadow: 0 0 32px color-mix(in srgb, var(--a) 18%, transparent), 0 16px 48px rgba(0, 0, 0, 0.7); }
+:root[data-ui="cyberpunk"] .toast { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-raised); box-shadow: inset 2px 0 0 var(--a), 0 10px 30px rgba(0, 0, 0, 0.6); }
+
+/* ---------- first launch and setup steps ---------- */
+:root[data-ui="cyberpunk"] .step .n { border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; font-family: var(--cp-mono); }
+:root[data-ui="cyberpunk"] .step.cur .n { border-color: var(--a); box-shadow: 0 0 8px color-mix(in srgb, var(--a) 40%, transparent); }
+:root[data-ui="cyberpunk"] .step.done .n { border-color: var(--ok); background: var(--ok); color: var(--cp-on-a); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 40%, transparent); }
+:root[data-ui="cyberpunk"] .step-sep { background: var(--cp-line); box-shadow: none; }
+:root[data-ui="cyberpunk"] .stepcard { border: 1px solid var(--cp-line); border-radius: 0; background: var(--cp-surf); box-shadow: none; }
+:root[data-ui="cyberpunk"] .stepcard.cur { border-color: var(--a); box-shadow: 0 0 14px color-mix(in srgb, var(--a) 22%, transparent); }
+:root[data-ui="cyberpunk"] .stepcard.locked { border: 1px dashed var(--cp-line); background: transparent; box-shadow: none; }
+:root[data-ui="cyberpunk"] .num-c { border: 1px solid var(--cp-line); border-radius: 0; box-shadow: none; font-family: var(--cp-head); }
+:root[data-ui="cyberpunk"] .stepcard.cur .num-c { border-color: var(--a); box-shadow: 0 0 8px color-mix(in srgb, var(--a) 40%, transparent); }
+:root[data-ui="cyberpunk"] .stepcard.done .num-c { border-color: var(--ok); background: var(--ok); color: var(--cp-on-a); box-shadow: none; }

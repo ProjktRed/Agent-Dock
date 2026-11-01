@@ -92,7 +92,7 @@ export async function skillDeliveryText(skill: SkillInfo): Promise<{ text: strin
     for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
       const relPath = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await walk(path.join(dir, entry.name), relPath);
-      else if (entry.isFile() && /.md$/i.test(entry.name) && relPath !== "SKILL.md") extras.push(relPath);
+      else if (entry.isFile() && /\.md$/i.test(entry.name) && relPath !== "SKILL.md") extras.push(relPath);
     }
   };
   await walk(skill.dir, "");

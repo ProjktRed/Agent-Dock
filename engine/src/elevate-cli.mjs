@@ -1,3 +1,4 @@
+import "./startup-env.mjs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,18 +10,37 @@ import { resolveCodexCommand, preflightCodex } from "./codex-command.mjs";
 import { DashboardState, atomicWriteJson } from "./dashboard-state.mjs";
 import { runManualElevate } from "./manual-elevate.mjs";
 import { parseLoopOptions } from "./loop-options.mjs";
+import { setCliRunSettings } from "./cli-run-settings.mjs";
 import { verifyReview, runNodeLoop } from "./node-loop.mjs";
 import { installTopLevelDiagnostics } from "./diagnostics.mjs";
 import { useTuning } from "./engine-tuning.mjs";
 import { createImplementationWorker, createRoles, gitStartupError } from "./engine-setup.mjs";
 import {configureProtection} from './guard/protected-paths.mjs';
+import { useWebAccess } from "./web-access.mjs";
+import { sandboxProblem, useSandboxedAgents } from "./sandbox.mjs";
+import { useActionAsk } from "./guard/ask.mjs";
+import { writeEnginePid } from "./engine-pid.mjs";
+import { assertSafeRepository, safeGitArgs } from "./git-safe.mjs";
 
 installTopLevelDiagnostics();
+// Git reads by the engine and every process it starts skip optional locks (a status refresh of the index),
+// so they never hold index.lock while QA commits.
+process.env.GIT_OPTIONAL_LOCKS = "0";
 const exec = promisify(execFile);
 const options = parseLoopOptions(process.argv.slice(2));
+setCliRunSettings(options["cli-settings"]);
 const workspace = path.resolve(options.workspace);
 const stateDir = path.resolve(options["state-dir"] ?? ".state");
 configureProtection({workspace,stateDir,paths:options['protected-paths']});
+// Manual Elevation starts Codex or Claude Code like a run does: the same sandbox for their commands, failing closed.
+useSandboxedAgents(options.sandboxAgents);
+useWebAccess(options.webAccess);
+useActionAsk({ stateDir, minutes: options.askMinutes });
+if (options.sandboxAgents) {
+  const problem = await sandboxProblem();
+  if (problem) throw new Error(`Agent Dock is set to sandbox agents' commands (Settings › Experimental), but the sandbox is not ready: ${problem}`);
+}
+writeEnginePid(stateDir);
 const state = new DashboardState({ stateDir });
 let launchReady = false;
 
@@ -39,7 +59,9 @@ try {
   const mixed = isMixed(clis);
   if (mixed) useMixedDefaults(clis);
   useRoleOverrides(options.roleOverrides);
-  const gitCommonOutput = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: workspace, windowsHide: true }).catch(gitStartupError);
+  const gitCommonOutput = await exec("git", safeGitArgs(["rev-parse", "--path-format=absolute", "--git-common-dir"]), { cwd: workspace, windowsHide: true }).catch(gitStartupError);
+  // Guard plan 0d: no git as you in a repository whose .git redirects elsewhere or whose config runs programs.
+  await assertSafeRepository(workspace);
   const gitCommonDir = path.resolve(workspace, gitCommonOutput.stdout.trim());
   const outside = path.relative(workspace, gitCommonDir).split(path.sep)[0] === "..";
   const additionalWritableDirs = outside ? [gitCommonDir] : [];

@@ -39,9 +39,31 @@ export function wslLaunch(distro: string, script: string, stateDir: string, args
   return { command: "wsl.exe", args: ["-d", distro, "--cd", toWslPath(stateDir, distro), "--exec", "node", toWslPath(script, distro), ...wslEngineArgs(args, distro)] };
 }
 
-/** WSLENV entries so the given variables (provider keys, notification settings) reach the distro. */
+// Variables holding a Windows path: WSL translates them (/p), so the engine in the distro sees /mnt/c/....
+const PATH_VARS = new Set(["AGENT_DOCK_USER_DATA"]);
+
+/** WSLENV entries so the given variables (provider keys, notification settings, the app's data folder) reach the distro. */
 export function wslEnv(base: string | undefined, keys: string[]): string {
   const entries = new Set((base ?? "").split(":").filter(Boolean));
-  for (const key of keys) if (/^[A-Za-z_]\w*$/.test(key)) entries.add(`${key}/u`);
+  for (const key of keys) if (/^[A-Za-z_]\w*$/.test(key)) entries.add(`${key}/${PATH_VARS.has(key) ? "up" : "u"}`);
   return [...entries].join(":");
+}
+
+/**
+ * Stop now under WSL isolation: ends the engine (engine-pid.json) and every process under it inside the
+ * distro. Ending wsl.exe on Windows does not reach them. The pid must still be an Agent Dock engine
+ * (its command line runs cli.mjs or elevate-cli.mjs), so a pid reused by another process is left alone.
+ */
+export function wslKillTree(distro: string, pid: number): { command: string; args: string[] } {
+  if (!/^[\w.-]{1,64}$/.test(distro)) throw new Error("Enter the WSL distro's name (wsl -l shows them).");
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error("Not an engine process id.");
+  // One line without double quotes or backslashes: it passes through the Windows command line and
+  // wsl.exe unchanged ($1 is the pid, a number). xargs -0 turns the NUL-separated cmdline into words.
+  const script = [
+    "xargs -0 < /proc/$1/cmdline 2>/dev/null | grep -qE '(^|/)(elevate-)?cli[.]mjs( |$)' || exit 3",
+    "kids() { pgrep -P $1 2>/dev/null || ps -o pid= --ppid $1 2>/dev/null; }",
+    "k() { kill -STOP $1 2>/dev/null; for c in $(kids $1); do k $c; done; kill -KILL $1 2>/dev/null; }",
+    "k $1",
+  ].join("; ");
+  return { command: "wsl.exe", args: ["-d", distro, "--exec", "sh", "-c", script, "agent-dock-stop", String(pid)] };
 }

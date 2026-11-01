@@ -1,7 +1,9 @@
 import type {
+  ActionDecision,
   AddProjectRequest,
   Agent,
   AppSnapshot,
+  CiStatus,
   CliConnection,
   CliHealth,
   DirectoryInspection,
@@ -9,18 +11,25 @@ import type {
   ModelCatalog,
   PathDetection,
   Project,
+  ProjectSkillInfo,
   ProjectStatus,
   Settings,
   SkillInfo,
+  StashEntry,
+  TaskBoard,
+  TaskBoardUpdate,
+  TaskBoardWriteResult,
   LibraryPreview,
   UpdateStatus,
   UsageSummary,
   LocalContext,
   NotifyChannel,
-  PlanProposal,
   RunReport,
+  SandboxResult,
   WorkflowRole,
 } from "./types";
+import type { EstimateRecord } from "./estimate";
+import type { ConfigFile, ConfigFileKind, OllamaSettingsState } from "./cli-settings";
 
 export type ControlAction = "start" | "pause" | "resume" | "stop" | "stop-now" | "stop-after-task" | "elevate" | "resolve" | "retry-qa";
 
@@ -80,6 +89,12 @@ export interface DesktopApi {
   saveAgent(agent: Agent): Promise<Agent[]>;
   deleteAgent(id: string): Promise<Agent[]>;
   saveCli(cli: CliConnection, secret?: string | null): Promise<CliConnection[]>;
+  /** Where Codex's config.toml or Claude Code's user settings.json is (CLIs › Settings). */
+  cliConfigFile(kind: ConfigFileKind): Promise<ConfigFile>;
+  /** Shows it (or its folder) in the file manager; "" when shown, else why not. */
+  showCliConfigFile(kind: ConfigFileKind): Promise<string>;
+  /** Ollama's server settings as your environment and the running Ollama have them (read only). */
+  ollamaSettings(): Promise<OllamaSettingsState>;
   deleteCli(id: string): Promise<CliConnection[]>;
   checkCli(id: string): Promise<CliHealth>;
   healths(): Promise<CliHealth[]>;
@@ -117,7 +132,7 @@ export interface DesktopApi {
   /** Saves agents, roles, connections and settings (no secrets, no projects) where the user picks; null when cancelled. */
   exportSettings(): Promise<string | null>;
   /** Imports a settings export after a confirmation; null when cancelled. */
-  importSettings(): Promise<{ agents: number; clis: number; roles: number } | null>;
+  importSettings(): Promise<{ agents: number; clis: number; roles: number; skipped: string[] } | null>;
   /** Saves a diagnostics zip (secrets removed) where the user picks; null when cancelled. */
   exportDiagnostics(): Promise<string | null>;
   /** Finished runs of a project, newest first. */
@@ -125,22 +140,62 @@ export interface DesktopApi {
   /** Saves one run's report as Markdown or HTML (save dialog); the path, or null when cancelled. */
   exportRun(projectId: string, startedAt: string, format: "md" | "html"): Promise<string | null>;
   /** Supervisor plan proposals for a project, newest last. */
-  planProposals(projectId: string): Promise<PlanProposal[]>;
   /** Approve (committed between tasks, or now when the engine is idle) or dismiss a plan proposal. */
-  decidePlanProposal(projectId: string, id: string, decision: "approve" | "dismiss"): Promise<PlanProposal[]>;
-  verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string }[]>;
+  /** The Task board (Planned, In progress, Finished) with what is being worked on now. */
+  taskBoard(projectId: string): Promise<TaskBoard>;
+  /** Saves the priority order, a reset to plan order or the grouping; a reorder on a stale revision returns ok: false with the current board. */
+  setTaskBoard(projectId: string, update: TaskBoardUpdate): Promise<TaskBoardWriteResult>;
+  /** signed: entries carrying Agent Dock's signature (null: no key on this computer, so only the chain was checked); unsigned: terminal stops and entries from before the key. */
+  /** Settings › Experimental: is the sandbox for checks ready on this computer. */
+  sandboxStatus(): Promise<SandboxResult>;
+  /** Turns the sandbox for checks on (setup when needed, then a self-test that must pass) or off; native confirmations. */
+  setSandboxChecks(on: boolean): Promise<SandboxResult>;
+  /** The same for agents' own commands (Codex, Claude Code); Windows also needs Codex's elevated sandbox set up. */
+  setSandboxAgents(on: boolean): Promise<SandboxResult>;
+  /** Approve each task: Approve, or Set aside (Assessment chooses again), for the task waiting before Implementation. */
+  decideTask(projectId: string, taskId: string, decision: "approve" | "reject"): Promise<boolean>;
+  installTool(projectId: string, tool: string): Promise<boolean>;
+  /** Settings › Safety level: applies a preset (native confirmations and sandbox setup as for each toggle). */
+  applySafetyPreset(name: "strict" | "standard" | "trusted"): Promise<{ ok: boolean; problems: string[] }>;
+  /** Ask instead of refuse: refuses a waiting agent action (allowing is only possible in the native dialog or on Telegram). */
+  decideAction(projectId: string, requestId: string, decision: ActionDecision): Promise<boolean>;
+  verifyActionLogs(): Promise<{ project: string; ok: boolean; entries: number; lastAt: string | null; brokenAt?: number; reason?: string; signed?: number | null; unsigned?: number }[]>;
   usage(projectId: string | null): Promise<UsageSummary>;
   /** Live context occupancy of the project's local Implementation agent (llama.cpp /slots). */
   localContext(projectId: string): Promise<LocalContext>;
   history(projectId: string): Promise<HistoryEntry[]>;
   /** Runs one task from the history again as the next start's first task. */
   rerunTask(projectId: string, taskId: string): Promise<void>;
+  /** Removes the deferred mark from set-aside tasks; returns how many were removed. */
+  undeferTasks(projectId: string, taskIds: string[]): Promise<number>;
+  /** A set-aside task becomes the next start's first task and loses its deferred mark (the engine must be stopped). */
+  runNext(projectId: string, taskId: string): Promise<void>;
+  /** The workspace's git stashes, newest first. */
+  stashes(projectId: string): Promise<StashEntry[]>;
+  /** Puts the workspace's uncommitted work (untracked files too) in a new stash; the engine must be stopped. */
+  stashChanges(projectId: string): Promise<{ message: string }>;
+  /** Applies a stash to the clean workspace and drops it; on a conflict the stash is kept. The engine must be stopped. */
+  popStash(projectId: string, sha: string): Promise<{ conflicts: boolean; output: string }>;
+  /** Deletes a stash (git stash drop); the engine must be stopped. */
+  dropStash(projectId: string, sha: string): Promise<void>;
+  /** The project skill: generated from the workspace, stored in the state folder, given to the project's agents when on. */
+  projectSkill(projectId: string): Promise<ProjectSkillInfo>;
+  /** Drafts the project skill with a read-only agent (one at a time per project); returns the SKILL.md text to review. */
+  generateProjectSkill(projectId: string, cliId: string, model: string | null): Promise<string>;
+  cancelProjectSkill(projectId: string): Promise<void>;
+  /** Saves the reviewed text (null removes the skill) and whether the project's agents get it. */
+  saveProjectSkill(projectId: string, text: string | null, enabled: boolean): Promise<ProjectSkillInfo>;
   /** Pull-request mode: pushes the run branch and opens the pull request; returns its URL. */
   openPullRequest(projectId: string): Promise<string>;
+  /** GitHub CI: the watched commit's GitHub Actions runs, as last read. */
+  ciStatus(projectId: string): Promise<CiStatus>;
+  /** Estimate calibration: the estimates recorded at each start (estimates.json). */
+  estimates(projectId: string): Promise<EstimateRecord[]>;
+  /** Reads the runs again now, with GitHub CLI. */
+  refreshCi(projectId: string): Promise<CiStatus>;
   /** Parallel lanes: a git worktree of the project on its own branch, registered as its own project. */
-  addLane(projectId: string, name: string, objective: string): Promise<Project[]>;
+  /** Merges a lane's branch into the branch the main project has checked out (one merge commit; a conflict merges nothing). */
   /** Removes a lane's worktree and its project entry; its branch and commits stay. */
-  removeLane(projectId: string, force: boolean): Promise<Project[]>;
   /** Parallel tasks: the worktrees and agent-dock/parallel-… branches kept from earlier runs. */
   parallelLeftovers(projectId: string): Promise<{ worktrees: { path: string; branch: string | null }[]; branches: string[] }>;
   /** Removes those worktrees (node_modules link first) and branches; unmerged work on them is lost. */
@@ -157,9 +212,8 @@ export interface DesktopApi {
   installSkillImport(token: string, names: string[]): Promise<SkillInfo[]>;
   roles(): Promise<WorkflowRole[]>;
   saveRole(role: RoleDraft): Promise<WorkflowRole[]>;
-  deleteRole(id: string): Promise<WorkflowRole[]>;
-  importRoleFolder(): Promise<{ roles: WorkflowRole[]; imported: number }>;
-  openPath(target: string): Promise<void>;
+  /** "" when the path opened, otherwise why not (missing, no app for the file type). Throws for a path the app may not open. */
+  openPath(target: string): Promise<string>;
   limits(): Promise<LimitsState>;
   refreshLimits(provider: "codex" | "claude"): Promise<LimitsState>;
   onLimits(callback: (state: LimitsState) => void): () => void;
@@ -172,6 +226,7 @@ export interface DesktopApi {
   onUpdate(callback: (status: UpdateStatus) => void): () => void;
   windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
   onStatus(callback: (status: ProjectStatus) => void): () => void;
+  onCi(callback: (status: CiStatus) => void): () => void;
   onHealth(callback: (health: CliHealth) => void): () => void;
   onNotice(callback: (notice: Notice) => void): () => void;
 }

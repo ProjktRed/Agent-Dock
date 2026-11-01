@@ -25,7 +25,7 @@ export function runReportRows(r: RunReport): [string, string][] {
     ["Elevations", String(r.elevations)],
     ["Stops for attention", String(r.needsAttention)],
     ["Supervisor alerts", String(r.supervisorAlerts)],
-    ["Tokens", `${n(usage.tokens)} counted (${n(usage.cached)} more read from prompt caches), ${usage.calls} model call(s)`],
+    ["Tokens", `${n(usage.tokens)} counted (${n(usage.cached)} more read from prompt caches), ${usage.calls} model call${usage.calls === 1 ? "" : "s"}`],
     ["Spend", `${money(usage.costUsd)}${estimated ? ` (${money(estimated)} estimated from the price table)` : ""}`],
     ["Action log", r.actionLog?.ok ? `verified${r.actionLog.entries ? `, ${r.actionLog.entries} entries` : ""}` : `not verified${r.actionLog?.reason ? ` (${r.actionLog.reason})` : ""}`],
   ];

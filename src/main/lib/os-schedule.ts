@@ -1,30 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import type { Project } from "@shared/types";
-import { scheduleMinutes } from "@shared/schedule";
 
-// Scheduled runs while Agent Dock is closed (0.35, Windows). A project's schedule can also be put in
-// Windows Task Scheduler as a per-user task under "\Agent Dock\" that launches Agent Dock minimized with
-// --scheduled-run at the scheduled time. The app then starts every project whose slot is due, exactly as
-// its own once-a-minute check does, so a run never starts twice. No admin rights or service: the task
-// runs only while you are signed in, as you.
+// Scheduled runs happen only while Agent Dock is open (from 0.39). Versions 0.35 to 0.38 could also put a
+// project's schedule in Windows Task Scheduler, as a per-user task under "\Agent Dock\" that launched the
+// app with --scheduled-run. This removes those tasks once, on the first launch after the upgrade.
 
 export const TASK_FOLDER = "Agent Dock";
-export const SCHEDULED_RUN_FLAG = "--scheduled-run";
-const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-
-export const taskName = (projectId: string) => `${TASK_FOLDER}\\Run ${projectId.replace(/[^\w-]/g, "_")}`;
-
-/** Projects whose schedule should exist in Task Scheduler. */
-export function wantsOsSchedule(p: Project): boolean {
-  return !p.archived && p.schedule?.enabled === true && p.schedule.whenClosed === true && p.schedule.days?.length > 0 && scheduleMinutes(p.schedule.time) !== null;
-}
-
-/** schtasks arguments that create (or replace) the project's weekly task. */
-export function createTaskArgs(p: Project, exe: string): string[] {
-  const days = [...new Set(p.schedule!.days)].sort().map((d) => DAYS[d]).join(",");
-  return ["/Create", "/F", "/TN", taskName(p.id), "/SC", "WEEKLY", "/D", days, "/ST", p.schedule!.time, "/TR", `"${exe}" --minimized ${SCHEDULED_RUN_FLAG}`];
-}
 
 export interface OsTask {
   /** Task name without the leading backslash, e.g. "Agent Dock\Run p1". */
@@ -39,7 +20,7 @@ export interface OsTask {
  * task or none) and keeps only tasks directly in the Agent Dock folder.
  */
 export function parseTaskJson(json: string): OsTask[] {
-  const text = json.replace(/^﻿/, "").trim();
+  const text = json.replace(/^\uFEFF/, "").trim();
   if (!text) return [];
   const parsed: unknown = JSON.parse(text);
   const items = (Array.isArray(parsed) ? parsed : [parsed]) as ({ name?: unknown; exe?: unknown } | null)[];
@@ -58,8 +39,8 @@ const samePath = (a: string, b: string) => a.replace(/\//g, "\\").toLowerCase() 
 
 /**
  * Whose a task is. Two installs on one PC (a release install and a developer build, say) can share the same
- * projects, so each keeps only the tasks that launch its own exe. A task that launches another exe still on
- * disk is the other install's and is left alone; one whose exe is gone is stale and can be taken over.
+ * projects, so each removes only the tasks that launch its own exe. A task that launches another exe still on
+ * disk is the other install's and is left alone; one whose exe is gone is stale and is removed too.
  */
 export function taskOwner(task: OsTask, exe: string, exists: (file: string) => boolean): "mine" | "other" | "stale" {
   if (task.exe && samePath(task.exe, exe)) return "mine";
@@ -73,7 +54,7 @@ const schtasks: Run = (args) => new Promise((resolve, reject) => {
 
 // Reads only Agent Dock's folder, as UTF-8 JSON, through hidden PowerShell. Piped `schtasks /Query` output
 // comes in the console code page (garbling paths like C:\Users\Zoë) and lists every task on the PC. A missing
-// folder is no tasks; any other failure is an error, so the sync changes nothing.
+// folder is no tasks; any other failure is an error, so nothing is removed.
 const QUERY_SCRIPT = [
   "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.Encoding]::UTF8;",
   `try { $t = @(Get-ScheduledTask -TaskPath '\\${TASK_FOLDER}\\') } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }; $t = @() };`,
@@ -86,22 +67,15 @@ const queryTasks = (): Promise<string> => new Promise((resolve, reject) => {
 });
 
 /**
- * Makes Task Scheduler match the projects: creates or updates each wanted task and deletes Agent Dock's
- * other tasks. Only tasks this install owns or stale ones are touched (see taskOwner); another install's
- * tasks are skipped quietly. Returns the problems (an empty list when everything is in place).
+ * Deletes the scheduled-run tasks an earlier version of this install made, and stale ones; another install's
+ * tasks are left alone. Returns the problems (an empty list when everything is removed).
  */
-export async function syncOsSchedules(projects: Project[], exe: string, run: Run = schtasks, exists: (file: string) => boolean = existsSync, query: () => Promise<string> = queryTasks): Promise<string[]> {
-  const problems: string[] = [];
-  const wanted = projects.filter(wantsOsSchedule);
+export async function removeOsSchedules(exe: string, run: Run = schtasks, exists: (file: string) => boolean = existsSync, query: () => Promise<string> = queryTasks): Promise<string[]> {
   let existing: OsTask[];
-  // Without the current tasks there is no telling whose they are, so nothing is changed.
+  // Without the current tasks there is no telling whose they are, so nothing is removed.
   try { existing = parseTaskJson(await query()); } catch (error) { return [`Reading the scheduled tasks: ${(error as Error).message}`]; }
-  const others = new Set(existing.filter((t) => taskOwner(t, exe, exists) === "other").map((t) => t.name.toLowerCase()));
-  for (const p of wanted.filter((x) => !others.has(taskName(x.id).toLowerCase()))) {
-    try { await run(createTaskArgs(p, exe)); } catch (error) { problems.push(`${p.name}: ${(error as Error).message}`); }
-  }
-  const keep = new Set(wanted.map((p) => taskName(p.id).toLowerCase()));
-  for (const { name } of existing.filter((t) => !keep.has(t.name.toLowerCase()) && !others.has(t.name.toLowerCase()))) {
+  const problems: string[] = [];
+  for (const { name } of existing.filter((t) => taskOwner(t, exe, exists) !== "other")) {
     try { await run(["/Delete", "/F", "/TN", name]); } catch (error) { problems.push(`Removing ${name}: ${(error as Error).message}`); }
   }
   return problems;

@@ -4,18 +4,16 @@ The dependency-free Node process that owns Agent Dock's automation loop. The orc
 (Codex CLI or Claude Code) runs as a fresh, one-shot child for Assessment, QA, Resolver and
 Elevation. The Implementation worker is Cline or OpenCode on a local or OpenAI-compatible model,
 or Codex CLI / Claude Code. Agent Dock launches it per project; it can also run on its own from a
-terminal, with its own dashboard.
+terminal (its state folder is what Agent Dock reads; there is no separate browser dashboard).
 
-## Start dashboard and loop
+## Start the loop
 
 From the `engine/` folder:
 
 ```powershell
-npm run dashboard -- --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --port 4180
+node src/cli.mjs --workspace <path-to-repo> --objective "YOUR BOUNDED PROJECT OBJECTIVE" --state-dir .state
 ```
 
-The command automatically opens http://127.0.0.1:4180 in the default browser.
-The server binds only to 127.0.0.1.
 Replace the objective before running. This command begins real project work.
 Run it from an ordinary terminal; no supervising Codex chat needs to stay active.
 
@@ -81,7 +79,7 @@ Launch from PowerShell with `node` directly, because `npm run` through cmd.exe s
 objectives that contain double quotes:
 
 ```powershell
-node src/dashboard-cli.mjs --workspace <path-to-repo> --objective "<objective>" --port 4180 --orchestrator claude --state-dir .state-<name>
+node src/cli.mjs --workspace <path-to-repo> --objective "<objective>" --orchestrator claude --state-dir .state-<name>
 ```
 
 ## Implementation through Codex or Claude Code (`--implementation-cli`)
@@ -142,6 +140,24 @@ Defaults reproduce the original fixed behaviour (`src/engine-tuning.mjs`):
 | `--task-max-files` | 1 | Task sizing in the Assessment prompt |
 | `--task-max-new-lines` | 200 | New-file size in the Assessment prompt |
 | `--task-max-read-files` | 3 | Files the worker may be told to read |
+| `--task-mode` | `eco` | Task size: `eco` (small tasks, the `--task-max-*` values above), `standard` (one plan item per task: 10 files, 800 new lines, 10 read files) or `max` (no fixed size: 0 = no limit). Explicit `--task-max-*` flags override the mode's sizing. Anything else is an error |
+| `--step-down` | `true` | `true` or `false`. In `standard` or `max` mode, a task that fails review twice is set aside and redone one size smaller (max to standard, standard to eco). The smaller size lasts until that task's plan items are checked off or 5 tasks are approved, then the configured size returns. Saved in `step-down.json`, so a resumed run keeps it; discarded if the configured size changed. No effect in `eco` mode |
+
+## Parallel tasks
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--parallel` | 1 | Tasks per round, a whole number from 1 to 8 (the app passes at most 4). Above 1, each round Assessment picks tasks whose allowed files do not overlap, and each runs in its own engine and git worktree (`<project>-parallel/<task>-<run>`, branch `agent-dock/parallel-…`); approved changes are applied to the branch one at a time, checked on the combined code and committed only if the check passes |
+| `--single-task` | `false` | Internal: set (`true`) by a parallel run on each task's own engine. That engine runs the one task given with `--task`, then ends; it leaves plan check-offs and approved plan changes to the parent, sends no notifications and runs no Supervisor. Not meant to be passed by hand |
+
+`--parallel` above 1 falls back to one task at a time (logging `{"parallel":{"lanes":1,"reason":…}}`)
+with `--unattended true`, with `--task` or `--single-task`, while a pending orchestrator call is
+resumed, or while a task is still in progress (it finishes first; parallel rounds start from a task
+boundary). The app also passes `--parallel` only for a cloud Implementation agent. A task's engine
+gets the parent's arguments without `--parallel`, `--step-down` (always `false` there) or the
+Supervisor flags; while the parent is stepped down it gets the smaller `--task-mode` and
+`--task-max-*` values instead of the configured ones. Each task's usage, per role, is added to the
+run when its engine ends.
 
 ## Process lifecycle
 
@@ -264,9 +280,8 @@ Successful safe recovery proceeds to Assessment, then Cline, then independent
 QA; Resolver cannot accept or commit work. Legacy blocked runs without ownership
 evidence require manual review and are not retroactively trusted.
 
-The recessed dashboard's left progress list reads the target repository's
-`IMPLEMENTATION_PLAN.md` checkboxes, rather than estimating task acceptance.
-Phase expansion is client-side and survives polling.
+Agent Dock's progress list reads the target repository's `IMPLEMENTATION_PLAN.md`
+checkboxes, rather than estimating task acceptance.
 
 ## Verification commands
 

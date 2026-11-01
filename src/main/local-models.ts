@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Agent, CliConnection, CollectedModel, CollectedModels, LocalContext } from "@shared/types";
+import { cmdLine } from "./lib/cmd-line";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,6 +62,8 @@ export async function collectOllama(base: string, timeoutMs = 8000): Promise<Col
 /** llama-server arguments for a listing-only start: router mode over the folder, on the connection's address. */
 export function llamaServerListArgs(conn: CliConnection): string[] {
   const url = new URL(conn.location);
+  // The server started here has no API key, so it listens on this computer only.
+  if (!/^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i.test(url.hostname)) throw new Error(`Agent Dock starts llama.cpp only on this computer (127.0.0.1), not on ${url.hostname}. Start a server for a network address yourself, with an API key.`);
   return ["--models-dir", conn.modelsDir ?? "", "--host", url.hostname, "--port", url.port || "80"];
 }
 
@@ -86,10 +89,19 @@ export async function collectLlamaCpp(conn: CliConnection, launcher: string, tim
   if (!conn.modelsDir) return done([], "llama.cpp is not running. Set the models folder so Agent Dock can ask it for the models there, or start the server and refresh.");
   if (!launcher.trim() && !server) return done([], "llama.cpp is not running and llama-server is not on PATH. Install llama.cpp (or set a launcher in Settings › Advanced), or start the server and refresh.");
   if (launcher.trim() && !existsSync(launcher)) return done([], `Launcher not found: ${launcher}`);
+  // Windows: the launcher script runs through cmd.exe, with its arguments escaped for it.
+  let line = "";
+  if (launcher.trim() && process.platform === "win32") {
+    try { line = cmdLine(launcher, ["-ModelsDir", conn.modelsDir]); } catch (error) { return done([], (error as Error).message); }
+  }
+  let listArgs: string[] = [];
+  if (!launcher.trim()) {
+    try { listArgs = llamaServerListArgs(conn); } catch (error) { return done([], (error as Error).message); }
+  }
   const child = !launcher.trim()
-    ? spawn(server!, llamaServerListArgs(conn), { cwd: path.dirname(server!), windowsHide: true, stdio: "ignore", detached: process.platform !== "win32" })
+    ? spawn(server!, listArgs, { cwd: path.dirname(server!), windowsHide: true, stdio: "ignore", detached: process.platform !== "win32" })
     : process.platform === "win32"
-      ? spawn("cmd.exe", ["/d", "/c", launcher, "-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore" })
+      ? spawn("cmd.exe", ["/d", "/s", "/c", `"${line}"`], { cwd: path.dirname(launcher), windowsHide: true, stdio: "ignore", windowsVerbatimArguments: true })
       : spawn(launcher, ["-ModelsDir", conn.modelsDir], { cwd: path.dirname(launcher), stdio: "ignore", detached: true });
   child.on("error", () => { /* not executable: exitCode stays null, the wait below times out */ });
   try {

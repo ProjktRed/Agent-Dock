@@ -88,6 +88,17 @@ test('stall: alerts after the quiet period, not while waiting for you; off mode 
  assert.equal(SUPERVISOR.mode,'off');
 });
 
+test('stall: a parallel round\'s task engines at work are activity of the run, not a stall',async t=>{
+ let clock=0;const state=fakeState({stage:'waiting'});
+ const stop=startSupervisor(state,{config:{mode:'alert',stallMinutes:30},now:()=>clock});t.after(stop);
+ const {noteActivity,tickForTest}=await import('../src/supervisor.mjs');
+ // The run itself records nothing while its tasks run; their engines' activity reaches noteActivity.
+ for(clock=10*60_000;clock<=120*60_000;clock+=10*60_000){noteActivity();await tickForTest();}
+ assert.deepEqual(alerts(state),[],'no stall while the task engines work');
+ clock+=31*60_000;await tickForTest();
+ assert.deepEqual(alerts(state),[['stall',null]],'a round where nothing happens still is one');
+});
+
 test('notifications: webhook and Discord get the event, digests can be turned off, bad URLs are refused',async t=>{
  const sent=[];t.after(()=>useNotify());
  useNotify({project:'Demo',webhook:'https://hooks.example.com/x',discord:'https://discord.com/api/webhooks/1/abc',digests:false},{fetchImpl:async(url,init)=>{sent.push([url,JSON.parse(init.body)]);return {ok:true};}});

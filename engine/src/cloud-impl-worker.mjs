@@ -1,17 +1,24 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lockHeld, withBusyLock } from "./busy-lock.mjs";
 import path from "node:path";
-import { claudeChildEnv, extractClaudeResult } from "./claude-worker.mjs";
-import { detectCodexUsageLimit } from "./codex-worker.mjs";
+import { CLAUDE_SETTING_SOURCES, claudeChildEnv, claudeRunEnvironment, extractClaudeResult } from "./claude-worker.mjs";
+import { codexUsedTools, detectCodexUsageLimit } from "./codex-worker.mjs";
 import claudeAdapter, { claudeImplementationTools } from "./guard/adapters/claude.mjs";
-import codexAdapter, { codexScopeHookArgs } from "./guard/adapters/codex.mjs";
+import codexAdapter, { CODEX_WRITE_SANDBOX, codexScopeHookArgs } from "./guard/adapters/codex.mjs";
 import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
-import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
+import { codexAuthEnv } from "./codex-provider-env.mjs";
+import { redactText } from "./redact.mjs";
+import { cliLauncher, launchSpec } from "./cmd-line.mjs";
 import {installProtection} from './guard/install-protection.mjs';
+import {sweepCodexTemp} from './guard/codex-confinement.mjs';
+import {openDecisionLog,crossCheck} from './guard/decision-log.mjs';
 import {codexSkillArgs, claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, codexUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
+import { claudeRunArgs, claudeRunEnv, codexRunArgs } from "./cli-run-settings.mjs";
 
 // Implementation through Codex CLI or Claude Code instead of Cline. The loop treats it like the
 // A usage limit ends the attempt cleanly (the CLI has exited, its partial changes are on disk): the loop
@@ -40,24 +47,23 @@ export { claudeImplementationTools };
  */
 export { codexScopeHookArgs };
 
-/** Codex used a tool (patch, shell, MCP) according to its --json events. */
-export function codexUsedTools(stdout) {
-  return /"type"\s*:\s*"(?:file_change|command_execution|mcp_tool_call|patch_apply|exec_command)/.test(stdout);
-}
+export { codexUsedTools };
 
-export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env }) {
+export function buildImplementationArgs({ cli, prefixArgs = [], model, effort, fast, workspace, outputFile, task, toolGuard, hookArgs = [], env = process.env, sandboxArgs = CODEX_WRITE_SANDBOX }) {
   if (cli === "codex") {
     return [...prefixArgs, "exec", "--ephemeral", "--json", "--color", "never",
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
       ...(fast ? ["-c", `service_tier="priority"`] : []),
+      // The app's run settings come before the scope hook, so the guard's -c entries win if a key ever overlaps.
+      ...codexRunArgs(),
       ...hookArgs,
       ...codexSkillArgs({workspace, env}),
-      // Same sandbox as Codex QA (workspace writes, approvals reviewed automatically); the scope hook limits changes to the task.
-      "--approve-for-me", "--cd", workspace, "--output-last-message", outputFile, "-"];
+      // Same sandbox as Codex QA (workspace writes, never let out of it); the scope hook limits changes to the task.
+      ...sandboxArgs, "--cd", workspace, "--output-last-message", outputFile, "-"];
   }
   const { launchArgs } = claudeAdapter.install({ task, toolGuard, model, effort, fast: hookArgs.length ? false : fast });
-  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, ...hookArgs, ...launchArgs];
+  return [...prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, ...claudeRunArgs({ model }), ...hookArgs, ...launchArgs];
 }
 
 function killTree(child) {
@@ -74,51 +80,44 @@ export class CloudImplementationWorker {
     this.workspace = path.resolve(workspace);
     this.command = command ?? cli;
     this.prefixArgs = prefixArgs;
+    // Claude: npm's claude.cmd runs through cmd.exe like codex.cmd (Codex arrives already resolved).
+    if (cli === "claude" && !prefixArgs.length) ({ command: this.command, prefixArgs: this.prefixArgs } = cliLauncher(this.command, { env }));
     this.model = model;
     this.effort = effort;
     this.fast = fast;
     this.timeoutMs = timeoutSeconds * 1000;
     this.toolGuard = toolGuard;
-    this.env = cli === "claude" ? claudeChildEnv(env) : withoutSecrets(env, { keep: CODEX_AUTH_ENV });
+    // Codex: credentials are removed at each launch, which keeps the active provider's key (config may change between runs).
+    this.env = cli === "claude" ? claudeChildEnv(env) : env;
     this.spawnProcess = spawnProcess;
     // Same lock file as the Cline worker: one implementation at a time per state folder.
     this.lockPath = path.join(this.stateDir, "cline.busy.lock");
   }
 
   async isBusy() {
-    try {
-      const pid = Number((await readFile(this.lockPath, "utf8")).trim());
-      if (Number.isInteger(pid) && pid > 0) {
-        try { process.kill(pid, 0); return true; } catch (error) { if (error.code !== "ESRCH") return true; }
-      }
-      await rm(this.lockPath, { force: true });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    return false;
+    return lockHeld(this.lockPath);
   }
 
   async withExclusive(operation) {
     await mkdir(this.stateDir, { recursive: true });
-    if (await this.isBusy()) return null;
-    let lock;
-    try { lock = await open(this.lockPath, "wx"); }
-    catch (error) { if (error.code === "EEXIST") return null; throw error; }
-    try {
-      await lock.writeFile(`${process.pid}\n`);
-      return await operation();
-    } finally {
-      await lock.close();
-      await rm(this.lockPath, { force: true });
-    }
+    return withBusyLock(this.lockPath, operation);
   }
 
   async run(prompt, hooks = {}) {
+    // Guard plan stage 1: this run's guard decisions go to the action log through the engine; closed on every exit.
+    const log = await openDecisionLog({ stateDir: this.stateDir, taskId: hooks.task?.id ?? null });
+    try { return await this.runLogged(prompt, hooks, log); } finally { await log.close(); }
+  }
+
+  async runLogged(prompt, hooks, log) {
+    // Codex: the active provider's key is registered as a secret before the prompt is redacted and written.
+    const keep = this.cli === "codex" ? codexAuthEnv({ env: this.env }) : null;
     const onEvent = hooks.onEvent ?? (() => {});
     const invocation = path.join(this.stateDir, "codex", randomUUID());
     await mkdir(invocation, { recursive: true });
     const outputFile = path.join(invocation, "result.txt");
-    const text = `${IMPLEMENTATION_RULES}\n\n${prompt}`;
+    // Secrets in the task text are hidden before it is written or sent, as for Codex roles (codex-worker.mjs).
+    const text = redactText(`${IMPLEMENTATION_RULES}\n\n${prompt}`, { assignments: false });
     await writeFile(path.join(invocation, "prompt.txt"), text);
     // Codex: the scope hook gets this run's policy and logs every decision next to the prompt.
     let hookArgs = [];
@@ -126,21 +125,29 @@ export class CloudImplementationWorker {
     if (this.cli === "codex") {
       if (!hooks.task?.allowedPaths?.length) throw new Error("Codex implementation needs the task's allowed paths for its scope hook");
     }
-    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast});
-    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env });
+    hookArgs = await installProtection({cli:this.cli,workspace:this.workspace,stateDir:this.stateDir,invocation,task:hooks.task,toolGuard:this.toolGuard,fast:this.fast,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:this.env},decisionLog:log.policy(),
+      // Stage 2: Codex's sandbox is probed and chosen here; what confines the run is reported and logged. The hook
+      // counts as observed only once a decision arrives (guard-records).
+      codexMode:this.cli === "codex" ? "write" : null,
+      onAttestation:(entry) => onEvent({ type: "attestation", ...entry })});
+    const args = buildImplementationArgs({ cli: this.cli, prefixArgs: this.prefixArgs, model: this.model, effort: this.effort, fast: this.fast, workspace: this.workspace, outputFile, task: hooks.task, toolGuard: this.toolGuard, hookArgs, env:this.env, sandboxArgs: [] });
     await onEvent({ type: "implementation-cli-ready", cli: this.cli, model: this.model ?? "CLI default" });
     let stdout = "", stderr = "", timedOut = false;
     const exitCode = await new Promise((resolve, reject) => {
-      const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const launch = launchSpec(this.command, args);
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: this.cli === "claude" ? { ...claudeRunEnvironment(this.env, { command: this.command, prefixArgs: this.prefixArgs, env: this.env }, this.workspace), ...claudeRunEnv() } : withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
       const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += chunk; });
       child.stderr.on("data", (chunk) => { stderr += chunk; });
       child.stdin.on("error", () => {});
       child.on("error", (error) => { clearTimeout(timer); reject(error); });
-      child.on("close", (code) => { clearTimeout(timer); resolve(code ?? 1); });
+      child.on("close", (code) => { clearTimeout(timer); sweepCodexTemp(); resolve(code ?? 1); });
       Promise.resolve(hooks.onStart?.({ pid: child.pid })).then(() => child.stdin.end(text), (error) => { killTree(child); reject(error); });
     });
     await writeFile(path.join(invocation, "events.ndjson"), [stdout, stderr].filter(Boolean).join("\n"));
+    // The CLI's own output against what the guard recorded: a call with no record means the hook didn't see it.
+    const mismatch = crossCheck({ cli: this.cli, stdout, received: log.received });
+    await onEvent({ type: "guard-records", cli: this.cli, received: log.received.length, hookObserved: log.received.length > 0, ...(mismatch ? { mismatch } : {}) });
     noteUsage(this.cli === "codex" ? codexUsage(stdout) : claudeUsage(stdout), this.model);
     if (this.cli === "claude") await saveClaudeRateLimit(this.stateDir, stdout);
     if (timedOut) return { exitCode: 124, runResult: { finishReason: "timeout", text: `Stopped after ${Math.round(this.timeoutMs / 60000)} minutes.` } };

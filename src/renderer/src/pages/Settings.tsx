@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { takeSettingsSection, type SettingsSection } from "../lib/nav";
-import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo } from "@shared/types";
+import { openDoc } from "../lib/open-doc";
+import type { Agent, EngineTuning, LibraryPreview, ModelPrice, NotifyChannel, Settings, SkillInfo, UiStyle } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@shared/defaults";
+import { currentSafetyPreset, SAFETY_PRESETS, type SafetyPresetName } from "@shared/safety-presets";
+import { STYLE_ACCENTS, styleAccent, withStyleAccent } from "@shared/appearance";
 import { useApp } from "../store";
 import { Updates } from "./Updates";
-import { connectionMeta, roleLabel, tokens } from "../lib/format";
+import { connectionMeta, dateTime, num, plural, roleLabel, tokens } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { Empty, Modal, ProvenanceChip, SetRow, St, Support, Tabs, Toggle } from "../components/ui";
 import { TaskModeCard } from "../components/TaskMode";
@@ -21,16 +24,72 @@ const SECTIONS: { value: Section; label: string }[] = [
 ];
 /** Unattended limits that keep their decimals; the others are whole counts. */
 const DECIMAL_LIMITS = new Set<string>(["maxHours", "maxMillionTokens", "maxCostUsd", "maxMillionTokensDay", "maxCostUsdDay"]);
-const ACCENTS = [
-  ["Pastel blue", "#82A9E8"],
-  ["Lavender", "#AD9ADA"],
-  ["Mint", "#70C7A5"],
-  ["Amber", "#DAB777"],
-  ["Rose", "#D98291"],
+const STYLES: { value: UiStyle; label: string; note: string }[] = [
+  { value: "neumorphic", label: "Neumorphic", note: "Today's look: soft raised and sunken surfaces." },
+  { value: "standard", label: "Standard", note: "Flat dark panels, thin borders, crisp type." },
+  { value: "cyberpunk", label: "Cyberpunk", note: "Neon on black, angled edges, terminal type." },
 ];
+
+/** A tiny window drawn in the style's own colors (not the current one's): titlebar, sidebar with the active nav item, one card. */
+function StylePreview({ style, accent }: { style: UiStyle; accent: string }) {
+  const cut = (n: number) => `polygon(${n}px 0, 100% 0, 100% calc(100% - ${n}px), calc(100% - ${n}px) 100%, 0 100%, 0 ${n}px)`;
+  const line = `1px solid color-mix(in srgb, ${accent} 40%, transparent)`;
+  const look = {
+    neumorphic: {
+      frame: { background: "#152131", borderRadius: 8 },
+      bar: { background: "#152131", boxShadow: "0 2px 4px #0a111a" },
+      side: { background: "#152131", borderRadius: 5, boxShadow: "2px 2px 4px #0a111a, -2px -2px 4px #21324a" },
+      card: { background: "#152131", borderRadius: 6, boxShadow: "2px 2px 5px #0a111a, -2px -2px 5px #21324a" },
+      nav: { background: accent, borderRadius: 3 },
+      fill: { background: accent, borderRadius: 3 },
+      btn: { background: accent, borderRadius: 5, boxShadow: "2px 2px 4px #0a111a, -1px -1px 3px #21324a" },
+    },
+    standard: {
+      frame: { background: "#17191e", borderRadius: 6, border: "1px solid #2f343d" },
+      bar: { background: "#1f2228", borderBottom: "1px solid #2f343d" },
+      side: { background: "#1f2228", borderRadius: 4, border: "1px solid #2f343d" },
+      card: { background: "#1f2228", borderRadius: 5, border: "1px solid #2f343d" },
+      nav: { background: accent, borderRadius: 2 },
+      fill: { background: accent, borderRadius: 2 },
+      btn: { background: accent, borderRadius: 4 },
+    },
+    cyberpunk: {
+      frame: { background: "#0a0614", border: line, clipPath: cut(8) },
+      bar: { background: "#120b26", borderBottom: line },
+      side: { background: "#120b26", border: line, clipPath: cut(5) },
+      card: { background: "#120b26", border: line, clipPath: cut(6) },
+      nav: { background: accent, boxShadow: `0 0 6px ${accent}` },
+      fill: { background: accent, boxShadow: `0 0 6px ${accent}` },
+      btn: { background: accent, clipPath: cut(3) },
+    },
+  }[style];
+  return (
+    <div aria-hidden="true" style={{ ...look.frame, height: 78, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ ...look.bar, height: 10, flex: "none" }} />
+      <div style={{ flex: 1, display: "flex", gap: 6, padding: 6 }}>
+        <div style={{ ...look.side, width: 28, padding: 4 }}>
+          <div style={{ ...look.nav, height: 4 }} />
+        </div>
+        <div style={{ ...look.card, flex: 1, padding: 7, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div style={{ ...look.fill, height: 5, width: "70%" }} />
+          <div style={{ ...look.btn, height: 10, width: 30, alignSelf: "flex-end" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** The docs for this exact version on GitHub (each release is tagged vX.Y.Z). */
 const docUrl = (version: string, file: string) => `https://github.com/ProjktRed/Agent-Dock/blob/${/^\d+\.\d+\.\d+$/.test(version) ? `v${version}` : "main"}/docs/${file}`;
+
+/** Opens a guide bundled with the app in the default Markdown viewer (works offline); GitHub when it is missing or nothing opens .md files. */
+function DocLink({ file }: { file: "user-guide.md" | "how-it-works.md" }) {
+  const { snap } = useApp();
+  const local = snap.paths.docs?.[file];
+  const online = docUrl(snap.version, file);
+  if (!local) return <a className="btn sm" href={online} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>;
+  return <button className="btn sm" title={local} onClick={() => void openDoc(window.api.openPath, local, online, (url) => window.open(url, "_blank", "noreferrer"))}>Open<Icon name="external" size="sm" /></button>;
+}
 
 function useSettingsPatch() {
   const { snap, saveSettings } = useApp();
@@ -39,7 +98,7 @@ function useSettingsPatch() {
 }
 
 /**
- * A loop limit the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
+ * A default the engine fixes while guardrails are on. Guardrails on: the engine's value, locked.
  * Off: editable; saved on blur. Null-able values (engine defaults) clear to the default when emptied.
  */
 function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof EngineTuning; min: number; max: number; unit?: string; zeroLabel?: string; fallback?: number; label: string }) {
@@ -52,11 +111,11 @@ function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof E
   const [text, setText] = useState(stored == null ? "" : String(stored));
   useEffect(() => setText(stored == null ? "" : String(stored)), [stored]);
   const unitFor = (v: number) => (unit && v === 1 && /s$/.test(unit) ? unit.slice(0, -1) : unit);
-  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${v.toLocaleString()}${unit ? ` ${unitFor(v)}` : ""}`);
+  const show = (v: number) => (v === 0 && zeroLabel ? zeroLabel : `${num(v)}${unit ? ` ${unitFor(v)}` : ""}`);
   if (guarded) {
     return (
       <span className="row" style={{ gap: 10 }}>
-        <span className="mono">{show(value)}</span>
+        <span className="tnum">{show(value)}</span>
         <span className="lock" title="Turn off engine guardrails (Settings › Advanced) to change"><Icon name="lock" size="sm" />Fixed by engine</span>
       </span>
     );
@@ -71,7 +130,7 @@ function Tunable({ k, min, max, unit, zeroLabel, fallback, label }: { k: keyof E
   };
   return (
     <span className="row" style={{ gap: 8 }}>
-      <input className="input mono" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? fallback.toLocaleString() : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
+      <input className="input tnum" style={{ width: 110 }} inputMode="numeric" value={text} placeholder={fallback !== undefined ? num(fallback) : undefined} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} aria-label={label} />
       {unit && <span className="sub">{unit}</span>}
       {zeroLabel && <span className="hint">0 = {zeroLabel.toLowerCase()}</span>}
     </span>
@@ -85,8 +144,9 @@ function GuardrailsNote() {
 }
 
 function General() {
-  const { snap } = useApp();
+  const { snap, saveSettings } = useApp();
   const g = snap.settings.general;
+  const accent = styleAccent(g, g.style).toUpperCase();
   const patch = useSettingsPatch();
   return (
     <div className="stack" style={{ gap: 20 }}>
@@ -98,12 +158,31 @@ function General() {
       </section>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Appearance</h2>
-        <SetRow title="Theme" support="app">
-          <Tabs label="Theme" small value={g.theme} onChange={(v) => patch("general", { theme: v })} options={[{ value: "dark", label: "Dark" }, { value: "darker", label: "Darker" }]} />
+        <div className="setrow" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <div className="lt row" style={{ gap: 8 }}>Style<Support kind="app" /></div>
+          <div className="row" role="radiogroup" aria-label="Style" style={{ gap: 14, alignItems: "stretch" }}>
+            {STYLES.map((s) => {
+              const on = g.style === s.value;
+              return (
+                <button key={s.value} className={`opt ${on ? "on" : ""}`} role="radio" aria-checked={on} style={{ flex: 1, minWidth: 0, flexDirection: "column", alignItems: "stretch", gap: 8 }} onClick={() => patch("general", { style: s.value })}>
+                  <StylePreview style={s.value} accent={styleAccent(g, s.value)} />
+                  <span className="row" style={{ gap: 8, justifyContent: "space-between" }}>
+                    <b>{s.label}</b>
+                    {on && <span className="chip">Active</span>}
+                  </span>
+                  <span className="ld">{s.note}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <SetRow title="Theme" desc="Applies to every style" support="app">
+          <Tabs label="Theme" radio small value={g.theme} onChange={(v) => patch("general", { theme: v })} options={[{ value: "dark", label: "Dark" }, { value: "darker", label: "Darker" }]} />
         </SetRow>
-        <SetRow title="Accent color" desc="Focus, selection and primary actions" support="app">
+        <SetRow title="Accent color" desc="Focus, selection and primary actions. Remembered per style." support="app">
           <div className="row" style={{ gap: 14 }}>
-            {ACCENTS.map(([name, hex]) => <button key={hex} className={`swatch ${g.accent.toUpperCase() === hex ? "on" : ""}`} style={{ background: hex }} aria-label={name} aria-pressed={g.accent.toUpperCase() === hex} onClick={() => patch("general", { accent: hex })} />)}
+            {STYLE_ACCENTS[g.style].map(([name, hex]) => <button key={hex} className={`swatch ${accent === hex ? "on" : ""}`} style={{ background: hex, color: hex }} aria-label={name} aria-pressed={accent === hex} onClick={() => saveSettings({ ...snap.settings, general: withStyleAccent(g, g.style, hex) })} />)}
+            <span className="sub" style={{ minWidth: 72 }}>{STYLE_ACCENTS[g.style].find(([, hex]) => hex === accent)?.[0] ?? "Custom"}</span>
           </div>
         </SetRow>
       </section>
@@ -126,10 +205,10 @@ function General() {
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Help</h2>
         <SetRow title="User guide" desc="Getting started, task sizes, unattended runs, spend, pull requests, lanes and troubleshooting">
-          <a className="btn sm" href={docUrl(snap.version, "user-guide.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+          <DocLink file="user-guide.md" />
         </SetRow>
         <SetRow title="How it works" desc="Where each number comes from, the loop's roles, limits and safeguards, and known limitations">
-          <a className="btn sm" href={docUrl(snap.version, "how-it-works.md")} target="_blank" rel="noreferrer">Open<Icon name="external" size="sm" /></a>
+          <DocLink file="how-it-works.md" />
         </SetRow>
       </section>
     </div>
@@ -156,7 +235,7 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
   const install = async () => {
     if (!preview) return;
     setBusy(true);
-    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${chosen.length} skill(s)`); onClose(); }
+    try { onImported(await window.api.installSkillImport(preview.token, chosen)); toast("success", `Imported ${plural(chosen.length, "skill")}`); onClose(); }
     catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   return (
@@ -188,7 +267,7 @@ function SkillImport({ onClose, onImported }: { onClose: () => void; onImported:
                       <input type="checkbox" disabled={blocked} checked={on} onChange={() => setChosen(on ? chosen.filter((n) => n !== key(sk)) : [...chosen, key(sk)])} />
                       <span style={{ fontWeight: 600 }}>{sk.name}</span>
                       <span className="sub ellipsis grow">{sk.description}</span>
-                      {!preview.browse && <span className="sub">{sk.files.length} file(s){sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
+                      {!preview.browse && <span className="sub">{plural(sk.files.length, "file")}{sk.skipped.length ? ` · ${sk.skipped.length} skipped` : ""}</span>}
                     </span>
                     {sk.findings.filter((x) => x.file || x.level === "block").map((x, i) => <span key={i} className={`row ${x.level === "block" ? "err" : "warn"}`} style={{ gap: 6, fontSize: 12, paddingLeft: 26 }}><Icon name="warn" size="sm" />{x.level === "block" ? "Blocked: " : ""}{x.message}{x.file ? <span className="mono sub"> {x.file}</span> : null}</span>)}
                   </label>
@@ -242,7 +321,7 @@ function Skills() {
     <div className="stack" style={{ gap: 20 }}>
       <div className="banner"><Icon name="warn" className="info" /><span>The engine always includes its bundled <span className="mono">bounded-task-handoff</span> skill. Skills you assign to an agent are added to that role's prompt (SKILL.md plus its other Markdown files when they fit 16,000 characters); task scope and guard rules still take precedence.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
-        <span className="sub grow">{skills.length} skills · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
+        <span className="sub grow">{plural(skills.length, "skill")} · {skills.filter((s) => s.source === "engine").length} bundled with the engine</span>
         {groups.length > 1 && <>
           <button className="btn ghost sm" onClick={() => setAll(false)}><Icon name="chevronDown" size="sm" />Expand all</button>
           <button className="btn ghost sm" onClick={() => setAll(true)}><Icon name="chevronRight" size="sm" />Collapse all</button>
@@ -274,8 +353,8 @@ function Skills() {
                 <tr key={s.id} className={`click ${s.id === selId ? "sel" : ""}`} onClick={() => setSelId(s.id)}>
                   <td><button className="rowbtn"><span className="name" style={{ fontWeight: 600 }}>{s.name}</span><span className="sub ellipsis" style={{ maxWidth: 300 }}>{s.description}</span></button></td>
                   <td><span className={`chip ${s.source === "engine" ? "info" : "lav"}`} title={s.origin}>{s.source === "engine" ? "Engine" : s.origin ? "GitHub" : "Imported"}</span>{s.origin && <span className="sub mono" style={{ display: "block", fontSize: 11 }}>{s.origin}</span>}</td>
-                  <td className="sub">{assignedLabel(s) || "None"}</td>
-                  <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? `${s.warnings.length} warning(s)` : "Compatible"}</span></td>
+                  <td className="sub">{assignedLabel(s) || "—"}</td>
+                  <td><span className={`row ${s.warnings.length ? "warn" : "ok"}`} style={{ gap: 6, fontSize: 12 }}><span className="dot" />{s.warnings.length ? plural(s.warnings.length, "warning") : "Compatible"}</span></td>
                   <td onClick={(e) => e.stopPropagation()}>{s.source === "engine" ? <span className="lock"><Icon name="lock" size="sm" />Required</span> : <Toggle on={enabled(s)} onChange={(v) => saveSettings({ ...snap.settings, skills: { ...snap.settings.skills, enabled: { ...snap.settings.skills.enabled, [s.id]: v } } })} label={`Enable ${s.name}`} />}</td>
                 </tr>
               ))}
@@ -342,17 +421,13 @@ function Workflow() {
       <TaskModeCard />
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Loop behaviour</h2>
-        <GuardrailsNote />
         <SetRow title="Automatic continuation" desc="Start the next task as soon as one is approved. Off: the app requests Pause After Task whenever QA passes." support="app"><Toggle on={w.autoContinue} onChange={(v) => patch("workflow", { autoContinue: v })} label="Automatic continuation" /></SetRow>
-        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. Needs a cloud Implementation agent; off in Unattended mode." support="engine">
+        <SetRow title="Parallel tasks" desc="Run this many tasks at once, each in its own git worktree with its own Implementation and QA. Each approved change is checked again on the combined code before it is committed to your branch. On a local model server, at most as many tasks as it answers at once (llama.cpp slots, or the Ollama connection's requests at once). In Unattended mode the run limits count all tasks together." support="engine">
           <select className="sel" value={String(w.parallelTasks ?? 1)} onChange={(e) => patch("workflow", { parallelTasks: Number(e.target.value) })} aria-label="Parallel tasks">
             <option value="1">One at a time</option><option value="2">2 at once</option><option value="3">3 at once</option><option value="4">4 at once</option>
           </select>
         </SetRow>
         <SetRow title="Automatic elevation" desc="One short Elevation reassessment when Assessment corrections stall. Its advice still goes through independent QA." support="engine"><Toggle on={w.automaticElevation} onChange={(v) => patch("workflow", { automaticElevation: v })} label="Automatic elevation" /></SetRow>
-        <SetRow title="Elevation after" desc="Attempted Assessment corrections before automatic Elevation reassesses the strategy (when Automatic elevation is on)" support="engine"><Tunable k="elevationAfter" min={1} max={50} unit="corrections" label="Elevation after corrections" /></SetRow>
-        <SetRow title="Correction limit" desc="QA failures get a bounded correction from Assessment. With a limit, the loop stops for you after that many corrections on one task; Resume allows another round." support="engine"><Tunable k="maxCorrections" min={0} max={500} zeroLabel="No limit" label="Correction limit" /></SetRow>
-        <SetRow title="Resolver strategies" desc="Blocked cases: the read-only Resolver runs once all workers are idle. Distinct recovery strategies per task before human review." support="engine"><Tunable k="resolverMaxStrategies" min={1} max={20} unit="per task" label="Resolver strategies per task" /></SetRow>
         <SetRow title="After the app restarts" desc="When a project was mid-task and its engine is no longer running" support="app">
           <select className="sel" value={w.resumeAfterRestart} onChange={(e) => patch("workflow", { resumeAfterRestart: e.target.value as typeof w.resumeAfterRestart })} aria-label="Resume behaviour">
             <option value="ask">Show a notice</option><option value="auto">Resume automatically</option><option value="paused">Stay stopped</option>
@@ -389,10 +464,6 @@ function Context() {
   const impl = snap.agents.filter((x) => x.role === "implementation" && snap.clis.find((c) => c.id === x.cliId)?.kind === "cline");
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="row wrap sub" style={{ gap: 18 }}>
-        <span className="row" style={{ gap: 6 }}><ProvenanceChip value="reported" />Defined by the provider or hardware, read-only</span>
-        <span className="row" style={{ gap: 6 }}><span className="chip lav" style={{ height: 18, fontSize: 10.5 }}>Yours</span>Limit you configure; must not exceed the provider's</span>
-      </div>
       <section className="card pad">
         <h2 className="h2" style={{ marginBottom: 4 }}>Defaults</h2>
         <GuardrailsNote />
@@ -400,15 +471,18 @@ function Context() {
         <SetRow title="Default maximum output" desc="Used for new Implementation agents on Cline" support="engine"><Tunable k="defaultMaxOutputTokens" min={256} max={1_000_000} fallback={snap.engine.defaults.maxOutputTokens} unit="tokens" label="Default maximum output" /></SetRow>
         <SetRow title="Context warning threshold" desc="Warn when a configured context reaches this share of the model's reported maximum" support="app">
           <input type="range" min={50} max={95} step={5} value={snap.settings.context.warnThresholdPercent} onChange={(e) => patch("context", { warnThresholdPercent: Number(e.target.value) })} aria-label="Warning threshold" style={{ accentColor: "var(--a)", width: 200 }} />
-          <span className="mono" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
+          <span className="tnum" style={{ width: 40 }}>{snap.settings.context.warnThresholdPercent}%</span>
         </SetRow>
         <SetRow title="Compaction" desc="Cline compacts its own history; compaction events are counted on the Token tab" support="engine"><span className="chip mut">Managed by Cline</span></SetRow>
-        <SetRow title="Files per task" desc="Eco mode: Assessment sizes tasks for the implementation worker. 1 = one file per task where possible." support="engine"><Tunable k="taskMaxFiles" min={1} max={50} unit="files" label="Files per task" /></SetRow>
-        <SetRow title="New file size" desc="Eco mode: Assessment keeps each new file under about this many lines" support="engine"><Tunable k="taskMaxNewLines" min={10} max={5000} unit="lines" label="New file size" /></SetRow>
-        <SetRow title="Files to read" desc="Eco mode: Assessment names at most this many files for the worker to read (with line ranges for large files)" support="engine"><Tunable k="taskMaxReadFiles" min={1} max={50} unit="files" label="Files to read" /></SetRow>
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2">Implementation agents</h2>
+        {impl.length === 0 ? <Empty title="No Implementation agents on Cline" icon="agent"><span>Assign a Cline agent to Implementation in Agents to set its context limits here.</span></Empty> : (
+        <>
+        <div className="row wrap sub" style={{ gap: 18 }}>
+          <span className="row" style={{ gap: 6 }}><ProvenanceChip value="reported" />Defined by the provider or hardware, read-only</span>
+          <span className="row" style={{ gap: 6 }}><span className="chip lav" style={{ height: 18, fontSize: 10.5 }}>Yours</span>Limit you configure; must not exceed the provider's</span>
+        </div>
         <div className="well scroll-x" style={{ padding: 6 }}>
           <table className="tbl" style={{ minWidth: 640 }}>
             <thead><tr><th>Agent</th><th>Provider-defined max</th><th>Your context limit</th><th>Your max output</th></tr></thead>
@@ -429,9 +503,53 @@ function Context() {
             </tbody>
           </table>
         </div>
+        </>
+        )}
         <span className="hint">QA, Assessment, Elevation, workflow roles and Codex / Claude Code implementation agents manage their own context inside their CLI.</span>
       </section>
     </div>
+  );
+}
+
+/** One choice for the safety toggles (shared/safety-presets.ts), plus the two controls they add: ask instead of refuse, approve each task. */
+function SafetyLevelCard() {
+  const { snap, toast, refresh } = useApp();
+  const patch = useSettingsPatch();
+  const [busy, setBusy] = useState(false);
+  const level = currentSafetyPreset(snap.settings);
+  const ask = Math.max(0, Number(snap.settings.safety.askMinutes ?? 0) || 0);
+  const apply = async (name: SafetyPresetName) => {
+    setBusy(true);
+    try {
+      const r = await window.api.applySafetyPreset(name);
+      if (r.ok) toast("success", `Safety level: ${SAFETY_PRESETS[name].label}. Runs use it from their next start.`);
+      else toast("info", r.problems.join(" "));
+      await refresh();
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Safety level</h2>
+      <div className="row wrap" style={{ gap: 8 }} role="radiogroup" aria-label="Safety level">
+        {(Object.keys(SAFETY_PRESETS) as SafetyPresetName[]).map((name) => (
+          <button key={name} role="radio" aria-checked={level === name} className={`btn sm ${level === name ? "primary" : ""}`} disabled={busy} onClick={() => void apply(name)}>{SAFETY_PRESETS[name].label}</button>
+        ))}
+        <span className="sub">{level ? SAFETY_PRESETS[level].summary : "Custom: the toggles below differ from every level."}</span>
+      </div>
+      <SetRow title="When the guard cannot verify an action" desc="Codex and Claude Code only. An unknown tool or a shell command the guard cannot read is put to you (in the Agent Dock window, and on Telegram when remote approvals are on) instead of being refused; Allow for this run stops that exact command asking again until the run ends; with no answer in time it is refused. Anything naming a protected path, and any edit outside the task's files, is always refused. Unattended runs ask only when Telegram approvals are set up." support="engine">
+        <select className="input" style={{ width: 200 }} value={String(ask)} aria-label="When the guard cannot verify an action" onChange={(e) => patch("safety", { askMinutes: Number(e.target.value) })}>
+          <option value="0">Refuse at once</option>
+          {[2, 5, 10, 30].map((m) => <option key={m} value={String(m)}>Ask me, wait {m} min</option>)}
+        </select>
+      </SetRow>
+      <SetRow title="Web access for agents" desc="Off unless you turn it on. Codex's live web search, and Claude Code's web search and page reading, for Implementation and Assessment (never QA). They run inside the agent, so the sandbox for agents' commands still keeps their shell commands offline. Web pages can contain instructions aimed at agents; protected files stay refused either way." support="engine">
+        <Toggle on={snap.settings.safety.webAccess === true} onChange={(v) => patch("safety", { webAccess: v })} label="Web access for agents" />
+      </SetRow>
+      <SetRow title="Approve each task" desc="Each task Assessment chooses waits for your Approve (or Set aside) before Implementation starts, on the Overview page or on Telegram. Runs one task at a time; not in unattended mode." support="engine">
+        <Toggle on={snap.settings.workflow.approveTasks === true} onChange={(v) => patch("workflow", { approveTasks: v })} label="Approve each task" />
+      </SetRow>
+    </section>
   );
 }
 
@@ -441,8 +559,10 @@ function Safety() {
   const patch = useSettingsPatch();
   const [draft, setDraft] = useState("");
   const paths = snap.settings.safety.protectedPaths;
+  const checksTrusted = snap.settings.safety.checksTrusted === true;
   return (
     <div className="stack" style={{ gap: 20 }}>
+      <SafetyLevelCard />
       {!w.toolGuard && (
         <div className="banner fade-in" role="status"><Icon name="lock" className="info" /><div className="grow"><div style={{ fontWeight: 600 }}>Protected-path checks stay on</div><div className="sub">Turning off the optional tool guard does not allow protected paths, interpreters or arbitrary shell scripts. Cline and OpenCode still use restricted tools to enforce this boundary. Loop-limit settings are independent.</div></div></div>
       )}
@@ -452,6 +572,15 @@ function Safety() {
           <Toggle on={w.toolGuard} onChange={(v) => patch("workflow", { toolGuard: v })} label="Tool guard" danger={!w.toolGuard} />
         </SetRow>
       </section>
+      <section className="card pad">
+        <h2 className="h2" style={{ marginBottom: 4 }}>Project checks</h2>
+        <SetRow title="Trust project check scripts" desc={checksTrusted
+          ? "On: checks such as npm test run as your own code. Nothing watches what they do, and an agent that edits package.json or a test can make a check change Agent Dock's settings or engine."
+          : "Off (recommended): agents can edit the code checks run, so while a run is going Agent Dock puts back any change to its own settings files and stops every run when those or its engine files change. Unless the experimental sandbox below is on, checks run as you and can read your files."} support="app">
+          <Toggle on={checksTrusted} onChange={(v) => patch("safety", { checksTrusted: v })} label="Trust project check scripts" danger={checksTrusted} />
+        </SetRow>
+      </section>
+      <SandboxChecksCard />
       <section className="card pad stack" style={{ gap: 12 }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>Unattended mode</h2>
         <SetRow title="Run without supervision" desc="Locks the tool guard on, continues automatically between tasks, and enforces the limits below. A limit stops the run at the next safe point (never mid-task), so the work in progress may go slightly past it. Every run writes run-report.md in the project's state folder. Token budgets count new input and output; input read from a prompt cache (about a tenth of the price) is reported but not counted." support="engine">
@@ -472,7 +601,7 @@ function Safety() {
               const limits = { ...DEFAULT_SETTINGS.workflow.unattendedLimits, ...w.unattendedLimits };
               return (
                 <label className="field" key={key}><span>{label}</span>
-                  <input className="input mono" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
+                  <input className="input tnum" inputMode="decimal" defaultValue={limits[key] ?? 0} aria-label={label}
                     onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= (key === "maxCorrections" ? 1 : 0) && v !== limits[key]) patch("workflow", { unattendedLimits: { ...limits, [key]: DECIMAL_LIMITS.has(key) ? v : Math.floor(v) } }); else e.target.value = String(limits[key] ?? 0); }} />
                   <span className="hint">{hint}</span>
                 </label>
@@ -500,7 +629,7 @@ function Safety() {
       </section>
       <section className="card pad stack" style={{ gap: 12 }}>
         <div className="row" style={{ gap: 8 }}><h2 className="h2">Protected paths</h2><Support kind="engine" /></div>
-        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. Project check scripts still run as trusted code.</span>
+        <span className="sub">Block agent tool reads and writes on the next engine start. Use project-relative paths, absolute paths, or * and ** patterns. Agent Dock's app, settings, state and engine folders are always protected. These rules cover agent tools; project checks are covered under Project checks above.</span>
         <div className="row wrap" style={{ gap: 8 }}>
           {paths.map((p) => <span className="chip raised mono" key={p}>{p}<button className="x" aria-label={`Remove ${p}`} onClick={() => patch("safety", { protectedPaths: paths.filter((x) => x !== p) })}><Icon name="close" size="sm" /></button></span>)}
         </div>
@@ -553,7 +682,7 @@ function PriceTableCard() {
                 <input className="input mono" value={r.model} aria-label="Model" placeholder="gpt-5*" onChange={(e) => edit(i, e.target.value)} onBlur={(e) => commit(i, "model", e.target.value)} /></label>
               {([["input", "Input"], ["cachedInput", "Cached input"], ["output", "Output"]] as const).map(([key, label]) => (
                 <label className="field" key={key}><span>{label}</span>
-                  <input className="input mono" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
+                  <input className="input tnum" inputMode="decimal" key={`${key}-${r[key]}`} defaultValue={r[key]} aria-label={`${r.model || "New model"} ${label} price`} onBlur={(e) => commit(i, key, e.target.value)} /></label>
               ))}
               <div><button className="btn sm" onClick={() => save(rows.filter((_, j) => j !== i))}>Remove</button></div>
             </div>
@@ -602,64 +731,17 @@ function SupervisorCard() {
             ["digestHours", "Digest every hours", "0 = only at the end of a run"],
           ] as const).map(([key, label, hint]) => (
             <label className="field" key={key}><span>{label}</span>
-              <input className="input mono" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
+              <input className="input tnum" inputMode="decimal" defaultValue={sv[key]} aria-label={label}
                 onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== sv[key]) void patch("workflow", { supervisor: { ...sv, [key]: ["stallMinutes", "millionTokensPerTask", "digestHours"].includes(key) ? v : Math.floor(v) } }); else e.target.value = String(sv[key]); }} />
               <span className="hint">{hint}</span>
             </label>
           ))}
         </div>
       )}
-      {sv.mode !== "off" && (
-        <>
-          <SetRow title="Model review" desc="On each alert (at most a few per run, 10 minutes apart) a model reviews the run read-only and chooses from pause, stop, defer, request Elevation or lower a limit. Propose: shown to you only. Act: the allowed actions are carried out; switching CLIs and retrying a worker stay suggestions." support="engine">
-            <select className="sel" value={sv.review ?? "off"} aria-label="Supervisor model review" onChange={(e) => void patch("workflow", { supervisor: { ...sv, review: e.target.value as "off" | "propose" | "act" } })}>
-              <option value="off">Off</option>
-              <option value="propose">Propose only</option>
-              <option value="act">Act</option>
-            </select>
-          </SetRow>
-          {(sv.review ?? "off") !== "off" && (
-            <div className="grid-4">
-              <label className="field"><span>Reviewer</span>
-                <select className="sel" value={sv.reviewer ?? "auto"} aria-label="Reviewer" onChange={(e) => void patch("workflow", { supervisor: { ...sv, reviewer: e.target.value as "auto" | "codex" | "claude" | "local" } })}>
-                  <option value="auto">Orchestrator's CLI</option>
-                  <option value="codex">Codex</option>
-                  <option value="claude">Claude Code</option>
-                  <option value="local">Local (OpenAI-compatible)</option>
-                </select>
-                <span className="hint">runs read-only</span>
-              </label>
-              <label className="field"><span>Model</span>
-                <input className="input mono" defaultValue={sv.reviewerModel ?? ""} placeholder={sv.reviewer === "local" ? "required" : "CLI default"} aria-label="Reviewer model"
-                  onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerModel ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerModel: e.target.value.trim() } }); }} />
-                <span className="hint">e.g. a small, cheap model</span>
-              </label>
-              {sv.reviewer === "local" && (
-                <label className="field"><span>Server URL</span>
-                  <input className="input mono" defaultValue={sv.reviewerBaseUrl ?? ""} aria-label="Reviewer server URL"
-                    onBlur={(e) => { if (e.target.value.trim() !== (sv.reviewerBaseUrl ?? "")) void patch("workflow", { supervisor: { ...sv, reviewerBaseUrl: e.target.value.trim() } }); }} />
-                  <span className="hint">llama.cpp / Ollama …/v1</span>
-                </label>
-              )}
-              <label className="field"><span>Reviews per run</span>
-                <input className="input mono" inputMode="numeric" defaultValue={sv.reviewMax ?? 6} aria-label="Reviews per run"
-                  onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== sv.reviewMax) void patch("workflow", { supervisor: { ...sv, reviewMax: v } }); else e.target.value = String(sv.reviewMax ?? 6); }} />
-                <span className="hint">caps the review cost</span>
-              </label>
-            </div>
-          )}
-          <SetRow title="May defer stuck tasks" desc="Lets the Supervisor set a stuck task aside between steps and let Assessment choose another. The task's uncommitted work goes into a named git stash (nothing is reset or lost) and the task is listed in deferred-tasks.json." support="engine">
-            <Toggle on={sv.mayDefer === true} onChange={(v) => void patch("workflow", { supervisor: { ...sv, mayDefer: v } })} label="May defer stuck tasks" />
-          </SetRow>
-          <SetRow title="Suggest plan changes" desc="The review may propose edits to IMPLEMENTATION_PLAN.md (reword, split, add or remove open items; never check one off). Nothing changes until you approve it under Overview › Progress; it is then committed on its own between tasks." support="engine">
-            <Toggle on={sv.planProposals !== false} onChange={(v) => void patch("workflow", { supervisor: { ...sv, planProposals: v } })} label="Suggest plan changes" />
-          </SetRow>
-        </>
-      )}
       <SetRow title="Desktop" desc="Supervisor alerts follow Settings › General error notifications; digests follow information notifications." support="app">
         <Toggle on={g.notifyDigests !== false} onChange={(v) => void patch("general", { notifyDigests: v })} label="Send digests" />
       </SetRow>
-      <SetRow title="Remote approvals" desc={<span>When a run waits for you (manual review, a block, a usage limit, a plan proposal), send the choices to Telegram as buttons and to email as reply lines. Each choice is a signed code for that action only: it works once, expires after 12 hours, and does nothing if the run has moved on. Telegram needs a private chat with your bot; email replies count only from the addresses below. The app must be running (the tray is enough).{g.remoteApprovals && !snap.notifyChannels.telegram && !snap.notifyChannels.email ? <b> Save a Telegram or email channel below to use it.</b> : null}</span>} support="app">
+      <SetRow title="Remote approvals" desc={<span>When a run waits for you (manual review, a block, a usage limit, a task or action to approve), send the choices to Telegram as buttons and to email. Each choice is a signed code for that action only: it works once, expires after 12 hours, and does nothing if the run has moved on. Telegram needs a private chat with your bot. Email cannot prove who replied, so it can only stop a run or dismiss a plan change, within an hour, and only from the addresses below. The app must be running (the tray is enough).{g.remoteApprovals && !snap.notifyChannels.telegram && !snap.notifyChannels.email ? <b> Save a Telegram or email channel below to use it.</b> : null}</span>} support="app">
         <Toggle on={g.remoteApprovals === true} onChange={(v) => void patch("general", { remoteApprovals: v })} label="Remote approvals" />
       </SetRow>
       {NOTIFY_ROWS.map(({ kind, title, help, fields }) => (
@@ -674,9 +756,9 @@ function SupervisorCard() {
               <button className="btn sm danger" onClick={() => void saveChannel(kind, null)}>Remove</button>
             </div>
           ) : (
-            <div className="row wrap" style={{ gap: 8 }}>
+            <div className="row wrap" style={{ gap: 8, width: 420, maxWidth: "100%" }}>
               {fields.map((f) => (
-                <input key={f.key} className="input mono" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
+                <input key={f.key} className="input" type={f.secret ? "password" : "text"} placeholder={f.placeholder} value={drafts[`${kind}.${f.key}`] ?? ""} aria-label={`${title} ${f.label}`}
                   onChange={(e) => setDrafts((d) => ({ ...d, [`${kind}.${f.key}`]: e.target.value }))} style={{ minWidth: 0, flex: "1 1 140px" }} />
               ))}
               <button className="btn sm" disabled={fields.some((f) => !drafts[`${kind}.${f.key}`]?.trim())}
@@ -690,6 +772,52 @@ function SupervisorCard() {
 }
 
 /** Stop-all (app, tray, terminal launcher) and the per-project action log check. */
+/** Experimental: checks and agents' commands in Anthropic's sandbox runtime. The main process sets it up, self-tests it and owns the settings. */
+function SandboxChecksCard() {
+  const { snap, toast, refresh } = useApp();
+  const on = snap.settings.safety.sandboxChecks === true;
+  const agentsOn = snap.settings.safety.sandboxAgents === true;
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof window.api.sandboxStatus>> | null>(null);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof window.api.setSandboxChecks>> | null>(null);
+  useEffect(() => { void window.api.sandboxStatus().then(setStatus).catch(() => setStatus(null)); }, [on, agentsOn]);
+  const change = async (kind: "checks" | "agents", value: boolean) => {
+    const what = kind === "checks" ? "checks" : "agents' commands";
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await (kind === "checks" ? window.api.setSandboxChecks(value) : window.api.setSandboxAgents(value));
+      setResult(r);
+      if (r.ok && !r.problem) toast("success", value ? `Self-test passed: ${what} run in the sandbox from the next run.` : `${what[0].toUpperCase()}${what.slice(1)} run as you again from the next run.`);
+      else if (r.problem) toast(r.ok ? "info" : "error", r.problem);
+      await refresh();
+    } catch (error) { toast("error", (error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const windows = navigator.userAgent.includes("Windows");
+  return (
+    <section className="card pad stack" style={{ gap: 12 }}>
+      <h2 className="h2" style={{ marginBottom: 4 }}>Experimental</h2>
+      <SetRow title="Run project checks in a sandbox" desc={<span>Checks such as npm test run inside Anthropic's sandbox runtime: no network, writes only inside the project (never its .git folder). A check that cannot start in the sandbox fails; it never runs outside. {windows
+        ? "Checks run as a separate local Windows account (srt-sandbox) that cannot open your profile, so it cannot read or decrypt saved keys or CLI sign-ins. Files outside your profile that every local account can read (other drives, for example) stay readable, and a portable copy's data folder is one of them: the self-test then refuses to turn this on. Turning this on sets that account up (one administrator prompt)."
+        : "bubblewrap hides your home folder except the project and the toolchain; it needs bubblewrap, socat and ripgrep installed."}</span>} support="app">
+        <Toggle on={on} onChange={(v) => void change("checks", v)} label="Run project checks in a sandbox" disabled={busy} />
+      </SetRow>
+      <SetRow title="Run agents' commands in a sandbox" desc={<span>The shell commands Codex and Claude Code run (tests included) get the same limits: no network, writes only inside the project. {windows
+        ? "Codex uses its own elevated Windows sandbox, which must already be set up (start Codex once with windows.sandbox = \"elevated\"). Claude Code's sandbox does not run on native Windows: with this on, Claude runs refuse to start and say why (run Agent Dock in WSL2 for sandboxed Claude runs)."
+        : "Claude Code uses its own sandbox (version 2.1.221 or later), and its commands also can't read your sign-ins or the protected paths, or write those paths. Codex already sandboxes its commands on Linux."} A command that cannot run in the sandbox fails. Cline and OpenCode are not covered yet (they never hold the provider key).</span>} support="engine">
+        <Toggle on={agentsOn} onChange={(v) => void change("agents", v)} label="Run agents' commands in a sandbox" disabled={busy} />
+      </SetRow>
+      <span className="hint">{busy ? "Working… setup and the self-test can take a minute." : (on || agentsOn) ? (status?.ready === false ? `On, but not ready: ${status.problem}. Runs will refuse to start.` : `On: ${[on && "checks", agentsOn && "agents' commands"].filter(Boolean).join(" and ")} run in the sandbox.`) : status?.ready ? "Off. The sandbox is ready on this computer." : status?.problem ? `Off. ${status.problem}` : "Off."}</span>
+      {result?.results?.length ? (
+        <ul className="list">
+          {result.results.map((r) => <li key={r.name}><Icon name={r.ok ? "check" : "warn"} size="sm" className={r.ok ? "ok" : "err"} /> {r.name}: <span className="mono">{r.detail}</span></li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function StopAllCard() {
   const { snap, toast } = useApp();
   const patch = useSettingsPatch();
@@ -721,13 +849,13 @@ function StopAllCard() {
         <button className="btn sm" onClick={() => void window.api.verifyActionLogs().then(setLogs, (error) => toast("error", (error as Error).message))}>Verify logs</button>
       </SetRow>
       <SetRow title="Keep history" desc="Days to keep per-call folders (prompts and answers), Cline sessions and action-log archives. The newest 100 calls are always kept; the action log records what was removed, so the rest still verifies. Applied when a run starts; 0 keeps everything." support="engine">
-        <input className="input mono" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
+        <input className="input tnum" style={{ width: 90 }} inputMode="numeric" defaultValue={retention} aria-label="Days of history to keep"
           onBlur={(e) => { const v = Math.floor(Number(e.target.value)); if (Number.isFinite(v) && v >= 0 && v !== retention) void patch("general", { retentionDays: v }); else e.target.value = String(retention); }} />
       </SetRow>
       {logs && (
         <ul className="list">
           {logs.length ? logs.map((l) => (
-            <li key={l.project}><St kind={l.ok ? "done" : "blocked"} /><span>{l.project}: {l.ok ? `verified, ${l.entries} entries${l.lastAt ? `, last ${new Date(l.lastAt).toLocaleString()}` : ""}` : `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}`}</span></li>
+            <li key={l.project}><St kind={!l.ok ? "blocked" : l.signed === null || l.unsigned ? "part" : "done"} /><span>{l.project}: {!l.ok ? `NOT verified${l.brokenAt ? ` at entry ${l.brokenAt}` : ""}: ${l.reason}` : !l.entries ? "no entries" : l.signed === null || l.signed === undefined ? `chain intact, ${plural(l.entries, "entry", "entries")}, not signed (no credential store on this computer)` : `${l.unsigned ? `chain intact; ${l.signed} of ${l.entries} entries signed (${plural(l.unsigned, "terminal stop or older entry", "terminal stops or older entries")} cannot be signed)` : `verified and signed, ${plural(l.entries, "entry", "entries")}`}${l.lastAt ? `, last ${dateTime(l.lastAt)}` : ""}`}</span></li>
           )) : <li><span>No projects.</span></li>}
         </ul>
       )}
@@ -823,7 +951,7 @@ function Advanced() {
         <SetRow title="Export and import settings" desc="A file with your agents, workflow roles, connections and settings, to move to another computer or share a setup. API keys, secret values and projects are not included. To back up everything, copy the configuration folder (credentials only open on this Windows account)." support="app">
           <div className="row" style={{ gap: 8 }}>
             <button className="btn sm" onClick={async () => { try { if (await window.api.exportSettings()) toast("success", "Settings exported"); } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Export…</button>
-            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${r.agents} agent(s), ${r.roles} role(s) and ${r.clis} connection(s)`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
+            <button className="btn sm" onClick={async () => { try { const r = await window.api.importSettings(); if (r) { await refresh(); toast("success", `Imported settings, ${plural(r.agents, "agent")}, ${plural(r.roles, "role")} and ${plural(r.clis, "connection")}${r.skipped.length ? `. Not imported: ${r.skipped.join(", ")}` : ""}`); } } catch (e) { toast("error", e instanceof Error ? e.message : String(e)); } }}>Import…</button>
           </div>
         </SetRow>
         <SetRow title={<span className="err">Reset all settings</span>} desc="Projects, agents, connections and credentials are kept" support="app"><button className="btn sm danger" onClick={() => setResetOpen(true)}>Reset…</button></SetRow>

@@ -4,6 +4,8 @@
 // secret-looking environment variables), and well-known credential formats. A redaction names the
 // kind ("[redacted:github-token]") so the reader still understands what was there.
 
+import { isSecretEnvName, secretEnvNames } from "./secret-env.mjs";
+
 const PATTERNS = [
   ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
   ["anthropic-key", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
@@ -26,17 +28,33 @@ const SECRET_NAME = /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|WEBHOOK
 
 let values = [];
 
-/** The exact secret values to hide everywhere (longest first, so a key inside a URL goes as a whole). */
+/**
+ * The exact secret values to hide everywhere (longest first, so a key inside a URL goes as a whole). A value
+ * registered as a secret is hidden however short; below 4 characters it would only hide ordinary text.
+ */
 export function useSecretValues(list = []) {
-  values = [...new Set(list.map((v) => String(v ?? "").trim()).filter((v) => v.length >= 8))].sort((a, b) => b.length - a.length);
+  values = [...new Set(list.map((v) => String(v ?? "").trim()).filter((v) => v.length >= 4))].sort((a, b) => b.length - a.length);
+}
+
+/** Adds values to the ones already hidden (those read at startup stay, even once removed from the environment). */
+export function addSecretValues(list = []) {
+  useSecretValues([...values, ...list]);
 }
 
 /** Secrets the engine process holds: secret-looking variables, and every string inside AGENT_DOCK_NOTIFY. */
 export function secretValuesFromEnv(env = process.env) {
   const found = [];
+  const named = secretEnvNames();
   for (const [name, value] of Object.entries(env)) {
-    if (typeof value !== "string" || value.length < 8) continue;
-    if (name === "AGENT_DOCK_NOTIFY") {
+    // A listed or registered secret counts however short. One named like a credential (the rule that keeps it from
+    // child processes) needs 8 characters, or 6 digits for a one-time code: shorter words (default, secret) would be
+    // hidden all over the logs. One that only resembles a secret name needs 8.
+    const upper = name.toUpperCase();
+    const listed = named.has(upper);
+    const byName = listed || isSecretEnvName(name);
+    if (typeof value !== "string" || value.length < (listed ? 4 : byName && /^\d+$/.test(value) ? 6 : 8)) continue;
+    if (byName && upper !== "AGENT_DOCK_NOTIFY") { found.push(value); continue; }
+    if (upper === "AGENT_DOCK_NOTIFY") {
       try { collect(JSON.parse(value), found); } catch {}
       continue;
     }

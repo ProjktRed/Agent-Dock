@@ -38,11 +38,36 @@ export interface Project {
   prMode?: boolean;
   /** The branch the current run branch was made from (the pull request's base). */
   prBase?: string | null;
-  /** Parallel lane: the project this worktree lane belongs to, and the lane's branch. */
-  parentId?: string | null;
-  laneBranch?: string | null;
+  /** GitHub CI: the pushed run branch whose GitHub Actions runs the app watches, set when the app pushes it. */
+  ci?: CiWatch | null;
   /** Opt-in WSL isolation: the engine and its agent CLIs run inside this WSL distro. */
   wsl?: { enabled: boolean; distro: string };
+  /** The project skill (<stateDir>/project-skill/SKILL.md) is given to the project's agents. */
+  projectSkill?: boolean;
+}
+
+/** A pushed run branch and commit whose GitHub Actions runs the app reads with GitHub CLI. */
+export interface CiWatch {
+  repo: string;
+  branch: string;
+  sha: string;
+  pushedAt: string;
+  prUrl: string | null;
+  /** The last summary seen; a final one (pass, fail, cancelled) ends the polling for this commit. */
+  state: CiState;
+}
+
+export type CiState = "pending" | "pass" | "fail" | "cancelled" | "none" | "unavailable";
+export type CiBucket = "pass" | "fail" | "pending" | "skipping" | "cancel";
+export interface CiCheck { id: number; name: string; workflow: string; bucket: CiBucket; url: string | null; /** What started the run (push, pull_request…), when gh says. */ event?: string | null }
+export interface CiStatus {
+  projectId: string;
+  watch: CiWatch | null;
+  state: CiState;
+  checks: CiCheck[];
+  /** Why the state is unavailable or none, in words. */
+  message: string | null;
+  checkedAt: string | null;
 }
 
 export interface ProjectSchedule {
@@ -51,8 +76,6 @@ export interface ProjectSchedule {
   time: string;
   /** 0 = Sunday … 6 = Saturday. */
   days: number[];
-  /** Windows: also start while Agent Dock is closed (a per-user Task Scheduler task launches it). */
-  whenClosed?: boolean;
 }
 
 export interface Agent {
@@ -99,6 +122,10 @@ export interface CliConnection {
   hasSecret: boolean;
   /** llama.cpp only: serve every model in this folder (router mode, opt-in). Null keeps the launcher's single model. */
   modelsDir?: string | null;
+  /** Ollama only: requests it answers at once (its OLLAMA_NUM_PARALLEL), the most parallel tasks it gets. Default 1. */
+  parallelRequests?: number;
+  /** Codex CLI / Claude Code only: per-run settings (CLIs › Settings), checked against src/shared/cli-settings.ts. */
+  runSettings?: Record<string, string | number | boolean>;
   /** Local providers: the model list last collected from the provider itself (Models tab › Refresh). */
   collected?: CollectedModels | null;
 }
@@ -149,6 +176,8 @@ export interface WorkflowSettings {
   stopAfterCurrentTask: boolean;
   /** Unattended mode: guards locked on, automatic continuation, and run-wide limits the engine enforces. */
   unattended: boolean;
+  /** Each new task waits for your Approve (or Set aside) before Implementation starts; runs one task at a time. Off when unattended. */
+  approveTasks?: boolean;
   /** 0 = no limit, except corrections, which always need a limit when unattended. Token budgets are in millions;
    *  spend budgets in USD count what the CLIs report, plus estimates from `prices` for CLIs that report none (Codex). */
   unattendedLimits: {
@@ -160,8 +189,6 @@ export interface WorkflowSettings {
   /** Task size (engine --task-mode): eco splits plan items into small tasks, standard does one plan item per task,
    *  max has no fixed size apart from maxLimits. */
   taskMode?: TaskMode;
-  /** Standard or max: a task that fails review twice is set aside and redone one size smaller (default on). */
-  stepDown?: boolean;
   /** Max mode's own limits (Max limits in the sidebar); 0 = no limit. */
   maxLimits?: MaxLimits;
   /** Tasks run side by side in one run, each in its own git worktree (engine --parallel); 1 = one at a time. */
@@ -187,17 +214,6 @@ export interface SupervisorSettings {
   planDrift: number;
   scopePaths: number;
   digestHours: number;
-  /** v2: a model reviews each alert. propose: actions are suggestions; act: allowed actions are carried out. */
-  review?: "off" | "propose" | "act";
-  /** auto = the orchestrator's CLI (Codex or Claude Code). local = an OpenAI-compatible server at reviewerBaseUrl. */
-  reviewer?: "auto" | "codex" | "claude" | "local";
-  reviewerModel?: string;
-  reviewerBaseUrl?: string;
-  /** Owner's choice: the Supervisor may set a stuck task aside (its work stashed) and continue with another. */
-  mayDefer?: boolean;
-  reviewMax?: number;
-  /** The review may propose IMPLEMENTATION_PLAN.md edits; each one waits for your approval. */
-  planProposals?: boolean;
 }
 
 export interface AttentionPolicy {
@@ -207,13 +223,20 @@ export interface AttentionPolicy {
   blocker: "windows";
 }
 
+export type UiStyle = "neumorphic" | "standard" | "cyberpunk";
+
 export interface Settings {
   general: {
     launchAtStartup: boolean;
     startMinimized: boolean;
     keepInTray: boolean;
+    /** Interface style; theme (Dark/Darker) applies to every style. */
+    style: UiStyle;
     theme: "dark" | "darker";
+    /** The Neumorphic accent (the original look, so older settings keep theirs). */
     accent: string;
+    /** The accent remembered for each of the other styles. */
+    styleAccents: { standard: string; cyberpunk: string };
     notifyCompleted: boolean;
     notifyErrors: boolean;
     notifyInfo: boolean;
@@ -232,6 +255,32 @@ export interface Settings {
   };
   safety: {
     protectedPaths: string[];
+    /** TOOL_CONFIG_PATHS were added to these settings once (a path removed later stays removed). */
+    toolConfigPathsAdded?: boolean;
+    /**
+     * Project checks (npm test and the code it runs) are the user's own trusted code. Off (the default):
+     * agents can edit that code, so while a run is going the app undoes changes to its own settings and
+     * engine files and stops the run.
+     */
+    checksTrusted?: boolean;
+    /**
+     * Experimental: project checks run in Anthropic's sandbox runtime (no network, write only the worktree, your
+     * home folder and saved keys out of reach). Set only by the main process after a passing self-test; a settings
+     * save from the window or an import never changes it.
+     */
+    sandboxChecks?: boolean;
+    /** Experimental: Codex's and Claude Code's own shell commands run sandboxed. Set like sandboxChecks. */
+    sandboxAgents?: boolean;
+    /** Web access for agents: Codex's live web search, Claude Code's WebSearch and WebFetch (not for QA). Off unless turned on. */
+    webAccess?: boolean;
+    /** Web access was turned off once (it was on by default in 0.39.0); a later choice is kept. */
+    webAccessReset?: boolean;
+    /**
+     * Ask instead of refuse: minutes a Codex or Claude Code action the guard cannot verify waits for your answer
+     * (native dialog, Telegram) before it is refused; 0 refuses at once. Unattended runs ask only when Telegram
+     * approvals are set up.
+     */
+    askMinutes?: number;
   };
   usage: {
     manualBudgets: { provider: string; label: string; limit: number; unit: "tokens" | "usd" }[];
@@ -386,7 +435,6 @@ export interface PlanTask {
   depth: number;
 }
 
-/** A Supervisor-proposed IMPLEMENTATION_PLAN.md change (engine/src/plan-stewardship.mjs). */
 /** One finished run (engine/src/run-budget.mjs writeRunReport). */
 export interface RunReport {
   unattended: boolean;
@@ -414,20 +462,6 @@ export interface RunReport {
 /** Remote notification channels the engine sends to (engine/src/notify.mjs). */
 export type NotifyChannel = "webhook" | "discord" | "slack" | "telegram" | "email";
 
-export interface PlanProposal {
-  id: string;
-  at: string;
-  source: string;
-  reason: string;
-  preview: string;
-  status: "pending" | "approved" | "applied" | "dismissed" | "failed";
-  /** Pending/approved only: whether it still fits today's plan, and why not. */
-  applies?: boolean;
-  problem?: string | null;
-  commit?: string;
-  decidedAt?: string;
-}
-
 export interface PlanPhase {
   number: number;
   title: string;
@@ -447,6 +481,95 @@ export interface PlanProgress {
   error?: string;
 }
 
+/** A plan item's key: hash of phase number, normalized title and duplicate ordinal (engine/src/task-priority.mjs). */
+export type PlanItemKey = string;
+
+/** <stateDir>/task-board.json: the Task board's priority order. Written by the app, read by the engine at each Assessment. */
+export interface TaskBoardState {
+  version: 1;
+  revision: number;
+  order: PlanItemKey[];
+  groupByPhase: boolean;
+  updatedAt: string | null;
+}
+
+export type TaskBoardColumn = "planned" | "in-progress" | "finished";
+
+/** Who is working on an In progress item, or why a Planned one is set aside. */
+export interface TaskBoardActivity {
+  kind: "current" | "parallel" | "deferred";
+  taskId: string;
+  name: string;
+  /** Parallel: the task engine's lane folder. Deferred: the reason. */
+  detail?: string;
+}
+
+export interface TaskBoardItem {
+  id: PlanItemKey;
+  phase: { number: number; title: string };
+  title: string;
+  depth: number;
+  column: TaskBoardColumn;
+  /** Place in the priority order, from 0, for open items; null when finished. */
+  priority: number | null;
+  /** Its title appears on more than one plan line: the engine cannot check it off by text. */
+  ambiguous: boolean;
+  activity: TaskBoardActivity[];
+}
+
+export interface TaskBoard {
+  revision: number;
+  groupByPhase: boolean;
+  /** Open items in priority order (In progress and Planned), then finished ones in plan order. */
+  items: TaskBoardItem[];
+  /** Tasks set aside (deferred-tasks.json), oldest first. Absent from older builds. */
+  deferred?: DeferredTask[];
+}
+
+export interface StashEntry {
+  /** stash@{n} when it was read; the index moves as stashes come and go, so actions name the commit. */
+  ref: string;
+  sha: string;
+  message: string;
+  at: string | null;
+  /** Made by Agent Dock (a set-aside task, or Stash changes on Overview). */
+  agentDock: boolean;
+}
+
+export interface ProjectSkillInfo {
+  /** SKILL.md text, or null when none was saved. */
+  text: string | null;
+  /** Where it is stored (in the project's state folder, not the repository). */
+  path: string;
+  /** Given to the project's agents at the next start. */
+  enabled: boolean;
+}
+
+export interface DeferredTask {
+  id: string;
+  name: string;
+  reason: string;
+  at: string | null;
+  /** The git stash message holding its unfinished work, or null when it had none (or it was popped). */
+  stash: string | null;
+  /** The open plan items it worked on. */
+  planItemIds: PlanItemKey[];
+  /** Its definition was kept, so it can run as the next start's first task. */
+  rerunnable: boolean;
+}
+
+export interface TaskBoardUpdate {
+  /** The revision the change was made on; a different one on disk rejects it. */
+  expectedRevision: number;
+  /** The new priority order of open items. */
+  order?: PlanItemKey[];
+  /** Back to plan order. */
+  reset?: boolean;
+  groupByPhase?: boolean;
+}
+
+export type TaskBoardWriteResult = { ok: true; board: TaskBoard } | { ok: false; reason: "stale"; board: TaskBoard };
+
 export interface GitInfo {
   isRepo: boolean;
   branch: string | null;
@@ -454,7 +577,10 @@ export interface GitInfo {
   remote: string | null;
   ahead: number | null;
   behind: number | null;
+  /** The changed files; in a ProjectStatus only the first CHANGED_FILES_SHOWN (main/lib/status.ts). */
   changedFiles: { status: string; path: string }[];
+  /** Every changed file, counted. Absent in older statuses. */
+  changedTotal?: number;
   error?: string;
 }
 
@@ -492,10 +618,45 @@ export interface ProjectStatus {
   assessmentRetry: boolean;
   /** Blocked with a finished, in-scope attempt: Retry QA reviews it again. */
   qaRetry: boolean;
+  /** The engine stopped in the middle of this step (crash, reboot, killed process), or null (interruptedWork). */
+  interrupted: string | null;
   events: EngineEvent[];
   git: GitInfo;
+  /** A changed file is outside the task's approved paths, from every changed file. Absent in older statuses. */
+  outsideApproved?: boolean;
   plan: PlanProgress;
+  /** The Task board: plan items in Planned, In progress and Finished, in priority order. Absent from older builds. */
+  board?: TaskBoard;
+  /** The parallel round in progress (engine --parallel): each task with its live stage. Absent outside a round. */
+  parallel?: ParallelRound;
+  /** Approve each task: the task waiting for your answer before Implementation starts. */
+  taskApproval?: TaskApprovalRequest | null;
+  /** Ask instead of refuse: agent actions waiting for your answer. */
+  actionRequests?: ActionRequest[];
+  /** The task waits before Implementation: its check needs a toolchain that is not installed. */
+  missingTools?: MissingTools | null;
   updatedAt: string | null;
+}
+
+/** Where one task of a parallel round is: its engine's stage while it works, then how it ended. */
+export type ParallelTaskStage = "starting" | "assessment" | "implementation" | "qa" | "correction" | "waiting-limit" | "paused" | "working" | "approved" | "merged" | "failed" | "merge-failed" | "stopped";
+
+export interface ParallelRoundTask {
+  id: string;
+  name: string;
+  stage: ParallelTaskStage;
+  attempt: number;
+  branch: string | null;
+  startedAt: string | null;
+  /** Waiting out a usage limit. */
+  waiting?: boolean;
+}
+
+/** A parallel round (engine parallel-round.json), with each task's live state from <state>/parallel/<task>/. */
+export interface ParallelRound {
+  round: number;
+  startedAt: string | null;
+  tasks: ParallelRoundTask[];
 }
 
 export interface TokenRecord {
@@ -547,15 +708,11 @@ export interface WorkflowRole {
   warnings: string[];
 }
 
-/** Loop limits that are fixed with engine guardrails on. Defaults equal the engine's built-in values. */
+/**
+ * Defaults for new Implementation agents on Cline, fixed with engine guardrails on. Loop limits and Eco task sizing
+ * are the engine's own (task size presets choose between them); the engine's flags remain for command-line use.
+ */
 export interface EngineTuning {
-  elevationAfter: number;
-  resolverMaxStrategies: number;
-  /** 0 = no limit. */
-  maxCorrections: number;
-  taskMaxFiles: number;
-  taskMaxNewLines: number;
-  taskMaxReadFiles: number;
   /** Used for new Implementation agents; null = the engine default. */
   defaultContextTokens: number | null;
   defaultMaxOutputTokens: number | null;
@@ -600,7 +757,8 @@ export interface AppSnapshot {
   settings: Settings;
   engine: EngineInfo;
   roles: WorkflowRole[];
-  paths: { config: string; projectState: string; stopAll: string };
+  /** docs: the guides bundled with the app (file name to absolute path), only those found on disk. */
+  paths: { config: string; projectState: string; stopAll: string; docs?: Partial<Record<"user-guide.md" | "how-it-works.md", string>> };
   notifyChannels: Record<NotifyChannel, boolean>;
   /** Non-secret description of saved channels (Telegram chat, email inbox and recipients). */
   notifyDetails: Partial<Record<NotifyChannel, string>>;
@@ -628,3 +786,53 @@ export interface PathDetection {
   command: string;
   found: { path: string; version: string | null }[];
 }
+
+/** Settings › Experimental sandbox for checks: the helper's answer (status, setup, self-test). */
+export interface SandboxResult {
+  ok?: boolean;
+  ready?: boolean;
+  cancelled?: boolean;
+  problem?: string | null;
+  results?: { name: string; ok: boolean; detail: string }[];
+}
+
+/** A new task waiting for Approve / Set aside (engine event task-approval-requested). */
+/** Engine tool-check.mjs: toolchains the task's check needs, with the suggested install command. */
+export interface MissingTool {
+  tool: string;
+  name: string;
+  install: string | null;
+  url: string;
+  note: string | null;
+}
+export interface MissingTools {
+  taskId: string;
+  qaCommand: string;
+  tools: MissingTool[];
+  since: string;
+}
+
+export interface TaskApprovalRequest {
+  taskId: string;
+  name: string;
+  objective: string;
+  allowedPaths: string[];
+  qaCommand: string;
+  requestedAt: string;
+}
+
+/** A Codex or Claude Code action the guard could not verify, waiting for your answer (engine guard/ask.mjs). */
+export interface ActionRequest {
+  id: string;
+  cli: string;
+  tool: string | null;
+  text: string;
+  reason: string;
+  cwd: string;
+  taskId: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** Your answer to an ActionRequest: once, this exact action for the rest of the run, or no. */
+export type ActionDecision = "allow" | "allow-run" | "deny";

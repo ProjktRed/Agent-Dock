@@ -22,6 +22,7 @@ credit the reporter unless you ask otherwise.
 
 ## What is out of scope
 
-The guards are not an operating-system sandbox. A malicious project script that the QA check runs,
-a compromised CLI, or another process already running as your user is outside what Agent Dock can
-defend against (see "Security boundaries" in the README).
+The guards are not an operating-system sandbox. A project check (`npm test` and the code it runs) can
+read the project's files; Agent Dock detects and undoes changes to its own settings and engine files
+during a run, but does not stop the check itself. A compromised CLI, or another process already running
+as your user, is outside what Agent Dock can defend against (see "Security boundaries" in the README).

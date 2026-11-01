@@ -1,41 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type { Project } from "@shared/types";
-import { createTaskArgs, parseTaskJson, syncOsSchedules, taskName, taskOwner, wantsOsSchedule } from "../src/main/lib/os-schedule";
+import { parseTaskJson, removeOsSchedules, taskOwner } from "../src/main/lib/os-schedule";
 
-const project = (id: string, schedule: Project["schedule"], over: Partial<Project> = {}) => ({ id, name: id, archived: false, schedule, ...over }) as Project;
+// Nothing here touches the real Task Scheduler: every schtasks call goes to a mock `run`, and the task
+// query is a mock too.
 const EXE = String.raw`C:\Users\me\AppData\Local\Agent Dock\App\AgentDock.exe`;
 const DEV = String.raw`E:\dev\Agent-Dock\release\win-unpacked\AgentDock.exe`;
 // The task query's output: what ConvertTo-Json prints for the Agent Dock folder's tasks.
 const task = (name: string, exe: string | null) => ({ name: `\\${name}`, exe });
 const tasksJson = (...tasks: { name: string; exe: string | null }[]) => JSON.stringify(tasks);
+const deleted = (calls: string[][]) => calls.map((c) => [c[0], c[c.indexOf("/TN") + 1]]);
 
-describe("scheduled runs while the app is closed", () => {
-  it("builds a weekly per-user task that launches the app minimized", () => {
-    const p = project("p 1", { enabled: true, time: "02:30", days: [5, 1, 1, 3], whenClosed: true });
-    expect(taskName(p.id)).toBe("Agent Dock\\Run p_1");
-    expect(createTaskArgs(p, EXE)).toEqual(["/Create", "/F", "/TN", "Agent Dock\\Run p_1", "/SC", "WEEKLY", "/D", "MON,WED,FRI", "/ST", "02:30", "/TR", `"${EXE}" --minimized --scheduled-run`]);
-    expect(createTaskArgs(p, EXE)).not.toContain("/RU");
-  });
-
-  it("only wants enabled, valid schedules marked for when closed", () => {
-    expect(wantsOsSchedule(project("a", { enabled: true, time: "02:00", days: [1], whenClosed: true }))).toBe(true);
-    expect(wantsOsSchedule(project("b", { enabled: true, time: "02:00", days: [1] }))).toBe(false);
-    expect(wantsOsSchedule(project("c", { enabled: false, time: "02:00", days: [1], whenClosed: true }))).toBe(false);
-    expect(wantsOsSchedule(project("d", { enabled: true, time: "25:00", days: [1], whenClosed: true }))).toBe(false);
-    expect(wantsOsSchedule(project("e", { enabled: true, time: "02:00", days: [], whenClosed: true }))).toBe(false);
-    expect(wantsOsSchedule(project("f", { enabled: true, time: "02:00", days: [1], whenClosed: true }, { archived: true }))).toBe(false);
-  });
-
-  it("creates wanted tasks and removes only Agent Dock's other tasks", async () => {
+describe("removing the scheduled-run tasks of earlier versions", () => {
+  it("deletes this install's tasks and stale ones, leaves another install's and other folders alone", async () => {
     const calls: string[][] = [];
-    const list = tasksJson(task("Agent Dock\\Run keep", EXE), task("Agent Dock\\Run old", `"${EXE}"`), task("Microsoft\\Windows\\Defrag\\ScheduledDefrag", "C:\\WINDOWS\\system32\\defrag.exe"));
-    const problems = await syncOsSchedules([project("keep", { enabled: true, time: "02:00", days: [1], whenClosed: true }), project("off", { enabled: true, time: "03:00", days: [2] })], EXE, async (args) => {
-      calls.push(args);
-      return "SUCCESS";
-    }, () => true, async () => list);
+    const gone = String.raw`C:\Old\AgentDock.exe`;
+    const list = tasksJson(task("Agent Dock\\Run mine", `"${EXE}"`), task("Agent Dock\\Run dev", DEV), task("Agent Dock\\Run stale", gone), task("Microsoft\\Windows\\Defrag\\ScheduledDefrag", "C:\\WINDOWS\\system32\\defrag.exe"));
+    const problems = await removeOsSchedules(EXE, async (args) => { calls.push(args); return "SUCCESS"; }, (file) => file === DEV, async () => list);
     expect(problems).toEqual([]);
-    expect(parseTaskJson(list)).toEqual([{ name: "Agent Dock\\Run keep", exe: EXE }, { name: "Agent Dock\\Run old", exe: EXE }]);
-    expect(calls.map((c) => [c[0], c.includes("/TN") ? c[c.indexOf("/TN") + 1] : null])).toEqual([["/Create", "Agent Dock\\Run keep"], ["/Delete", "Agent Dock\\Run old"]]);
+    expect(deleted(calls)).toEqual([["/Delete", "Agent Dock\\Run mine"], ["/Delete", "Agent Dock\\Run stale"]]);
+    expect(calls.every((c) => c[0] === "/Delete")).toBe(true);
   });
 
   it("reads each task's exe from the JSON, unquoted, for one task, none or several", () => {
@@ -65,38 +48,15 @@ describe("scheduled runs while the app is closed", () => {
     expect(taskOwner({ name: "x", exe: "" }, EXE, onDisk)).toBe("stale");
   });
 
-  it("leaves another install's tasks alone and takes over stale ones", async () => {
-    const calls: string[][] = [];
-    const gone = String.raw`C:\Old\AgentDock.exe`;
-    const list = tasksJson(task("Agent Dock\\Run shared", DEV), task("Agent Dock\\Run devonly", DEV), task("Agent Dock\\Run moved", gone), task("Agent Dock\\Run leftover", gone));
-    const on = { enabled: true, time: "02:00", days: [1], whenClosed: true };
-    const problems = await syncOsSchedules([project("shared", on), project("moved", on), project("new", on)], EXE, async (args) => {
-      calls.push(args);
-      return "SUCCESS";
-    }, (file) => file === DEV, async () => list);
-    expect(problems).toEqual([]);
-    expect(calls.map((c) => [c[0], c.includes("/TN") ? c[c.indexOf("/TN") + 1] : null])).toEqual([["/Create", "Agent Dock\\Run moved"], ["/Create", "Agent Dock\\Run new"], ["/Delete", "Agent Dock\\Run leftover"]]);
-    expect(calls.filter((c) => c[0] === "/Create").every((c) => c.at(-1)!.startsWith(`"${EXE}"`))).toBe(true);
-  });
-
-  it("changes nothing when the current tasks cannot be read", async () => {
+  it("removes nothing when the current tasks cannot be read, and reports what Task Scheduler refused", async () => {
     const calls: string[][] = [];
     for (const query of [async () => { throw new Error("Access is denied."); }, async () => "not json"]) {
-      const problems = await syncOsSchedules([project("p", { enabled: true, time: "02:00", days: [1], whenClosed: true })], EXE, async (args) => {
-        calls.push(args);
-        return "";
-      }, () => true, query);
+      const problems = await removeOsSchedules(EXE, async (args) => { calls.push(args); return ""; }, () => true, query);
       expect(problems).toHaveLength(1);
       expect(problems[0]).toMatch(/^Reading the scheduled tasks: /);
     }
     expect(calls).toHaveLength(0);
-  });
-
-  it("reports what Task Scheduler refused", async () => {
-    const problems = await syncOsSchedules([project("p", { enabled: true, time: "02:00", days: [1], whenClosed: true })], EXE, async (args) => {
-      if (args[0] === "/Create") throw new Error("ERROR: Access is denied.");
-      return "";
-    }, () => true, async () => "");
-    expect(problems).toEqual(["p: ERROR: Access is denied."]);
+    const refused = await removeOsSchedules(EXE, async () => { throw new Error("ERROR: Access is denied."); }, () => true, async () => tasksJson(task("Agent Dock\\Run p", EXE)));
+    expect(refused).toEqual(["Removing Agent Dock\\Run p: ERROR: Access is denied."]);
   });
 });

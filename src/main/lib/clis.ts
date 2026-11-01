@@ -1,12 +1,23 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import path from "node:path";
 import type { Capability, CliConnection, CliHealth, PathDetection } from "@shared/types";
 import { run } from "./git";
+import { cmdLine, resolveProgram } from "./cmd-line";
 
-const quote = (value: string) => (/[\s&()]/.test(value) && !value.startsWith('"') ? `"${value}"` : value);
-
-/** Runs a CLI through the shell (npm shims are .cmd files, which execFile cannot start directly on Windows). */
-function runCli(location: string, args: string[], timeoutMs: number) {
-  return run(quote(location), args, { shell: true, timeoutMs });
+/**
+ * Runs a CLI. Windows: through cmd.exe (npm shims are .cmd files, which execFile cannot start directly),
+ * with the program resolved through PATH and PATHEXT and every argument escaped (cmd-line); elsewhere directly.
+ */
+async function runCli(location: string, args: string[], timeoutMs: number) {
+  const program = location.replace(/^"(.*)"$/, "$1");
+  if (process.platform !== "win32") return run(program, args, { timeoutMs });
+  let line: string;
+  try {
+    line = cmdLine(resolveProgram(program), args);
+  } catch (error) {
+    return { stdout: "", stderr: (error as Error).message, code: 1 };
+  }
+  return run(line, [], { shell: true, timeoutMs });
 }
 
 export async function whereAll(command: string): Promise<string[]> {
@@ -25,7 +36,11 @@ export function pickRunnable(paths: string[]): string | null {
   return paths.find((p) => /\.(cmd|exe|bat)$/i.test(p)) ?? paths[0] ?? null;
 }
 
+/** What the window may ask Agent Dock to find on PATH and run with --version: Git and the CLIs it connects to. */
+const DETECTABLE = new Set(["git", "codex", "cline", "claude", "opencode"]);
+
 export async function detectOnPath(command: string): Promise<PathDetection> {
+  if (!DETECTABLE.has(command)) throw new Error("Only Git and the supported CLIs are detected here.");
   const paths = (await whereAll(command)).filter((p) => /\.(cmd|exe|bat)$/i.test(p) || !/\.\w+$/.test(p));
   const runnable = paths.filter((p) => /\.(cmd|exe|bat)$/i.test(p));
   const found = await Promise.all(
@@ -102,6 +117,38 @@ function blank(conn: CliConnection): CliHealth {
     checkedAt: new Date().toISOString(),
     log: [],
   };
+}
+
+const PROGRAM_KINDS = new Set<string>(["codex", "cline", "claude", "opencode"]);
+/** Connections whose location is an address Agent Dock sends requests (and a saved key) to. */
+export const URL_KINDS = new Set<string>(["ollama", "llamacpp", "openai"]);
+
+/** Why a connection's address cannot be used: http(s) only, with no user name or password in it. */
+export function connectionUrlProblem(location: string): string | null {
+  let url: URL;
+  try { url = new URL(location); } catch { return "The address is not a valid URL."; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "The address must start with http:// or https://.";
+  if (url.username || url.password) return "The address must not contain a user name or password; enter the key in its own field.";
+  return null;
+}
+
+/** The long form of a path that exists (Windows: 8.3 short names such as RUNNER~1 expanded), else the path resolved. */
+const longPath = (p: string) => { try { return realpathSync.native(p); } catch { return path.resolve(p); } };
+const samePath = (a: string, b: string) => {
+  const [x, y] = [longPath(a), longPath(b)];
+  return process.platform === "win32" || process.platform === "darwin" ? x.toLowerCase() === y.toLowerCase() : x === y;
+};
+
+/**
+ * A CLI connection's program is one the user picks when it is neither the plain name (found on PATH when
+ * it runs) nor a program PATH finds for that name: like the llama.cpp launcher, it runs only after the
+ * user confirms it.
+ */
+export async function programNeedsConfirmation(conn: Pick<CliConnection, "kind" | "location">): Promise<boolean> {
+  if (!PROGRAM_KINDS.has(conn.kind)) return false;
+  const location = conn.location.trim().replace(/^"(.*)"$/, "$1");
+  if (location === conn.kind) return false;
+  return !(await whereAll(conn.kind)).some((found) => samePath(found, location));
 }
 
 async function checkExecutable(conn: CliConnection, health: CliHealth): Promise<CliHealth> {
@@ -246,6 +293,8 @@ export async function checkCli(conn: CliConnection, secret: string | null): Prom
   try {
     if (conn.kind === "ollama") return await checkOllama(conn, health);
     if (conn.kind === "llamacpp" || conn.kind === "openai") return await checkOpenAiCompatible(conn, health, secret);
+    // Only the known CLIs are programs to run; an unknown kind (an older or edited file) never starts one.
+    if (!PROGRAM_KINDS.has(conn.kind)) return { ...health, state: "disconnected", detail: `Unknown kind of connection: ${String(conn.kind).slice(0, 40)}` };
     return await checkExecutable(conn, health);
   } catch (error) {
     return { ...health, state: "disconnected", detail: (error as Error).message };

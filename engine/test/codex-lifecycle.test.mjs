@@ -32,12 +32,32 @@ test("explicit Windows sandbox mode is passed without disabling workspace bounda
     await codex.invoke(JSON.stringify(strictResult({ status: "fail" })), "workspace-write");
     const args = JSON.parse(await readFile(argsFile, "utf8"));
     assert.ok(args.includes('windows.sandbox="unelevated"'));
-    assert.ok(args.includes("--approve-for-me"));
+    // Third review (0.39.0): writes stay in the workspace-write sandbox and are never let out of it.
+    assert.ok(args.includes("workspace-write") && args.includes('approval_policy="never"'));
+    assert.equal(args.includes("--approve-for-me"), false);
     assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
     assert.throws(() => new CodexWorker({ workspace: root, stateDir: root, windowsSandbox: "disabled" }), /Invalid Windows sandbox/);
   } finally {
     if (previous === undefined) delete process.env.FAKE_CODEX_ARGS_FILE;
     else process.env.FAKE_CODEX_ARGS_FILE = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a Codex QA or Assessment run that used tools without a single protection hook decision is refused", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-fail-closed-"));
+  const previous = process.env.FAKE_CODEX_TOOL;
+  try {
+    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")] });
+    const result = JSON.stringify(strictResult({ status: "fail" }));
+    process.env.FAKE_CODEX_TOOL = "unhooked";
+    await assert.rejects(codex.invoke(result, "workspace-write"), /without the scope hook/);
+    await assert.rejects(codex.invoke(result, "read-only"), /without the scope hook/);
+    process.env.FAKE_CODEX_TOOL = "hooked";
+    assert.equal((await codex.invoke(result, "workspace-write")).status, "fail");
+  } finally {
+    if (previous === undefined) delete process.env.FAKE_CODEX_TOOL;
+    else process.env.FAKE_CODEX_TOOL = previous;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -230,5 +250,28 @@ test("PASS verification requires a real bounded commit; failed QA cannot change 
     await verifyReview({ workspace: root, baselineHead, task, decision: { status: "pass", output: "tests passed", commit: head } });
     await assert.rejects(verifyReview({ workspace: root, baselineHead, task, decision: { status: "fail" } }), /changed HEAD/);
     await assert.rejects(verifyReview({ workspace: root, baselineHead, task: { ...task, allowedPaths: ["other.txt"] }, decision: { status: "pass", output: "pass", commit: head } }), /outside the bounded task/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// Rev F12: an orchestration call that never ends hung the run; a check that never exits did too.
+test("a Codex call and a check that never finish are ended with their process tree", async () => {
+  const { runShellCommand } = await import("../src/qa-packet.mjs");
+  const { appendBounded } = await import("../src/process-bounds.mjs");
+  const { existsSync } = await import("node:fs");
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-deadline-"));
+  try {
+    const codex = new CodexWorker({ workspace: root, stateDir: root, command: process.execPath, prefixArgs: [fixture, path.join(root, "pids.json")], env: { ...process.env, FAKE_CODEX_HANG: "1" }, callTimeoutMs: 1500 });
+    await assert.rejects(codex.invoke(JSON.stringify(strictResult()), "read-only"), /did not finish within <1 minutes and was ended/);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    for (const pid of JSON.parse(await readFile(path.join(root, "pids.json"), "utf8"))) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the fake Codex process is gone");
+    await writeFile(path.join(root, "hang.js"), "setInterval(() => console.log(1), 10);\n");
+    const check = await runShellCommand("node hang.js", root, { timeoutMs: 1000 });
+    assert.equal(check.exitCode, 1);
+    assert.equal(check.timedOut, true);
+    assert.equal(existsSync(root), true);
+    const long = appendBounded("a".repeat(90), "b".repeat(20), 100);
+    assert.equal(long.length, 100);
+    assert.match(long, /^\[earlier output cut\]\n/);
+    assert.ok(long.endsWith("b".repeat(20)));
   } finally { await rm(root, { recursive: true, force: true }); }
 });

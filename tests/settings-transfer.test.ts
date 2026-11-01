@@ -50,8 +50,8 @@ describe("settings export and import", () => {
     mine.updates.source = "E:\\mine"; mine.skills.importedDirs = ["C:\\my-skills"]; mine.general.defaultProject = "p9";
     const local = { settings: mine, agents: [...agents(), { ...agents()[0], id: "local-only", name: "Local" }], clis: clis() };
     const r = mergeImport(local, file);
-    expect(r.settings.workflow.toolGuard).toBe(false);
-    expect(r.settings.safety.protectedPaths).toEqual([".env*"]);
+    expect(r.settings.workflow.toolGuard).toBe(true);
+    expect(r.settings.safety.protectedPaths).toEqual(mine.safety.protectedPaths);
     expect(r.settings.general.theme).toBe("darker");
     expect(r.settings.workflow.unattendedLimits).toEqual(mine.workflow.unattendedLimits);
     expect([r.settings.activeProjectId, r.settings.onboardingComplete, r.settings.updates.source, r.settings.general.defaultProject]).toEqual(["p1", true, "E:\\mine", "p9"]);
@@ -62,8 +62,53 @@ describe("settings export and import", () => {
     expect([codex.location, codex.startupTimeoutSeconds, codex.hasSecret, codex.modelsDir]).toEqual(["C:\\Tools\\codex.exe", 99, true, "C:\\models"]);
     expect(codex.env.find((e) => e.key === "OPENAI_API_KEY")!.value).toBe("sk-live-123456789");
     const added = r.clis.find((c) => c.id === "new-cli")!;
-    expect([added.hasSecret, added.env[0].value]).toEqual([false, ""]);
+    expect([added.hasSecret, added.env]).toEqual([false, []]);
     expect(r.roles.map((x) => x.id)).toEqual(["security-review"]);
-    expect(r.summary).toEqual({ agents: theirAgents.length, clis: theirClis.length, roles: 1 });
+    expect(r.summary).toEqual({ agents: theirAgents.length, clis: theirClis.length, roles: 1, skipped: ["Tool guard off", "Codex CLI location", "New environment variables"] });
+  });
+
+  it("never takes connection environment variables from the file", () => {
+    const risky = [{ key: "NODE_OPTIONS", value: "--require C:\\evil.js", secret: false }, { key: "HTTPS_PROXY", value: "http://10.0.0.9:8080", secret: false }, { key: "PATH", value: "D:\\evil", secret: false }];
+    const theirClis = clis().map((c, i) => (i === 0 ? { ...c, env: [...c.env, ...risky] } : c));
+    theirClis.push({ ...theirClis[2], id: "claude-2", name: "Claude 2", env: [{ key: "ComSpec", value: "D:\\evil.exe", secret: false }, { key: "ELECTRON_RUN_AS_NODE", value: "1", secret: false }] });
+    const file = parseSettingsFile(JSON.stringify(exportSettings({ settings: settings(), agents: [], clis: theirClis, roles: [], appVersion: "0.36.0" })));
+    const r = mergeImport({ settings: settings(), agents: [], clis: clis() }, file);
+    expect(r.clis[0].env).toEqual(clis()[0].env);
+    expect(r.clis.find((c) => c.id === "claude-2")!.env).toEqual([]);
+    expect(JSON.stringify(r.clis)).not.toMatch(/NODE_OPTIONS|HTTPS_PROXY|evil|ELECTRON_RUN_AS_NODE/);
+    expect(r.summary.skipped).toEqual(expect.arrayContaining(["Codex CLI environment variables", "Claude 2 environment variables"]));
+    expect(r.summary.skipped.filter((s) => s.endsWith("environment variables"))).toHaveLength(2);
+  });
+
+  it("never takes programs to start from the file, keeps the tool guard on and adds protected paths", () => {
+    const other = settings();
+    other.advanced.llamaCppLauncher = "D:\\x\\start.cmd"; other.advanced.nodeRuntime = "electron";
+    other.safety.protectedPaths = ["deploy/", ".env*"]; other.workflow.toolGuard = false;
+    const theirClis = clis().map((c) => ({ ...c, location: `D:\\x\\${c.kind}.exe` }));
+    theirClis.push({ ...theirClis[2], id: "claude-2", name: "Claude 2" }, { ...theirClis[4], id: "llama-2", name: "Llama 2", location: "http://10.0.0.5:8080/v1" });
+    const file = parseSettingsFile(JSON.stringify(exportSettings({ settings: other, agents: [], clis: theirClis, roles: [], appVersion: "0.36.0" })));
+    const mine = settings();
+    mine.safety.protectedPaths = [".git/", "mine/"];
+    const r = mergeImport({ settings: mine, agents: [], clis: clis() }, file);
+    expect([r.settings.advanced.llamaCppLauncher, r.settings.advanced.nodeRuntime]).toEqual(["", "system"]);
+    expect(r.settings.workflow.toolGuard).toBe(true);
+    expect(r.settings.safety.protectedPaths).toEqual([".git/", "mine/", "deploy/", ".env*"]);
+    expect(r.clis.map((c) => c.location)).toEqual([...clis().map((c) => c.location), "claude", "http://10.0.0.5:8080/v1"]);
+    expect(r.summary.skipped).toEqual(expect.arrayContaining(["llama.cpp launcher", "Node runtime", "Tool guard off", "Codex CLI location", "Claude 2 location"]));
+    expect(r.summary.skipped).not.toContain("Llama 2 location");
+    // A guard that is off here stays off: the file only cannot weaken it.
+    mine.workflow.toolGuard = false;
+    expect(mergeImport({ settings: mine, agents: [], clis: [] }, file).settings.workflow.toolGuard).toBe(false);
+  });
+
+  it("imports the interface style and its accents; an invalid style or accent falls back to the default", () => {
+    const other = settings();
+    other.general.style = "cyberpunk"; other.general.styleAccents = { standard: "#A78BFA", cyberpunk: "#FF3864" };
+    const file = parseSettingsFile(JSON.stringify(exportSettings({ settings: other, agents: [], clis: [], roles: [], appVersion: "0.36.0" })));
+    const r = mergeImport({ settings: settings(), agents: [], clis: [] }, file);
+    expect([r.settings.general.style, r.settings.general.styleAccents]).toEqual(["cyberpunk", { standard: "#A78BFA", cyberpunk: "#FF3864" }]);
+    const bad = { ...file, settings: { general: { style: "glass", accent: "blue" } as unknown as Settings["general"] } };
+    const b = mergeImport({ settings: settings(), agents: [], clis: [] }, bad);
+    expect([b.settings.general.style, b.settings.general.accent, b.settings.general.styleAccents]).toEqual(["neumorphic", "#82A9E8", DEFAULT_SETTINGS.general.styleAccents]);
   });
 });

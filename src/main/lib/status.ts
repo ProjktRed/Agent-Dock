@@ -1,4 +1,4 @@
-import type { EngineEvent, GitInfo, PlanProgress, ProjectStatus, QaChecks, RunState } from "@shared/types";
+import type { EngineEvent, GitInfo, ParallelRound, ParallelTaskStage, PlanProgress, ProjectStatus, QaChecks, RunState, TaskApprovalRequest, MissingTools } from "@shared/types";
 
 /** Shape of the engine's live.json (engine/src/dashboard-state.mjs). Only fields the app reads. */
 export interface EngineLive {
@@ -33,13 +33,14 @@ export interface EngineControl {
 const LEGACY_STAGES: Record<string, string> = { "cline-working": "implementing", "cline-complete": "implemented", "codex-qa": "qa", WAITING_FOR_CODEX: "WAITING_FOR_LIMIT" };
 const stageOf = (live: EngineLive | null) => (live?.stage ? LEGACY_STAGES[live.stage] ?? live.stage : undefined);
 
-/** Mirrors the engine dashboard's primary status (dashboard-server.mjs primaryStatus + view-model labels). */
+/** The run's primary status, from the engine's live state and control file. */
 export function deriveRunState(live: EngineLive | null, control: EngineControl, processAlive: boolean): { runState: RunState; label: string } {
   if (!live) return { runState: processAlive ? "running" : "idle", label: processAlive ? "Starting" : "Idle" };
   const stage = stageOf(live) ?? "waiting";
   if (live.resolverRunning || stage === "resolving") return { runState: "running", label: "Resolving block" };
   if (stage === "BLOCKED") return { runState: "blocked", label: "Blocked" };
-  if (stage === "WAITING_FOR_LIMIT") return { runState: "waiting-limit", label: "Waiting: usage limit" };
+  // Only a running engine waits out a limit: a stage left behind by one that ended (or crashed) is not a wait.
+  if (stage === "WAITING_FOR_LIMIT" && processAlive) return { runState: "waiting-limit", label: "Waiting: usage limit" };
   if (live.elevateRunning || stage === "elevating") return { runState: "running", label: "Running · Elevation" };
   if (stage === "USER_ATTENTION" || live.manualReview || stage === "manual-review") return { runState: "attention", label: "Attention required" };
   if (stage === "paused") return { runState: "paused", label: "Paused" };
@@ -69,7 +70,66 @@ export function cycleStage(live: EngineLive | null): "assessment" | "implementat
   return null;
 }
 
-const defaultChecks: QaChecks = { tests: "NOT RUN", typecheck: "NOT RUN", lint: "NOT RUN", scopeCheck: "NOT RUN" };
+/** parallel-round.json in the run's state folder (engine/src/parallel-run.mjs). Only fields the app reads. */
+export interface EngineParallelRound {
+  round?: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  tasks?: { id: string; name?: string; status?: string; folder?: string; branch?: string; startedAt?: string }[];
+}
+
+const ENDED: Record<string, ParallelTaskStage> = { approved: "approved", merged: "merged", failed: "failed", "merge-failed": "merge-failed", stopped: "stopped" };
+
+/**
+ * The round in progress with each task's live stage, read from its engine's live.json (lives, by folder).
+ * Null when no round runs: no file, a round that ended, or an engine that is not running.
+ */
+export function parallelRound(round: EngineParallelRound | null, lives: Record<string, EngineLive | null>, processAlive: boolean): ParallelRound | null {
+  if (!processAlive || !round || round.endedAt || !Array.isArray(round.tasks) || !round.tasks.length) return null;
+  return {
+    round: Number(round.round) || 0,
+    startedAt: round.startedAt ?? null,
+    tasks: round.tasks.map((task) => {
+      const live = task.folder ? lives[task.folder] ?? null : null;
+      const ended = ENDED[task.status ?? ""];
+      const waiting = !ended && stageOf(live) === "WAITING_FOR_LIMIT";
+      const cycle = cycleStage(live);
+      const stage: ParallelTaskStage = ended ?? (task.status !== "running" ? "starting" : waiting ? "waiting-limit" : live?.stage === "paused" ? "paused" : cycle && cycle !== "next" ? cycle : "working");
+      return { id: task.id, name: task.name ?? task.id, stage, attempt: live?.attempt ?? 0, branch: task.branch ?? null, startedAt: task.startedAt ?? null, ...(waiting ? { waiting: true } : {}) };
+    }),
+  };
+}
+
+/** No text in a status is longer than this: it goes to the window every poll, and older engines wrote megabytes into one event. */
+export const STATUS_TEXT_LIMIT = 12_000;
+
+/** A long text cut to its start and end, saying how much was left out (engine/src/clip.mjs). */
+export function clipText<T>(text: T, max = STATUS_TEXT_LIMIT): T {
+  if (typeof text !== "string" || text.length <= max) return text;
+  const half = Math.floor((max - 60) / 2);
+  return `${text.slice(0, half)}
+... ${text.length - 2 * half} characters left out ...
+${text.slice(-half)}` as T;
+}
+
+/** The value with every string in it clipped. */
+export function clipDeep<T>(value: T, max = STATUS_TEXT_LIMIT): T {
+  if (typeof value === "string") return clipText(value, max);
+  if (Array.isArray(value)) return value.map((item) => clipDeep(item, max)) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clipDeep(item, max)])) as T;
+  return value;
+}
+
+/** The window gets at most this many changed files (an untracked node_modules is tens of thousands); changedTotal counts all. */
+export const CHANGED_FILES_SHOWN = 1000;
+
+/** A changed file is outside the task's approved paths (QA will reject it), from the full list. */
+function outsideApproved(git: GitInfo, allowedPaths: string[] | undefined): boolean {
+  const approved = new Set((allowedPaths ?? []).map((p) => p.replaceAll("\\", "/")));
+  return git.changedFiles.some((f) => !approved.has(f.path));
+}
+
+const defaultChecks: QaChecks ={ tests: "NOT RUN", typecheck: "NOT RUN", lint: "NOT RUN", scopeCheck: "NOT RUN" };
 
 export function buildStatus(args: {
   projectId: string;
@@ -103,13 +163,13 @@ export function buildStatus(args: {
     pid: args.pid,
     stage: stageOf(live) ?? "waiting",
     cycle: args.processAlive || live?.stage === "pass" ? cycleStage(live) : null,
-    task: live?.task ? { id: live.task.id, name: live.task.name ?? live.task.id, prompt: live.task.prompt ?? "", qaCommand: live.task.qaCommand, allowedPaths: live.task.allowedPaths } : null,
+    task: live?.task ? { id: live.task.id, name: live.task.name ?? live.task.id, prompt: clipText(live.task.prompt ?? ""), qaCommand: live.task.qaCommand, allowedPaths: live.task.allowedPaths } : null,
     attempt: live?.attempt ?? 0,
     activeRole: live?.assessmentRunning ? "Assessment" : live?.activeReasoningRole ?? (live?.clineStatus === "running" ? "Implementation" : null),
     activeModel: live?.activeReasoningModel ?? (live?.clineStatus === "running" ? live?.cline?.model ?? null : null),
     clineStatus: live?.clineStatus ?? "idle",
     qaStatus: live?.qaStatus ?? "waiting",
-    latestQa: live?.latestQa ?? "",
+    latestQa: clipText(live?.latestQa ?? ""),
     qaChecks: { ...defaultChecks, ...(live?.qaChecks ?? {}) } as QaChecks,
     clineStartedAt: startedAt,
     clineElapsedMs: elapsed,
@@ -117,8 +177,8 @@ export function buildStatus(args: {
     clineProvider: live?.cline?.provider ?? null,
     contextTokens: live?.cline?.contextTokens ?? null,
     control: { pauseAfterCurrent: Boolean(control.pauseAfterCurrent), stopAfterSafePoint: Boolean(control.stopAfterSafePoint) },
-    attentionReason: live?.userAttention ? live.userAttentionReason ?? live.latestQa ?? null : null,
-    blockedReason: live?.stage === "BLOCKED" ? live.blockedReason ?? live.latestQa ?? null : null,
+    attentionReason: live?.userAttention ? clipText(live.userAttentionReason ?? live.latestQa ?? null) : null,
+    blockedReason: live?.stage === "BLOCKED" ? clipText(live.blockedReason ?? live.latestQa ?? null) : null,
     limitMessage: live?.codexLimitMessage ?? null,
     limitRetryAt: live?.codexRetryAt ?? null,
     elevateAvailable: args.elevate.available,
@@ -127,8 +187,10 @@ export function buildStatus(args: {
     resolverReason: args.resolver.reason,
     assessmentRetry: args.assessmentRetry ?? false,
     qaRetry: args.qaRetry ?? false,
-    events: args.events,
-    git: args.git,
+    interrupted: interruptedWork({ processAlive: args.processAlive, runState, events: args.events }),
+    events: clipDeep(args.events),
+    git: { ...args.git, changedFiles: args.git.changedFiles.slice(0, CHANGED_FILES_SHOWN), changedTotal: args.git.changedTotal ?? args.git.changedFiles.length },
+    outsideApproved: live?.task ? outsideApproved(args.git, live.task.allowedPaths) : false,
     plan: args.plan,
     updatedAt: live?.updatedAt ?? null,
   };
@@ -164,4 +226,39 @@ export function interruptedWork(status: Pick<ProjectStatus, "processAlive" | "ru
     }
   }
   return [...open.values()].pop() ?? null;
+}
+
+/**
+ * Projects other than the active one are polled only while something may still change: their engine runs,
+ * or their last status still shows it running (after Stop now, the poll that sees it gone).
+ */
+export function skipPoll(input: { active: boolean; alive: boolean; last: Pick<ProjectStatus, "processAlive"> | undefined }): boolean {
+  return !input.active && !input.alive && input.last !== undefined && !input.last.processAlive;
+}
+
+/** Approve each task: the newest request still unanswered (no approval, set-aside or stop after it), while the engine runs. */
+/** The newest tools-missing with no tools-ready, set-aside, stop or block after it, while the engine runs. */
+export function pendingMissingTools(events: EngineEvent[], processAlive: boolean): MissingTools | null {
+  if (!processAlive) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as EngineEvent & Record<string, unknown>;
+    if (["tools-ready", "task-deferred", "stopped", "blocked", "loop-complete"].includes(e.type)) return null;
+    if (e.type === "tools-missing" && typeof e.taskId === "string" && Array.isArray(e.tools)) {
+      const tools = (e.tools as Record<string, unknown>[]).map((t) => ({ tool: String(t.tool ?? ""), name: String(t.name ?? t.tool ?? "tool"), install: typeof t.install === "string" ? t.install : null, url: String(t.url ?? ""), note: typeof t.note === "string" ? t.note : null }));
+      return { taskId: e.taskId, qaCommand: String(e.qaCommand ?? ""), tools, since: e.timestamp };
+    }
+  }
+  return null;
+}
+
+export function pendingTaskApproval(events: EngineEvent[], processAlive: boolean): TaskApprovalRequest | null {
+  if (!processAlive) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as EngineEvent & Record<string, unknown>;
+    if (["task-approved", "task-deferred", "stopped", "blocked", "loop-complete"].includes(e.type)) return null;
+    if (e.type === "task-approval-requested" && typeof e.taskId === "string") {
+      return { taskId: e.taskId, name: String(e.name ?? e.taskId), objective: String(e.objective ?? ""), allowedPaths: Array.isArray(e.allowedPaths) ? e.allowedPaths.map(String) : [], qaCommand: String(e.qaCommand ?? ""), requestedAt: e.timestamp };
+    }
+  }
+  return null;
 }

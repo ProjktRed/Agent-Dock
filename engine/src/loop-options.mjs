@@ -1,5 +1,6 @@
 import { parseTuning } from "./engine-tuning.mjs";
 import { registerSecretEnv } from "./secret-env.mjs";
+import { addSecretValues, secretValuesFromEnv } from "./redact.mjs";
 import { readAssignedSkills, useAssignedSkills } from "./task-handoff-skill.mjs";
 
 export const DEFAULT_CLINE_CONTEXT_TOKENS = 98_304;
@@ -102,6 +103,8 @@ export function parseLoopOptions(argv) {
   const providerApiKeyEnv = options["provider-api-key-env"] ?? "AGENT_DOCK_PROVIDER_KEY";
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(providerApiKeyEnv)) throw new Error("--provider-api-key-env must be a valid environment variable name");
   registerSecretEnv(providerApiKeyEnv);
+  // Redaction read the environment at startup, before this name was known: hide its value too.
+  addSecretValues(secretValuesFromEnv());
   // Assigned skills reach every role prompt through task-handoff-skill.mjs; read once at startup.
   useAssignedSkills(readAssignedSkills(options["skills-file"]));
   const contextFallback = provider === "llamacpp" ? DEFAULT_LLAMACPP_CONTEXT_TOKENS : DEFAULT_CLINE_CONTEXT_TOKENS;
@@ -120,6 +123,15 @@ export function parseLoopOptions(argv) {
     autoContinue: booleanOption(options["auto-continue"], "auto-continue", true),
     // false: Cline runs with its normal tools; Node scope/HEAD checks and QA still gate every change.
     toolGuard: booleanOption(options["tool-guard"], "tool-guard", true),
+    // Settings › Experimental: project checks run in the sandbox (sandbox.mjs).
+    sandboxChecks: booleanOption(options["sandbox-checks"], "sandbox-checks", false),
+    sandboxAgents: booleanOption(options["sandbox-agents"], "sandbox-agents", false),
+    // Web access for agents (web-access.mjs): Codex's live web search, Claude Code's WebSearch and WebFetch.
+    webAccess: booleanOption(options["web-access"], "web-access", false),
+    // Ask instead of refuse (guard/ask.mjs): minutes to wait for your answer; 0 refuses at once.
+    askMinutes: options["ask-minutes"] === undefined ? 0 : Math.min(60, Math.max(0, Number(options["ask-minutes"]) || 0)),
+    // Approve each task before Implementation starts.
+    approveTasks: booleanOption(options["approve-tasks"], "approve-tasks", false),
     roleOverrides: parseRoleOverrides(options),
     roleBackups: parseRoleBackups(options),
     clineThinking: clineThinking(options["cline-thinking"]),

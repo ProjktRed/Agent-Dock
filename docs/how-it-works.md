@@ -28,9 +28,12 @@ All **Reported** by the provider's own CLI, with an "as of" time.
 - **Tokens**: Codex `turn.completed` usage and Claude Code `result` usage from each invocation under
   `<state>\codex\`, plus llama.cpp `/metrics` samples the engine logs per Cline attempt. Local tokens count toward
   Unattended token budgets: llama.cpp's counters, or for Ollama the usage Cline reports at the end
-  of each attempt. No cost is estimated (no pricing is configured;
-  subscriptions expose none). The current context occupancy is not reported by any runtime, so it is
-  not shown as a number.
+  of each attempt. **Spend** is the cost a CLI reports (Claude Code, OpenCode, Cline on a cloud
+  provider). Codex reports only tokens, so its cost is **estimated** from Settings › Execution & safety ›
+  **Price table** (per million input, cached input and output tokens) for the models listed there, and
+  not counted for any other model. Local model servers are never priced. On a subscription the
+  figure is an estimate at the prices entered, not your bill.
+  The current context occupancy is not reported by any runtime, so it is not shown as a number.
 - **Model limits**: llama.cpp `/props` and Ollama `/api/show` context sizes are **Reported**;
   otherwise **Not exposed**.
 - **Orchestrator models**: listed by the CLI itself, free, no prompt sent. Codex: app-server
@@ -95,21 +98,16 @@ The scope guard, independent QA, QA-only commits and the spend budgets are the s
 Max, Team or API plan, or a local model with at least a 128K context; Eco otherwise). It never
 suggests Max and never changes the mode by itself.
 
-**Step down** (on by default): in Standard or Max, a task that fails review twice is set aside, its
-work kept in a named git stash, and redone one size smaller (Max to Standard, Standard to Eco).
-Assessment is told to redo that work now, starting with its first part. The configured size comes
-back once the set-aside task's plan items are checked off, or after 5 approved tasks. The
-step-down is saved in the run's state folder, so Stop/Run, an app restart or crash recovery keeps it;
-it is dropped if you change the task size or turn step-down off before running again. Run reports show the task size, step-downs and plan items
+The task size never changes by itself during a run. Run reports show the task size and plan items
 finished; Overview's estimate compares the sizes this project has run in.
 
 ## Loop limits
 
-Editable with guardrails off; the defaults are the engine's built-in values: automatic Elevation
-after 3 attempted corrections; no correction limit (with one, the loop stops for you after that many
-corrections on a task, and Resume allows another round); 3 Resolver strategies per task;
-Eco's task sizing for the worker (1 file per task, new files under about 200 lines, at most 3
-files to read); default context and output for new Cline agents.
+Fixed by the engine: automatic Elevation after 3 attempted corrections; no correction limit;
+3 Resolver strategies per task; Eco's task sizing for the worker (1 file per task, new files under
+about 200 lines, at most 3 files to read). The task size (Eco, Standard, Max) is the setting to change;
+Max takes its own limits. The engine's flags remain for command-line runs. With guardrails off you can
+set the default context and output for new Cline agents.
 
 ## Implementation on any CLI
 
@@ -134,41 +132,21 @@ waits (Waiting: usage limit) with those changes kept. Resume starts a fresh atte
 review and finish them; in Unattended mode the engine also tries again by itself every 30 minutes
 (engine flag `--limit-retry-minutes`, 0 = wait for Resume). Stop and restart keep the wait.
 
-## Workflow roles
+## Second review
 
-Workflow tab: your own roles at three points in the loop. Roles review read-only; only a fixer edits, under the guard.
-
-- **Before implementation**: runs once per task; its guidance is added to every worker prompt for
-  that task.
-- **Before QA**: reviews each finished attempt; QA and Assessment read its findings. As a **gate**,
-  "changes needed" sends the attempt back for correction instead of to QA, and a gate that cannot run
-  blocks the task rather than letting the change through unreviewed. A gate can also be a
-  **fixer**: when it finds problems, it fixes them itself once per attempt, then reviews the result
-  again. The fix runs on the role's CLI with the tool guard always on, may edit only the task's
-  approved files and never commits; the engine's evidence and scope checks run again afterwards. If
-  problems remain, the attempt goes back for correction as usual.
-- **After QA passes**: writes a report to `role-reports.ndjson` in the project's state folder.
-
-Each role is a `ROLE.md` (frontmatter `name`, `description`, `stage`, `gate`, `fix`, `enabled`, then the
-instructions) under `%APPDATA%\Agent Dock\roles\<id>`; import a folder of them from the Workflow
-tab. A role runs on the agent assigned to it: an agent with the role "Workflow role" on Codex CLI or
-Claude Code, with its own model, effort and speed. Roles go through the orchestrator lock, are
-checkpointed like other engine operations (a resumed run never repeats a finished role), wait on
-usage limits like QA, and never edit files, commit or change HEAD. A role without an enabled agent
-is skipped, with a warning at start.
-
-## Second-opinion QA
-
-Workflow › Templates: create this optional gate, then choose **New agent** to use the other CLI from
-the project's primary QA, or assign an existing workflow agent on that CLI. An enabled second
-opinion requires an agent and blocks launch if incomplete. It reviews the scoped diff and engine
-evidence before QA; only QA accepts and commits. Before-QA receipts are bound to the evidence they
-reviewed, so changing the code invalidates their cached verdicts. A QA usage-limit backup may share
-the second-opinion reviewer's CLI.
+Workflow tab: one optional review before QA, on its own agent. Turn it on, then choose **New agent**
+to use the other CLI from the project's QA (it must differ), or assign an existing agent with the role
+"Workflow role" on Codex CLI or Claude Code. It reads each finished attempt, the scoped diff and the
+engine's check results, read-only; QA and Assessment read its findings. "Changes needed" sends the
+attempt back for correction instead of to QA, and a review that cannot run blocks the task rather than
+letting the change through unreviewed. Only QA accepts and commits. Its verdict is bound to the
+evidence it reviewed, so changed code is reviewed again. It is saved as a `ROLE.md` under
+`%APPDATA%\Agent Dock\roles\second-opinion-qa`. Custom roles from versions before 0.39 (planners,
+after-pass reports, other reviews, fixers) are no longer run; their folders are kept.
 
 ## QA evidence reuse
 
-Engine check results are shared with workflow reviewers and QA. Automatic QA environment retries
+Engine check results are shared with the Second review and QA. Automatic QA environment retries
 reuse passing checks only for the same task, criteria, command, attempt, baseline and repository
 content. Failed or inconclusive evidence reruns. Changed content or HEAD blocks use of a stale
 packet. **Retry QA** explicitly collects fresh checks and reruns before-QA gates. Fingerprints cover
@@ -180,20 +158,29 @@ or submodule contents.
 All per project in Projects › Workflow, unless noted.
 
 - **Scheduled runs**: start the automation at a local time on chosen weekdays while Agent Dock is
-  open. A start missed by more than 30 minutes (the app was closed) is skipped. Pair with Unattended
-  mode for overnight runs. **Also when closed** (Windows) adds a per-user task in the "Agent Dock" folder of
-  Task Scheduler that launches Agent Dock minimized at that time; the app then starts what is due, so
-  a run never starts twice. No admin rights; it runs only while you are signed in. Turning the option
-  or the schedule off, or removing the project, removes the task.
+  open. A start missed by more than 30 minutes (the app was closed) is skipped; the 30 minutes run
+  past midnight (a 23:50 start checked at 00:05 is on time). Pair with Unattended
+  mode for overnight runs. The app must be open: it does not add Task Scheduler tasks or systemd timers.
+  (Versions 0.35 to 0.38 could, with **Also when closed**; on the first launch of 0.39 the app removes
+  the tasks and timers it made, leaving another install's alone.) A scheduled start that could not start
+  goes to the saved notification channels, email included, and a Windows notification (with Settings ›
+  General › Notifications › **Usage limits and engine exits** on); a start that went ahead shows in the
+  app and goes to the channels except email.
 - **Pull-request mode**: each new run works on its own `agent-dock/run-…` branch instead of the
   branch you had checked out. Nothing is pushed until you press **Open pull request**, which pushes
   the branch and opens the pull request with GitHub CLI (`gh`), or GitHub's compare page without it.
+  On GitLab (gitlab.com, or a host whose name contains "gitlab") the push itself opens the merge
+  request with push options (`merge_request.create`, target and title), so no GitLab CLI is needed; a
+  server that does not take push options gets a plain push and GitLab's new merge request page.
+- **GitHub CI**: once the app has pushed a run branch, Projects › Workflow › GitHub CI shows that
+  commit's GitHub Actions runs (`gh run list`, polled every minute until they finish, for at most six
+  hours) and tells you when they pass or fail (Windows notification per the notification settings).
+  It uses your own `gh auth login`; the app stores no GitHub token. Each run links to its page on
+  GitHub. The app does not fix a failed run or push anything by itself.
 - **Parallel tasks** (Settings › Workflow rules, or per project): up to 4 tasks in one run. Each
   round, Assessment picks tasks whose allowed files do not overlap; each runs through its own engine
   (Implementation, QA and its commit) in a worktree next to the project (`<project>-parallel/<task>-<run>`)
-  on an `agent-dock/parallel-…` branch, at the same time. A task's engine does not step down (while the
-  run itself is stepped down, it works at the smaller size, and merged tasks count toward ending the
-  step-down); a task that is set aside ends there, is listed with the run's deferred tasks, and goes
+  on an `agent-dock/parallel-…` branch, at the same time. A task that is set aside ends there, is listed with the run's deferred tasks, and goes
   back to Assessment. The run then applies each approved change
   to your branch without committing, runs that task's check on the combined code, and commits only if
   it passes. A change that does not apply or fails stays on its branch and goes back to Assessment;
@@ -203,17 +190,21 @@ All per project in Projects › Workflow, unless noted.
   running task; a task waiting out a usage limit shows in Activity, and Resume continues it as in a
   normal run;
   between rounds the run pauses and stops as it does between tasks, so with Automatic continuation off
-  it pauses after a round that merged a change. Each task's tokens and spend count toward the run's
-  report and the day's budgets, and Overview shows the round in progress. Needs a cloud Implementation
-  agent (a local model server answers one request at a time) and is off in Unattended mode; a task in
-  progress finishes on its own before parallel rounds start. Plan items are checked off as each change
+  it pauses after a round that merged a change. The run keeps one budget for all its tasks, in Unattended mode
+  too: a task's engine has no token, spend, task or time limit of its own; while a round runs, the run
+  counts each task's tokens and spend so far (`run-usage.json` in its state folder) toward the run's
+  report and the day's budgets (`usage-day.json` of the project only), and a limit reached stops every
+  task at its next safe point (`--max-rounds N` also ends the run after N rounds). The check of the
+  combined code goes through the QA runner: the same approved-command check, without secrets in its
+  environment. Overview's Current task card lists the round's tasks with each one's stage
+  (`parallel-round.json`). On a local model server (0.38) a round has at most as many tasks as the
+  server answers at once: llama.cpp's slots (`llama-server --parallel N`, read from `/props`; each slot
+  gets the context divided by N, which must still cover the agent's context), or the requests at once
+  set on the Ollama connection (its `OLLAMA_NUM_PARALLEL`). Task engines never start the server
+  (`--local-server-managed external`); a task in progress finishes on its own before parallel rounds start. Plan items are checked off as each change
   is merged. Projects › Workflow › **Clean up parallel worktrees** removes the kept worktrees (each
   `node_modules` link first) and every `agent-dock/parallel-…` branch, after you confirm; unmerged work
-  on them is lost, and it waits while a run of the project or its lanes is active.
-- **Parallel lanes**: run another objective at the same time in a linked git worktree
-  (`<project>-lanes/<name>`) on its own `agent-dock/lane-…` branch. Each lane is its own project with
-  its own engine and state folder; merge its branch when you are happy with it. Removing a lane keeps
-  its branch.
+  on them is lost, and it waits while a run of the project (or of a project in one of its worktrees) is active.
 - **WSL isolation (opt-in)**: the engine and every agent CLI and command it starts run inside a WSL
   distro. Node.js, git and the agent CLIs must be installed and signed in there (**Check distro**
   lists them). Windows drives stay reachable under `/mnt` unless automount is off in the distro's
@@ -227,13 +218,20 @@ All per project in Projects › Workflow, unless noted.
 
 ## Known limitations
 
-- Workflow roles are read-only reviewers and planners; they cannot edit files.
+- The Second review is read-only and runs only on Codex CLI or Claude Code.
+- Parallel tasks on a local model server run only as many at once as it answers (see above). A task's tokens and spend count toward the run's budgets while it works (checked every few
+  seconds, so a limit can be passed by what the tasks use in that time and until their next safe
+  point); its per-role usage reaches Overview when its engine finishes. The Elevation limit is shared:
+  what is left of it is split between the round's tasks (a task given none runs without automatic
+  Elevation), and each task's Elevations count toward it. The check of the combined code is ended after
+  30 minutes (a watch mode or a server left running) and counts as a failed check.
 - On some Windows machines the engine's atomic state writes can hit `EPERM` on rename (a file lock,
   usually antivirus or indexing). The engine retries a blocked rename for about five seconds; if a
   lock lasts longer, excluding the engine state folders from real-time scanning is the usual fix.
 - A Cline or OpenCode worker on an OpenAI-compatible cloud provider receives that provider's API key
-  in its environment, because the CLI calls the provider itself. Use a key limited to that provider
-  and project, with a spending cap at the provider.
+  in its environment, because the CLI calls the provider itself. Use a key made only for Agent Dock,
+  with a low spending limit at the provider; CLIs shows this where the key is entered, and a start
+  warns when an OpenRouter key reports no limit.
 - Spend budgets count the cost a CLI reports (Claude Code, OpenCode, and Cline on a cloud provider).
   Codex reports only tokens, so its spend counts only for models listed in Settings › Execution & safety
   › Price table, which estimates cost from the tokens. Local model servers (llama.cpp, Ollama) cost

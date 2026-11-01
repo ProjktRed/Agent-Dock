@@ -1,4 +1,7 @@
 import type { Agent, CliConnection, Settings, WorkflowRole } from "@shared/types";
+import { normalizeAppearance } from "@shared/appearance";
+import { sanitizeSettings } from "./settings-validate";
+import { isCliKind, isConnectionId } from "@shared/defaults";
 
 // Settings export and import (Settings › Advanced): carry agents, workflow roles, connections and
 // settings to another machine or share a setup. Never included: stored secrets (API keys, notification
@@ -51,7 +54,7 @@ export function parseSettingsFile(text: string): SettingsFile {
   if (value.version !== 1) throw new Error(`Settings export version ${String(value.version)} is not supported by this version of Agent Dock.`);
   if (!isObject(value.settings) || !Array.isArray(value.agents) || !Array.isArray(value.clis) || !Array.isArray(value.roles)) throw new Error("The settings export is incomplete.");
   for (const a of value.agents) if (!isObject(a) || typeof a.id !== "string" || typeof a.role !== "string" || typeof a.cliId !== "string") throw new Error("The settings export has an invalid agent.");
-  for (const c of value.clis) if (!isObject(c) || typeof c.id !== "string" || typeof c.kind !== "string" || !Array.isArray(c.env)) throw new Error("The settings export has an invalid connection.");
+  for (const c of value.clis) if (!isObject(c) || !isConnectionId(c.id) || !isCliKind(c.kind) || typeof c.location !== "string" || !Array.isArray(c.env) || !c.env.every((e) => isObject(e) && typeof e.key === "string" && typeof e.value === "string" && typeof e.secret === "boolean")) throw new Error("The settings export has an invalid connection.");
   for (const r of value.roles) if (!isObject(r) || typeof r.id !== "string" || !/^[\w-]{1,64}$/.test(r.id) || typeof r.name !== "string" || typeof r.instructions !== "string") throw new Error("The settings export has an invalid workflow role.");
   return value as unknown as SettingsFile;
 }
@@ -61,21 +64,34 @@ export interface ImportResult {
   agents: Agent[];
   clis: CliConnection[];
   roles: PortableRole[];
-  summary: { agents: number; clis: number; roles: number };
+  /** skipped: what the file had that was not applied (program locations, environment variables, a weaker guard), for the result message. */
+  summary: { agents: number; clis: number; roles: number; skipped: string[] };
 }
+
+/** Connections whose location is a program Agent Dock starts (the others are a URL). */
+const PROGRAM_KINDS = new Set<CliConnection["kind"]>(["codex", "cline", "claude", "opencode"]);
+/** A connection's environment as it would change a launch (secret values are never in a file). */
+const envShape = (env: CliConnection["env"]) => JSON.stringify(env.map((e) => [e.key, e.secret, e.secret ? "" : e.value]));
 
 /**
  * Applies an export on top of this machine. Settings are replaced except the machine-local ones.
  * Agents and roles with the same id are replaced, others added; nothing local is deleted.
  * Connections with the same id keep their local executable or URL, secret values and model lists.
+ * Programs to start are never taken from a file: connection program paths, the llama.cpp launcher and
+ * the Node runtime stay as they are here (a new connection starts its program from PATH). Neither are
+ * connection environment variables: one such as NODE_OPTIONS, PATH, ComSpec or a proxy changes how a CLI
+ * starts or where it connects, so a new connection starts with none and an existing one keeps its own.
+ * A file cannot turn the tool guard off, and its protected paths are added to this computer's.
  */
 export function mergeImport(current: { settings: Settings; agents: Agent[]; clis: CliConnection[] }, file: SettingsFile): ImportResult {
-  const incoming = file.settings;
+  // Fields of the wrong type (a null section, a string limit) keep this computer's value.
+  const incoming = sanitizeSettings(file.settings, current.settings);
   const local = current.settings;
+  const general = { ...local.general, ...(incoming.general ?? {}), defaultProject: local.general.defaultProject };
   const settings: Settings = {
     ...local,
     ...incoming,
-    general: { ...local.general, ...(incoming.general ?? {}), defaultProject: local.general.defaultProject },
+    general: { ...general, ...normalizeAppearance(general) },
     updates: { ...local.updates, ...(incoming.updates ?? {}), source: local.updates.source, branch: local.updates.branch },
     skills: local.skills,
     activeProjectId: local.activeProjectId,
@@ -84,6 +100,19 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
   for (const key of ["workflow", "attention", "context", "safety", "usage", "tuning", "advanced"] as const) {
     if (isObject(incoming[key])) (settings as unknown as Record<string, unknown>)[key] = { ...(local[key] as object), ...(incoming[key] as object) };
   }
+  const skipped: string[] = [];
+  const theirs = (isObject(incoming.advanced) ? incoming.advanced : {}) as Partial<Settings["advanced"]>;
+  if (theirs.llamaCppLauncher !== undefined && theirs.llamaCppLauncher !== local.advanced.llamaCppLauncher) skipped.push("llama.cpp launcher");
+  if (theirs.nodeRuntime !== undefined && theirs.nodeRuntime !== local.advanced.nodeRuntime) skipped.push("Node runtime");
+  settings.advanced = { ...settings.advanced, llamaCppLauncher: local.advanced.llamaCppLauncher, nodeRuntime: local.advanced.nodeRuntime };
+  if (settings.workflow.toolGuard !== true && local.workflow.toolGuard === true) {
+    settings.workflow = { ...settings.workflow, toolGuard: true };
+    skipped.push("Tool guard off");
+  }
+  const paths = (incoming.safety as { protectedPaths?: unknown } | undefined)?.protectedPaths;
+  const added = Array.isArray(paths) ? paths.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [];
+  if (settings.safety.checksTrusted === true && local.safety.checksTrusted !== true) skipped.push("Project checks trusted");
+  settings.safety = { ...settings.safety, protectedPaths: [...new Set([...local.safety.protectedPaths, ...added])], checksTrusted: local.safety.checksTrusted === true, sandboxChecks: local.safety.sandboxChecks === true, sandboxAgents: local.safety.sandboxAgents === true };
   const agents = [...current.agents];
   for (const agent of file.agents) {
     const at = agents.findIndex((a) => a.id === agent.id);
@@ -93,8 +122,18 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
   const clis = [...current.clis];
   for (const cli of file.clis) {
     const at = clis.findIndex((c) => c.id === cli.id);
-    if (at < 0) { clis.push({ ...cli, hasSecret: false, modelsDir: null, collected: null, env: cli.env.map((e) => (e.secret ? { ...e, value: "" } : e)) }); continue; }
+    if (at < 0) {
+      const location = PROGRAM_KINDS.has(cli.kind) ? cli.kind : cli.location;
+      if (location !== cli.location) skipped.push(`${cli.name || cli.id} location`);
+      if (cli.env.length) skipped.push(`${cli.name || cli.id} environment variables`);
+      clis.push({ ...cli, location, hasSecret: false, modelsDir: null, collected: null, env: [] });
+      continue;
+    }
     const mine = clis[at];
+    if (cli.location !== mine.location) skipped.push(`${mine.name || mine.id} location`);
+    // A file never changes what a connection is: its saved key and location belong to that kind.
+    if (cli.kind !== mine.kind) { skipped.push(`${mine.name || mine.id} (a different kind of connection)`); continue; }
+    if (envShape(cli.env) !== envShape(mine.env)) skipped.push(`${mine.name || mine.id} environment variables`);
     clis[at] = {
       ...cli,
       location: mine.location,
@@ -102,8 +141,8 @@ export function mergeImport(current: { settings: Settings; agents: Agent[]; clis
       collected: mine.collected,
       hasSecret: mine.hasSecret,
       modelsDir: mine.modelsDir,
-      env: cli.env.map((e) => (e.secret ? { ...e, value: mine.env.find((m) => m.key === e.key)?.value ?? "" } : e)),
+      env: mine.env,
     };
   }
-  return { settings, agents, clis, roles: file.roles, summary: { agents: file.agents.length, clis: file.clis.length, roles: file.roles.length } };
+  return { settings, agents, clis, roles: file.roles, summary: { agents: file.agents.length, clis: file.clis.length, roles: file.roles.length, skipped } };
 }

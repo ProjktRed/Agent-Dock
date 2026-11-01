@@ -1,6 +1,8 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
+import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -47,7 +49,9 @@ export function verifyManifest(manifestText: string, signatureB64: string, publi
   if (m.name !== PRODUCT || m.platform !== platform) throw new Error(`The release is for ${m.name}/${m.platform}, not ${PRODUCT}/${platform}.`);
   if (!/^\d+\.\d+\.\d+$/.test(m.version) || !/^[0-9a-f]{40}$/.test(m.commit) || !/^[0-9a-f]{64}$/.test(m.sha256) || !(m.size > 0 && m.size < MAX_ZIP) || !FILE_PATTERN[platform].test(m.file)) throw new Error("The release manifest is malformed.");
   const asset = (a: ReleaseAsset | undefined, pattern: RegExp) => !a || (pattern.test(a.file) && /^[0-9a-f]{64}$/.test(a.sha256) && a.size > 0 && a.size < MAX_ZIP);
-  if (!asset(m.index, /^[\w.-]+\.json$/) || !asset(m.delta, /^[\w.-]+\.zip$/) || (m.delta && (!m.index || !/^\d+\.\d+\.\d+$/.test(m.delta.from)))) throw new Error("The release manifest is malformed.");
+  // Windows: a changed-files zip with its file index. Linux (0.38): one binary patch of the AppImage.
+  const linux = platform === "linux-x64";
+  if (!asset(m.index, /^[\w.-]+\.json$/) || !asset(m.delta, linux ? /^[\w.-]+\.adpatch$/ : /^[\w.-]+\.zip$/) || (m.delta && ((!linux && !m.index) || !/^\d+\.\d+\.\d+$/.test(m.delta.from)))) throw new Error("The release manifest is malformed.");
   return m;
 }
 
@@ -103,12 +107,39 @@ export function downloadRelease(info: ReleaseInfo, dir: string, fetchImpl: Fetch
   return downloadVerified(info.zipUrl, info.manifest, dir, fetchImpl, onProgress);
 }
 
-/** The delta applies only to the exact version it was made from, and only with its index. */
-export const deltaUsable = (info: ReleaseInfo, installed: string): boolean => Boolean(info.manifest.delta && info.manifest.index && info.deltaUrl && info.indexUrl && info.manifest.delta.from === installed);
+/** The delta applies only to the exact version it was made from (on Windows, only with its index). */
+export const deltaUsable = (info: ReleaseInfo, installed: string): boolean =>
+  Boolean(info.manifest.delta && info.deltaUrl && info.manifest.delta.from === installed && (info.manifest.platform === "linux-x64" || (info.manifest.index && info.indexUrl)));
+
+/**
+ * Linux smaller update: the signed patch applied to the running AppImage. The patch checks its source and
+ * result, and the result must also match the AppImage's SHA-256 and size in the signed manifest.
+ */
+export async function applyAppImageDelta(info: ReleaseInfo, dir: string, current: string, fetchImpl: Fetch = fetch): Promise<string> {
+  if (!current || !existsSync(current)) throw new Error("Agent Dock is not running from an AppImage.");
+  const patchFile = await downloadVerified(info.deltaUrl!, info.manifest.delta!, dir, fetchImpl, () => {});
+  try {
+    const out = applyPatch(readFileSync(current), readFileSync(patchFile));
+    if (out.length !== info.manifest.size || createHash("sha256").update(out).digest("hex") !== info.manifest.sha256) throw new Error("The patched AppImage does not match the signed manifest.");
+    const file = path.join(dir, info.manifest.file);
+    nodeFs.writeFileSync(file, out);
+    return file;
+  } finally { rmSync(patchFile, { force: true }); }
+}
+
+/**
+ * File access for the installed app and the rebuilt update. In Electron's main process the patched fs
+ * treats every .asar file as a folder (resources/app.asar would be "missing", unreadable as one file and
+ * copied wrongly), so the delta update fell back to the full download every time. Electron's own
+ * original-fs is the unpatched module; plain Node (tests, the swap script) has no asar support and no
+ * original-fs, so it uses node:fs. (A builtin resolves from any require; process.execPath is just an absolute
+ * path that works in the bundled CommonJS main and in ESM tests alike.)
+ */
+const rawFs: typeof nodeFs = process.versions.electron ? (createRequire(process.execPath)("original-fs") as typeof nodeFs) : nodeFs;
 
 const fileSha256 = async (file: string) => {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  for await (const chunk of rawFs.createReadStream(file)) hash.update(chunk);
   return hash.digest("hex");
 };
 
@@ -120,6 +151,7 @@ const fileSha256 = async (file: string) => {
  */
 export async function assembleFromDelta(index: { files: { path: string; sha256: string; size: number }[] }, changedDir: string, installDir: string, outDir: string): Promise<string> {
   if (!Array.isArray(index?.files) || !index.files.length) throw new Error("The file index is empty.");
+  const { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = rawFs;
   if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
   for (const entry of index.files) {
     const rel = String(entry.path);
@@ -150,7 +182,8 @@ export async function applyDelta(info: ReleaseInfo, dir: string, installDir: str
 
 /** Expands a verified zip into an empty folder with Windows' own Expand-Archive. */
 async function expandZip(zip: string, dir: string): Promise<void> {
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  // The folder may hold an earlier try's resources/app.asar: removed as the file it is (rawFs).
+  if (rawFs.existsSync(dir)) rawFs.rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const quote = (p: string) => `'${p.replaceAll("'", "''")}'`;
   await new Promise<void>((resolve, reject) => {

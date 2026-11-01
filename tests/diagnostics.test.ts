@@ -59,16 +59,18 @@ describe("diagnostics export", () => {
     const stateDir = await mkdtemp(path.join(os.tmpdir(), "diag-state-"));
     try {
       const secret = "supersecretvalue123";
-      await writeFile(path.join(stateDir, "live.json"), JSON.stringify({ stage: "BLOCKED", note: `key ${secret}` }));
+      await writeFile(path.join(stateDir, "live.json"), JSON.stringify({ stage: "BLOCKED", note: `key ${secret}`, task: { id: "T", prompt: "TASK_PROMPT_TEXT" } }));
+      await writeFile(path.join(stateDir, "current-task.json"), JSON.stringify({ id: "T", prompt: "TASK_PROMPT_TEXT", allowedPaths: ["a.ts"] }));
       await writeFile(path.join(stateDir, "qa-packet.json"), JSON.stringify({ diff: "PRIVATE_CODE" }));
       await writeFile(path.join(stateDir, "action-log.ndjson"), "RAW_ACTION_LOG\n");
       await writeFile(path.join(stateDir, "activity.ndjson"), Array.from({ length: 2500 }, (_, i) => JSON.stringify({ i, token: i === 2499 ? secret : "" })).join("\n") + "\n");
       await writeFile(path.join(stateDir, "app-engine.log"), "x".repeat(600 * 1024) + "\nLAST LINE\n");
       await mkdir(path.join(stateDir, "runs"));
-      for (let i = 0; i < 12; i++) await writeFile(path.join(stateDir, "runs", `2026-10-${String(i + 1).padStart(2, "0")}.json`), JSON.stringify({ i }));
+      for (let i = 0; i < 12; i++) await writeFile(path.join(stateDir, "runs", `2026-10-${String(i + 1).padStart(2, "0")}.json`), JSON.stringify({ i, objective: "RUN_OBJECTIVE" }));
       await mkdir(path.join(stateDir, "codex"));
       await writeFile(path.join(stateDir, "codex", "prompt.txt"), "MODEL_PROMPT");
-      const project = { id: "p1", name: "My/App", stateDir, archived: false } as unknown as Project;
+      await writeFile(path.join(stateDir, "task-board.json"), JSON.stringify({ version: 1, revision: 3, order: ["abc123def456"] }));
+      const project = { id: "p1", name: "My/App", stateDir, archived: false, objective: "PROJECT_OBJECTIVE" } as unknown as Project;
       const entries = await collectDiagnostics({
         about: { version: "0.23.6" }, settings: DEFAULT_SETTINGS, agents: [], clis: [], roles: [], projects: [project, { ...project, id: "p2" }],
         statuses: { p1: { stage: "BLOCKED" } }, verifyActionLog: async () => ({ ok: true, entries: 1 }),
@@ -78,6 +80,9 @@ describe("diagnostics export", () => {
       const all = Object.values(files).join("\n");
       expect(all).not.toContain(secret);
       expect(all).not.toMatch(/PRIVATE_CODE|RAW_ACTION_LOG|MODEL_PROMPT/);
+      // Retest (0.38.1): task prompts and objectives were in the export although the README said otherwise.
+      expect(all).not.toMatch(/TASK_PROMPT_TEXT|RUN_OBJECTIVE|PROJECT_OBJECTIVE/);
+      expect(JSON.parse(files["projects/My_App/state/current-task.json"])).toEqual({ id: "T", prompt: "[left out: 16 characters]", allowedPaths: ["a.ts"] });
       expect(files["projects/My_App/state/live.json"]).toContain("[redacted:secret]");
       expect(files["projects/My_App (2)/status.json"]).toBe("null\n");
       expect(files["projects/My_App/activity-tail.ndjson"].trim().split("\n")).toHaveLength(2000);
@@ -85,6 +90,7 @@ describe("diagnostics export", () => {
       expect(files["projects/My_App/app-engine-tail.log"].length).toBeLessThanOrEqual(512 * 1024);
       expect(Object.keys(files).filter((n) => n.startsWith("projects/My_App/runs/"))).toHaveLength(10);
       expect(files["projects/My_App/runs/2026-10-12.json"]).toBeDefined();
+      expect(JSON.parse(files["projects/My_App/state/task-board.json"]).revision).toBe(3);
       expect(JSON.parse(files["projects/My_App/action-log-verify.json"])).toEqual({ ok: true, entries: 1 });
       expect(files["README.txt"]).toContain("Look through the files before you share them.");
       expect(unzip(zipFiles(entries))["about.json"]).toContain("0.23.6");

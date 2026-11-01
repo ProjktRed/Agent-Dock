@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
-export function parseImplementationPlan(text,task={}){
+export function parseImplementationPlan(text,task){
+ task??={};
  const phases=[];let phase;
  for(const line of String(text).split(/\r?\n/)){
   const heading=line.match(/^##\s+Phase\s+(\d+)(?:\s*(?:—|-|:)\s*(.*))?$/i);

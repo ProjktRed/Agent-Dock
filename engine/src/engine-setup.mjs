@@ -9,7 +9,7 @@ import { preflightCodex, resolveCodexCommand } from "./codex-command.mjs";
 import { createRoleRunner, readRolesFile } from "./workflow-roles.mjs";
 import { ClineCliWorker } from "./cline-cli-worker.mjs";
 import { prepareClineRuntime } from "./cline-runtime-config.mjs";
-import { createProviderDescriptor } from "./runtime/provider.mjs";
+import { brokerProviderKey, createProviderDescriptor } from "./runtime/provider.mjs";
 import { OpenCodeCliWorker } from "./opencode-cli-worker.mjs";
 
 // The engine owns this task boundary. An app polling QA PASS can arrive after
@@ -60,7 +60,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
       let runtime = null;
       if (options.provider === "llamacpp" || options.provider === "ollama") {
         runtime = await prepareClineRuntime({
-          stateDir, provider: options.provider, model: options.model,
+          stateDir, provider: options.provider, model: options.model, externalServer: options["local-server-managed"] === "external",
           contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
           timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
           ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
@@ -78,7 +78,10 @@ export async function createImplementationWorker(options, { stateDir, workspace,
           readMetrics: runtime.readMetrics,
         };
       } else {
+        // OpenCode gets the key broker's address and token, never the key (key-broker.mjs).
+        const broker = await brokerProviderKey({ provider: options.provider, providerBaseUrl: options.providerBaseUrl, providerApiKeyEnv: options.providerApiKeyEnv });
         providerDescriptor = createProviderDescriptor({
+          broker,
           provider: options.provider,
           model: options.model,
           contextTokens: options.clineContextTokens,
@@ -96,7 +99,7 @@ export async function createImplementationWorker(options, { stateDir, workspace,
     }
 
     const runtime = await prepareClineRuntime({
-      stateDir, provider: options.provider, model: options.model,
+      stateDir, provider: options.provider, model: options.model, externalServer: options["local-server-managed"] === "external",
       contextTokens: options.clineContextTokens, maxOutputTokens: options.clineMaxOutputTokens,
       timeoutSeconds: options.timeoutSeconds, llamaCppModelsDir: options.llamacppModelsDir,
       ...(options.llamacppLauncher ? { llamaCppLauncher: options.llamacppLauncher } : {}),
@@ -113,6 +116,8 @@ export async function createImplementationWorker(options, { stateDir, workspace,
       baseUrl: runtime.baseUrl, beforeRun: runtime.ensureReady,
       cleanupAfterRun: runtime.cleanupAfterRun, providerEnv: runtime.providerEnv,
       readMetrics: runtime.readMetrics,
+      // A parallel task: the other tasks' Cline processes are not someone else using Cline (each has its own state).
+      ...(options["parallel-child"] === "true" ? { checkExternalBusy: async () => false } : {}),
     });
     return { worker, provider: runtime.provider, model: runtime.model, runtime };
   };
@@ -144,10 +149,10 @@ export async function createImplementationWorker(options, { stateDir, workspace,
   return { worker, provider: options.provider, model: options.model, runtime: null };
 }
 
-/** Custom workflow roles (--roles-file) and the runner for them; each CLI a role needs is preflighted once. */
+/** The second review (--roles-file) and its runner; the CLI it needs is preflighted once. */
 export async function createRoles(options, { stateDir, workspace }) {
   const roles = await readRolesFile(options.rolesFile);
-  if (!roles.length) return { roles, runRole: null, fixWorkers: {} };
+  if (!roles.length) return { roles, runRole: null };
   const needed = new Set(roles.map((role) => role.cli));
   const workers = {};
   if (needed.has("codex")) {
@@ -160,14 +165,7 @@ export async function createRoles(options, { stateDir, workspace }) {
     await preflightClaude(claudeCommand);
     workers.claude = new ClaudeWorker({ stateDir, workspace, claudeCommand });
   }
-  // Fixers edit through a guarded implementation run on their own CLI; the tool guard is always on.
-  const fixWorkers = {};
-  for (const role of roles.filter((r) => r.fix)) {
-    const command = role.cli === "codex" ? workers.codex.command : options["claude-command"] ?? "claude";
-    const prefixArgs = role.cli === "codex" ? workers.codex.prefixArgs : [];
-    fixWorkers[role.id] = new CloudImplementationWorker({ cli: role.cli, stateDir, workspace, command, prefixArgs, model: role.model, effort: role.effort, fast: role.fast, timeoutSeconds: options.timeoutSeconds, toolGuard: true });
-  }
-  return { roles, runRole: createRoleRunner(workers), fixWorkers };
+  return { roles, runRole: createRoleRunner(workers) };
 }
 
 /** A failed startup git query, rethrown with git's own reason (e.g. "detected dubious ownership"). */

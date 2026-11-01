@@ -3,7 +3,7 @@ import { atomicWriteJson } from "./dashboard-state.mjs";
 
 // Every task the loop starts is kept as <state>/tasks/<id>.json, so the app can run one again later
 // (Task history › Run again). Only the task's own definition is saved, never recovery state.
-const FIELDS = ["id", "name", "prompt", "allowedPaths", "qaCommand", "planItems", "skills"];
+const FIELDS = ["id", "name", "prompt", "allowedPaths", "qaCommand", "planItems", "planItemIds", "skills"];
 
 /** The file name for a task id: letters, digits, dot, dash and underscore only. */
 export const taskFileName = (id) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;

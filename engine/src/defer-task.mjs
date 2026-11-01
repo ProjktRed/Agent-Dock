@@ -1,21 +1,88 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import { renameWithRetry as rename } from "./fs-retry.mjs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { readDeferred } from "./supervisor-review.mjs";
-import { STEP_DOWN } from "./engine-tuning.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
-const git = (workspace, args) => exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const git = (workspace, args, { env, input } = {}) => {
+  const run = exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) });
+  if (input !== undefined) run.child.stdin.end(input);
+  return run.then((r) => r.stdout.trim());
+};
+
+/**
+ * Stashes the work under pathspec as `git stash push --include-untracked` does, and returns the stash commit.
+ * Parallel task engines share one repository's stash: push and then reading stash@{0} could name another
+ * engine's entry. So the stash commit is built here (index, worktree and untracked files, in temporary index
+ * files), stored under its own sha (retried while another engine holds the stash ref), and only then is the
+ * work removed from the worktree, as push removes it.
+ */
+async function stashWork(workspace, message, pathspec) {
+  const head = await git(workspace, ["rev-parse", "HEAD"]);
+  const commitTree = (tree, parents, text) => git(workspace, ["commit-tree", tree, ...parents.flatMap((p) => ["-p", p]), "-m", text]);
+  const temp = path.join(os.tmpdir(), `agent-dock-stash-${process.pid}-${randomUUID()}`);
+  const withIndex = (name) => ({ env: { ...process.env, GIT_INDEX_FILE: `${temp}-${name}` } });
+  try {
+    const indexTree = await git(workspace, ["write-tree"]);
+    const index = await commitTree(indexTree, [head], `index on ${message}`);
+    // The worktree's tracked files: the index, with every tracked change under pathspec (deletions too).
+    await git(workspace, ["read-tree", indexTree], withIndex("work"));
+    await git(workspace, ["add", "-u", "--", ...pathspec], withIndex("work"));
+    const workTree = await git(workspace, ["write-tree"], withIndex("work"));
+    // Untracked files that are not ignored, in a tree of their own (the stash's third parent).
+    const untracked = (await exec("git", safeGitArgs(["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspec]), { cwd: workspace, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
+    const parents = [head, index];
+    if (untracked) {
+      await git(workspace, ["read-tree", "--empty"], withIndex("untracked"));
+      await git(workspace, ["update-index", "--add", "-z", "--stdin"], { ...withIndex("untracked"), input: untracked });
+      parents.push(await commitTree(await git(workspace, ["write-tree"], withIndex("untracked")), [], `untracked files on ${message}`));
+    }
+    const commit = await commitTree(workTree, parents, message);
+    for (let tries = 1; ; tries++) {
+      try { await git(workspace, ["stash", "store", "-m", message, commit]); break; }
+      catch (error) { if (tries >= 20) throw error; await new Promise((r) => setTimeout(r, 50 * tries)); }
+    }
+    // Stored: now the worktree goes back to HEAD under pathspec, untracked files included.
+    await git(workspace, ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...pathspec]);
+    await git(workspace, ["clean", "-fdq", "--", ...pathspec]);
+    return commit;
+  } finally {
+    for (const name of ["work", "untracked"]) await rm(`${temp}-${name}`, { force: true }).catch(() => {});
+  }
+}
+
+/** Tasks set aside (by you or for a missing tool), newest last. */
+export async function readDeferred(stateDir) {
+  try { const list = JSON.parse(await readFile(path.join(stateDir, "deferred-tasks.json"), "utf8")); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+
+/** You removed the deferred mark: Assessment may choose these tasks again. Their stashes stay in git. Returns the removed entries. */
+export async function undeferTasks(stateDir, ids) {
+  const wanted = new Set(ids.map(String));
+  const list = await readDeferred(stateDir);
+  const removed = list.filter((d) => wanted.has(String(d.id)));
+  if (removed.length) await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), list.filter((d) => !wanted.has(String(d.id))));
+  return removed;
+}
+
+/** A stash was popped or dropped: deferred tasks that named it no longer have their work in a stash. */
+export async function forgetDeferredStash(stateDir, ref) {
+  const list = await readDeferred(stateDir);
+  if (!list.some((d) => d.stash?.ref === ref)) return;
+  await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), list.map((d) => (d.stash?.ref === ref ? { ...d, stash: null } : d)));
+}
 
 /**
  * Sets the current task aside at a loop boundary. Its uncommitted work (tracked and untracked, not
  * ignored files) goes into a named git stash, so nothing is lost or reset; Agent Dock's own state
  * folder is excluded when it sits inside the workspace. Refuses when HEAD moved from the baseline.
  */
-export async function deferTask({ workspace, stateDir, task, baselineSha, reason, stepDown = null }) {
+export async function deferTask({ workspace, stateDir, task, baselineSha, reason }) {
   const head = await git(workspace, ["rev-parse", "HEAD"]);
   if (baselineSha && head !== baselineSha) return { blocked: `Cannot defer ${task.id}: HEAD moved from the task's baseline` };
   const exclude = [];
@@ -25,10 +92,9 @@ export async function deferTask({ workspace, stateDir, task, baselineSha, reason
   let stash = null;
   if (dirty) {
     const message = `Agent Dock: deferred ${task.id} - ${String(reason ?? "").replace(/\s+/g, " ").slice(0, 80)}`;
-    await git(workspace, ["stash", "push", "--include-untracked", "-m", message, "--", ".", ...exclude]);
-    stash = { ref: await git(workspace, ["rev-parse", "stash@{0}"]), message };
+    stash = { ref: await stashWork(workspace, message, [".", ...exclude]), message };
   }
-  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, at: new Date().toISOString(), ...(stepDown ? { stepDown } : {}) };
+  const entry = { id: task.id, name: task.name ?? task.id, reason: String(reason ?? "Deferred").slice(0, 400), stash, planItems: [...(task.planItems ?? [])], at: new Date().toISOString() };
   const list = await readDeferred(stateDir);
   await atomicWriteJson(path.join(stateDir, "deferred-tasks.json"), [...list.filter((d) => d.id !== task.id), entry]);
   return { entry };
@@ -69,13 +135,9 @@ export async function mergeDeferred(fromStateDir, stateDir) {
 
 /** The objective Assessment sees, with the deferred tasks it must not pick again. */
 export async function objectiveWithDeferred(stateDir, objective) {
-  const all = await readDeferred(stateDir);
-  // A stepped-down task is redone now, smaller; once its step-down is over it is no longer listed.
-  const active = STEP_DOWN.active;
-  const redo = active ? all.find((d) => d.stepDown && d.id === active.taskId) : null;
-  const list = all.filter((d) => !d.stepDown);
+  // Entries from the step-down of earlier versions are set-aside tasks like any other.
+  const list = await readDeferred(stateDir);
   let text = objective;
   if (list.length) text += `\n\nDeferred tasks (set aside by the Supervisor or by you; do not choose them or the same work again unless nothing else in the objective remains; their unfinished work is in the named git stash): ${list.map((d) => `${d.id} "${d.name}" (${d.reason})`).join("; ")}`;
-  if (redo) text += `\n\nStepped down: ${redo.id} "${redo.name}" failed review twice at ${active.from} size. Redo its work now as ${active.to}-sized tasks, starting with its first part, from the current code (its earlier attempt is in git stash "${redo.stash?.message ?? "none"}"; do not apply it).${active.items.length ? ` Its plan items: ${active.items.join("; ")}.` : ""}`;
   return text;
 }

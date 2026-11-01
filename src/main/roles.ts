@@ -40,12 +40,14 @@ export function parseRoleFile(text: string, id: string, dir: string): WorkflowRo
 }
 
 const clean = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
+/** A YAML double-quoted scalar (parseSkillFile reads it back), so quotes and colons around a name survive. */
+const quoted = (value: string) => `"${clean(value).replace(/[\\"]/g, "\\$&")}"`;
 
 export function serializeRole(role: Pick<WorkflowRole, "name" | "description" | "stage" | "gate" | "fix" | "enabled" | "instructions">): string {
   return [
     "---",
-    `name: ${clean(role.name)}`,
-    `description: ${clean(role.description)}`,
+    `name: ${quoted(role.name)}`,
+    `description: ${quoted(role.description)}`,
     `stage: ${role.stage}`,
     `gate: ${role.stage === "before-qa" && role.gate}`,
     `fix: ${role.stage === "before-qa" && role.gate && role.fix === true}`,

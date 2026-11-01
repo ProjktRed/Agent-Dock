@@ -1,0 +1,284 @@
+/* Standard interface style: flat dark panels, thin 1px borders, crisp type, no neumorphic depth.
+   Active when <html data-ui="standard">; data-theme="darker" picks the Darker shade.
+   Borders are drawn as inset 1px box-shadow rings where the neumorphic rule used box-shadow,
+   so the layout (sizes, spacing) stays identical to the neumorphic look. */
+
+:root[data-ui="standard"] {
+  /* Standard surface scale */
+  --s-bg: #17191e;
+  --s-surface: #1f2228;
+  --s-raised: #272b33;
+  --s-sunk: #131519;
+  --s-line: #2f343d;
+  --s-line-hi: #3b414c;
+  --s-on-a: #0b0d12;
+  --s-pending: #5d6673;
+  --s-hover: rgba(255, 255, 255, 0.045);
+  --s-pop-shadow: 0 10px 28px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --s-font: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --s-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* Neumorphic tokens remapped */
+  --b: var(--s-bg);
+  --d: var(--s-line);
+  --l: var(--s-line);
+  --t: #e7e9ec;
+  --t2: #9ba4af;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --attn: #fb923c;
+  --err: #f87171;
+  --lav: #a78bfa;
+  --danger: #f87171;
+  --c1: #5b9dff; --c2: #a78bfa; --c3: #4ade80; --c4: #fbbf24; --c5: #fb923c; --c6: #fb7185;
+  --sel-bg: color-mix(in srgb, var(--a) 8%, transparent);
+  --sel-edge: inset 0 0 0 1px var(--a);
+  --edge: var(--s-line);
+  --out: inset 0 0 0 1px var(--s-line);
+  --out-s: inset 0 0 0 1px var(--s-line);
+  --in: inset 0 0 0 1px var(--s-line);
+  --in-s: inset 0 0 0 1px var(--s-line);
+  --ring: inset 0 0 0 1px var(--a);
+
+  /* Hooks read by inline styles in the TSX (fall back to the neumorphic values elsewhere) */
+  --radius-ctl: 8px;
+  --radius-well-sm: 10px;
+  --add-edge: rgba(255, 255, 255, 0.16);
+  --t-soft: #c4c9d0;
+  --logo-cut: var(--s-surface);
+}
+:root[data-ui="standard"][data-theme="darker"] {
+  --s-bg: #0f1114;
+  --s-surface: #171a1f;
+  --s-raised: #1f2329;
+  --s-sunk: #0b0c0f;
+  --s-line: #272b33;
+  --s-line-hi: #333842;
+}
+
+/* ---------- base ---------- */
+:root[data-ui="standard"] body { background: var(--s-bg); font-family: var(--s-font); font-feature-settings: "cv11", "ss01"; }
+:root[data-ui="standard"] a { color: var(--a); }
+:root[data-ui="standard"] a:hover { color: color-mix(in srgb, var(--a) 75%, #fff); }
+:root[data-ui="standard"] :focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+:root[data-ui="standard"] ::-webkit-scrollbar-thumb { background: var(--s-line-hi); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+:root[data-ui="standard"] ::-webkit-scrollbar-thumb:hover { background-color: #4a515d; }
+:root[data-ui="standard"] .mono { font-family: var(--s-mono); font-size: 11.5px; }
+:root[data-ui="standard"] .h1 { letter-spacing: -0.02em; }
+
+/* ---------- shell ---------- */
+:root[data-ui="standard"] .app { background: var(--s-bg); }
+:root[data-ui="standard"] .titlebar { background: var(--s-surface); border-bottom: 1px solid var(--s-line); box-shadow: none; }
+:root[data-ui="standard"] .side { background: var(--s-surface); border-right: 1px solid var(--s-line); box-shadow: none; padding-top: 14px; gap: 2px; }
+:root[data-ui="standard"] .statusbar { background: var(--s-surface); border-top: 1px solid var(--s-line); box-shadow: none; }
+:root[data-ui="standard"] .wc:hover { background: rgba(255, 255, 255, 0.07); }
+:root[data-ui="standard"] .wc.close:hover { background: #c42b1c; color: #fff; }
+
+:root[data-ui="standard"] .projsel { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 7px; }
+:root[data-ui="standard"] .projsel:hover { color: var(--t); background: color-mix(in srgb, var(--s-raised) 92%, #fff); }
+:root[data-ui="standard"] .projsel.open { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .projsel:disabled { background: transparent; box-shadow: inset 0 0 0 1px var(--s-line); }
+
+:root[data-ui="standard"] .prompt { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 8px; }
+:root[data-ui="standard"] .prompt:hover { box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .kbd { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line), inset 0 -1px 0 var(--s-line-hi); border-radius: 4px; font-family: var(--s-mono); font-size: 10px; }
+
+:root[data-ui="standard"] .pill { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 999px; }
+:root[data-ui="standard"] .pill.attn { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--attn) 60%, transparent); background: color-mix(in srgb, var(--attn) 8%, var(--s-sunk)); }
+:root[data-ui="standard"] .updnote { background: color-mix(in srgb, var(--attn) 8%, var(--s-sunk)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--attn) 55%, transparent); border-radius: 999px; }
+
+/* sidebar navigation: tinted, not filled */
+:root[data-ui="standard"] .nav { height: 38px; border-radius: 7px; transition: background 0.12s, color 0.12s; }
+:root[data-ui="standard"] .nav:hover { color: var(--t); background: var(--s-hover); box-shadow: none; }
+:root[data-ui="standard"] .nav.on,
+:root[data-ui="standard"] .nav.on:hover { background: color-mix(in srgb, var(--a) 14%, transparent); color: var(--a); font-weight: 600; box-shadow: none; }
+:root[data-ui="standard"] .nav.on .i { color: var(--a); }
+:root[data-ui="standard"] .badge { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 999px; }
+:root[data-ui="standard"] .nav.on .badge { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a) 35%, transparent); background: transparent; }
+:root[data-ui="standard"] .sidefoot { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 10px; }
+
+/* ---------- popovers, menus, dialogs, toasts, tooltips ---------- */
+:root[data-ui="standard"] .menu,
+:root[data-ui="standard"] .pop,
+:root[data-ui="standard"] .modal,
+:root[data-ui="standard"] .toast,
+:root[data-ui="standard"] [data-tip]:hover::after { background: var(--s-surface); box-shadow: inset 0 0 0 1px var(--s-line-hi), var(--s-pop-shadow); }
+:root[data-ui="standard"] .menu { border-radius: 10px; padding: 6px; }
+:root[data-ui="standard"] .pop { border-radius: 10px; }
+:root[data-ui="standard"] .modal { border-radius: 12px; }
+:root[data-ui="standard"] .toast { border-radius: 10px; }
+:root[data-ui="standard"] [data-tip]:hover::after { border-radius: 8px; }
+:root[data-ui="standard"] [data-tip] { border-bottom-color: rgba(155, 164, 175, 0.5); }
+:root[data-ui="standard"] .modal-back { background: rgba(0, 0, 0, 0.6); }
+:root[data-ui="standard"] .menu-i { border-radius: 7px; height: 34px; }
+:root[data-ui="standard"] .menu-i:hover { background: var(--s-hover); box-shadow: none; }
+:root[data-ui="standard"] .menu-i.on { background: color-mix(in srgb, var(--a) 14%, transparent); color: var(--a); box-shadow: none; }
+:root[data-ui="standard"] .menu-i.on .mut { color: color-mix(in srgb, var(--a) 70%, var(--t2)); }
+:root[data-ui="standard"] .menu-sep { background: var(--s-line); box-shadow: none; margin: 6px 2px; }
+
+/* ---------- surfaces ---------- */
+:root[data-ui="standard"] .card { background: var(--s-surface); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .well { background: var(--s-sunk); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .log { background: var(--s-sunk); color: var(--t-soft); border-radius: 8px; box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .well .log { background: color-mix(in srgb, var(--s-sunk) 70%, #000); }
+:root[data-ui="standard"] .secnav { background: var(--s-surface); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--s-line); gap: 2px; padding: 8px; }
+:root[data-ui="standard"] .sec { border-radius: 7px; height: 36px; }
+:root[data-ui="standard"] .sec:hover { background: var(--s-hover); }
+:root[data-ui="standard"] .sec.on,
+:root[data-ui="standard"] .sec.on:hover { background: color-mix(in srgb, var(--a) 14%, transparent); color: var(--a); font-weight: 600; box-shadow: none; }
+
+/* ---------- buttons ---------- */
+:root[data-ui="standard"] .btn { border-radius: 7px; background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); color: var(--t); transition: background 0.12s, box-shadow 0.12s, color 0.12s; }
+:root[data-ui="standard"] .btn:hover { color: var(--t); background: color-mix(in srgb, var(--s-raised) 90%, #fff); box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .btn:active,
+:root[data-ui="standard"] .btn.pressed { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .btn.primary { background: var(--a); box-shadow: inset 0 0 0 1px var(--a); color: var(--s-on-a); font-weight: 600; }
+:root[data-ui="standard"] .btn.primary:hover { filter: brightness(1.08); color: var(--s-on-a); background: var(--a); }
+:root[data-ui="standard"] .btn.primary:active { filter: brightness(0.94); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .btn.ghost { background: transparent; box-shadow: none; color: var(--t2); }
+:root[data-ui="standard"] .btn.ghost:hover { background: var(--s-hover); color: var(--t); box-shadow: none; }
+:root[data-ui="standard"] .btn.danger { color: var(--err); }
+:root[data-ui="standard"] .btn.danger:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 50%, transparent); }
+:root[data-ui="standard"] .btn.danger-fill { background: var(--err); box-shadow: inset 0 0 0 1px var(--err); color: var(--s-on-a); }
+:root[data-ui="standard"] .btn.danger-fill:hover { background: var(--err); filter: brightness(1.08); color: var(--s-on-a); }
+/* Disabled: outline stays, no fading of the whole control. */
+:root[data-ui="standard"] .btn:disabled,
+:root[data-ui="standard"] .btn:disabled:hover { background: transparent; box-shadow: inset 0 0 0 1px var(--s-line); color: var(--s-pending); opacity: 1; filter: none; }
+:root[data-ui="standard"] .btn.primary:disabled,
+:root[data-ui="standard"] .btn.primary:disabled:hover { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a) 40%, transparent); color: color-mix(in srgb, var(--a) 50%, var(--s-pending)); }
+:root[data-ui="standard"] .btn.danger-fill:disabled,
+:root[data-ui="standard"] .btn.danger-fill:disabled:hover,
+:root[data-ui="standard"] .btn.danger:disabled { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 35%, transparent); color: color-mix(in srgb, var(--err) 50%, var(--s-pending)); }
+:root[data-ui="standard"] .btn.ghost:disabled,
+:root[data-ui="standard"] .btn.ghost:disabled:hover { box-shadow: none; background: transparent; }
+
+/* ---------- inputs ---------- */
+:root[data-ui="standard"] .ta,
+:root[data-ui="standard"] .input,
+:root[data-ui="standard"] .sel { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); border-radius: 8px; }
+:root[data-ui="standard"] .ta:hover,
+:root[data-ui="standard"] .input:hover,
+:root[data-ui="standard"] .sel:hover { box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .ta:focus,
+:root[data-ui="standard"] .input:focus,
+:root[data-ui="standard"] .sel:focus { box-shadow: inset 0 0 0 1px var(--a), 0 0 0 3px color-mix(in srgb, var(--a) 18%, transparent); }
+:root[data-ui="standard"] .input.bad { box-shadow: inset 0 0 0 1px var(--err), 0 0 0 3px color-mix(in srgb, var(--err) 15%, transparent); }
+:root[data-ui="standard"] .sel option { background: var(--s-surface); }
+:root[data-ui="standard"] .input::placeholder,
+:root[data-ui="standard"] .ta::placeholder { color: #6b7480; }
+
+/* ---------- tabs & segmented controls ---------- */
+:root[data-ui="standard"] .tabs { gap: 2px; padding: 3px; border-radius: 8px; background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .tab { border-radius: 6px; transition: background 0.12s, color 0.12s; }
+:root[data-ui="standard"] .tab:hover { color: var(--t); background: var(--s-hover); }
+:root[data-ui="standard"] .tab.on,
+:root[data-ui="standard"] .tab.on:hover { background: var(--s-raised); color: var(--t); font-weight: 600; box-shadow: inset 0 -2px 0 var(--a); }
+
+/* ---------- chips, support chips ---------- */
+:root[data-ui="standard"] .chip { border-radius: 4px; background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .chip.dash { background: transparent; box-shadow: none; }
+:root[data-ui="standard"] .chip.raised { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .chip.btnlike:hover { box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .chip.raised.info { background: color-mix(in srgb, var(--a) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a) 45%, transparent); }
+:root[data-ui="standard"] .support { border-radius: 4px; box-shadow: none; background: color-mix(in srgb, var(--a) 12%, transparent); color: var(--a); }
+/* The three support kinds keep their own tone so "Saved only" never reads like an enforced setting. */
+:root[data-ui="standard"] .support.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+:root[data-ui="standard"] .support.mut { background: color-mix(in srgb, var(--t2) 12%, transparent); color: var(--t2); }
+
+/* ---------- progress ---------- */
+:root[data-ui="standard"] .bar { border-radius: 3px; background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .bar > i { border-radius: 3px; }
+:root[data-ui="standard"] .bar.est > i { background: repeating-linear-gradient(135deg, var(--lav) 0 4px, color-mix(in srgb, var(--lav) 35%, transparent) 4px 8px); }
+:root[data-ui="standard"] .ctx { border-radius: 3px; background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .ctx .cfg { border-radius: 3px; background: color-mix(in srgb, var(--a) 25%, transparent); }
+:root[data-ui="standard"] .ctx .used { border-radius: 3px; }
+:root[data-ui="standard"] .skel { border-radius: 4px; background: linear-gradient(90deg, var(--s-raised), var(--s-line-hi), var(--s-raised)); background-size: 200% 100%; }
+:root[data-ui="standard"] .spin { border-color: color-mix(in srgb, var(--a) 25%, transparent); border-top-color: var(--a); }
+
+/* ---------- toggle ---------- */
+:root[data-ui="standard"] .tg { width: 40px; height: 22px; border-radius: 11px; background: var(--s-line); box-shadow: none; transition: background 0.15s; }
+:root[data-ui="standard"] .tg::after { top: 3px; left: 3px; width: 16px; height: 16px; background: var(--t2); box-shadow: none; }
+:root[data-ui="standard"] .tg:hover:not(:disabled) { background: var(--s-line-hi); }
+:root[data-ui="standard"] .tg.on,
+:root[data-ui="standard"] .tg.on:hover:not(:disabled) { background: var(--a); box-shadow: none; }
+:root[data-ui="standard"] .tg.on::after { left: 21px; background: var(--s-on-a); box-shadow: none; }
+:root[data-ui="standard"] .tg.danger.on,
+:root[data-ui="standard"] .tg.danger.on:hover:not(:disabled) { background: var(--err); }
+:root[data-ui="standard"] .tg:disabled { opacity: 0.4; filter: none; }
+
+/* ---------- radio ---------- */
+:root[data-ui="standard"] .radio { border-radius: 7px; }
+:root[data-ui="standard"] .radio:hover { background: var(--s-hover); color: var(--t); }
+:root[data-ui="standard"] .radio .rd { background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .radio.on .rd { box-shadow: inset 0 0 0 1px var(--a); }
+
+/* ---------- status icons ---------- */
+:root[data-ui="standard"] .st.done::after { border-color: var(--s-on-a); }
+:root[data-ui="standard"] .st.pending { border-color: var(--s-pending); }
+:root[data-ui="standard"] .st.blocked { border-color: var(--err); }
+:root[data-ui="standard"] .st.blocked::after { background: var(--err); }
+:root[data-ui="standard"] .st.attn::after { background: var(--s-on-a); box-shadow: 0 6px 0 var(--s-on-a); }
+
+/* ---------- lists, items, option cards ---------- */
+:root[data-ui="standard"] .item { border-radius: 10px; background: var(--s-surface); box-shadow: inset 0 0 0 1px var(--s-line); transition: box-shadow 0.12s, background 0.12s; }
+:root[data-ui="standard"] .item:hover { box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .opt { border-radius: 10px; background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .opt:hover { color: var(--t); box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .item.on,
+:root[data-ui="standard"] .opt.on,
+:root[data-ui="standard"] .stage.pick.on,
+:root[data-ui="standard"] .item.on:hover,
+:root[data-ui="standard"] .opt.on:hover { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .setrow { border-bottom: 1px solid var(--s-line); box-shadow: none; }
+:root[data-ui="standard"] .setrow:last-child { border-bottom: 0; }
+
+/* banners: sunk with a tone-colored line */
+:root[data-ui="standard"] .banner { border-radius: 8px; background: var(--s-sunk); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .banner.warnb { background: color-mix(in srgb, var(--warn) 7%, var(--s-sunk)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+:root[data-ui="standard"] .banner.errb { background: color-mix(in srgb, var(--err) 7%, var(--s-sunk)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 45%, transparent); }
+:root[data-ui="standard"] .banner.attnb { background: color-mix(in srgb, var(--attn) 7%, var(--s-sunk)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--attn) 50%, transparent); }
+
+/* ---------- tables ---------- */
+:root[data-ui="standard"] .tbl th { border-bottom: 1px solid var(--s-line); font-weight: 500; }
+:root[data-ui="standard"] .tbl td { border-bottom: 1px solid color-mix(in srgb, var(--s-line) 70%, transparent); }
+:root[data-ui="standard"] .tbl tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
+:root[data-ui="standard"] .tbl tbody tr.sel td { background: var(--sel-bg); }
+:root[data-ui="standard"] .tbl tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--a); }
+
+/* ---------- overview ---------- */
+:root[data-ui="standard"] .tree-btn { border-radius: 7px; }
+:root[data-ui="standard"] .tree-btn:hover { background: var(--s-hover); color: var(--t); }
+:root[data-ui="standard"] .tree-btn.cur { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .task { border-radius: 6px; }
+:root[data-ui="standard"] .task.cur { background: color-mix(in srgb, var(--a) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a) 40%, transparent); }
+:root[data-ui="standard"] .stage { border-radius: 10px; background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .stage.pick:hover { box-shadow: inset 0 0 0 1px var(--s-line-hi); }
+:root[data-ui="standard"] .stage.active { background: color-mix(in srgb, var(--a) 6%, var(--s-raised)); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .stage.paused { box-shadow: inset 0 0 0 1px var(--warn); }
+:root[data-ui="standard"] .stage.done { box-shadow: inset 0 0 0 1px var(--ok); }
+:root[data-ui="standard"] .arrow { color: var(--s-pending); }
+:root[data-ui="standard"] .loop { border-color: color-mix(in srgb, var(--a) 40%, transparent); }
+:root[data-ui="standard"] .stat { border-right: 1px solid var(--s-line); box-shadow: none; }
+:root[data-ui="standard"] .stat:last-child { border-right: 0; }
+:root[data-ui="standard"] .chart { border-bottom: 1px solid var(--s-line); }
+:root[data-ui="standard"] .colb i { border-radius: 2px; }
+:root[data-ui="standard"] .sw { border-radius: 2px; }
+:root[data-ui="standard"] #attention-panel.flash { animation: std-attention-flash 1.2s ease-out; }
+@keyframes std-attention-flash { 0% { box-shadow: inset 0 0 0 1px var(--s-line), 0 0 0 3px var(--a); } 100% { box-shadow: inset 0 0 0 1px var(--s-line), 0 0 0 0 transparent; } }
+
+/* ---------- first launch, steps ---------- */
+:root[data-ui="standard"] .step .n { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .step.cur .n { background: color-mix(in srgb, var(--a) 12%, transparent); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .step.done .n { background: var(--ok); color: var(--s-on-a); box-shadow: none; }
+:root[data-ui="standard"] .step-sep { background: var(--s-line); box-shadow: none; }
+:root[data-ui="standard"] .stepcard { border-radius: 10px; background: var(--s-surface); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .stepcard.cur { box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .stepcard.locked { background: transparent; box-shadow: none; border: 1px dashed var(--s-line-hi); }
+:root[data-ui="standard"] .num-c { background: var(--s-raised); box-shadow: inset 0 0 0 1px var(--s-line); }
+:root[data-ui="standard"] .stepcard.cur .num-c { background: color-mix(in srgb, var(--a) 12%, transparent); box-shadow: inset 0 0 0 1px var(--a); }
+:root[data-ui="standard"] .stepcard.done .num-c { background: var(--ok); color: var(--s-on-a); box-shadow: none; }
+
+/* ---------- swatches (Settings › Appearance accent) ---------- */
+/* The swatch's color comes from its inline `color` (set to the same hex as its background). */
+:root[data-ui="standard"] .swatch { border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+:root[data-ui="standard"] .swatch.on { box-shadow: 0 0 0 2px var(--s-surface), 0 0 0 4px currentColor; }

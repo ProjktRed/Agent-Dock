@@ -1,4 +1,5 @@
 import type { EngineEvent } from "@shared/types";
+import { plural } from "./format";
 
 const first = (value: unknown, max = 160) => String(value ?? "").split(/\r?\n/).find((l) => l.trim())?.trim().slice(0, max) ?? "";
 const attemptOf = (e: EngineEvent) => (e.attempt != null && e.attempt > 1 ? ` (attempt ${e.attempt})` : "");
@@ -74,17 +75,29 @@ export function describeEvent(e: EngineEvent): string {
     case "assessment-rejected": return `Assessment chose again: ${first(e.qa)}`;
     case "qa-commit-recovered": return `QA commit recovered: ${first(e.qa)}`;
     case "task-set-aside": return `Task ${e.taskId ?? ""} set aside by you: ${e.stash ? `its work is in git stash "${e.stash}"` : "it had no uncommitted work"}. The next Run starts a fresh Assessment.`;
-    case "retention": return `History older than ${e.days ?? "?"} days removed: ${[e.calls ? `${e.calls} call folder(s)` : "", e.sessions ? `${e.sessions} Cline session(s)` : "", e.actionLogPruned ? `${e.actionLogPruned} action-log archive(s)` : "", e.activityTrimmed ? "older Activity" : "", e.actionLogRotated ? "action log archived" : ""].filter(Boolean).join(", ") || "nothing"}`;
+    case "task-undeferred": return `Task ${e.taskId ?? ""}: deferred mark removed by you; Assessment may choose it again`;
+    case "stash-saved": return `Uncommitted changes stashed by you as "${e.message ?? ""}"`;
+    case "stash-dropped": return `Stash ${String(e.sha ?? "").slice(0, 7)} deleted by you${e.message ? ` ("${e.message}")` : ""}`;
+    case "stash-popped": return e.conflicts ? `Stash ${String(e.sha ?? "").slice(0, 7)} popped with conflicts; the stash was kept` : `Stash ${String(e.sha ?? "").slice(0, 7)} popped by you; its work is back as uncommitted changes`;
+    case "retention": return `History older than ${e.days ?? "?"} days removed: ${[e.calls ? plural(Number(e.calls), "call folder") : "", e.sessions ? plural(Number(e.sessions), "Cline session") : "", e.actionLogPruned ? plural(Number(e.actionLogPruned), "action-log archive") : "", e.activityTrimmed ? "older Activity" : "", e.actionLogRotated ? "action log archived" : ""].filter(Boolean).join(", ") || "nothing"}`;
     case "plan-item-done": return `Plan item checked off${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}: ${first(e.message)}`;
     case "plan-tick-skipped": return `Plan item not checked off: ${first(e.message)}`;
     case "plan-proposal-failed": return `Plan change not applied: ${first(e.message)}`;
     case "remote-approval": return `Remote approval (${e.via ?? "remote"}): ${e.action ?? ""} · ${first(e.message)}`;
+    case "task-approval-requested": return `Task ${e.taskId ?? ""} is waiting for your approval before Implementation starts.`;
+    case "task-approved": return `Task ${e.taskId ?? ""} approved${String(e.source ?? "").startsWith("remote:") ? " remotely" : ""}: Implementation starts.`;
+    case "tools-missing": return `Waiting: ${Array.isArray(e.tools) ? (e.tools as { name?: string }[]).map((t) => t.name).join(", ") : "a tool"} not installed for ${e.taskId ?? "the task"}'s check.`;
+    case "tools-ready": return "The missing tool was found; Implementation starts.";
+    case "tool-install-started": return `You started installing ${e.name ?? "a tool"}.`;
+    case "action-decision": return `You ${e.decision === "allow-run" ? "allowed for this run" : e.decision === "allow" ? "allowed" : "refused"} an action ${e.cli ?? "the agent"} asked about.`;
     case "task-deferred": return `Task ${e.taskId ?? ""} set aside: ${first(e.reason)}${e.stash ? ` Its work is in git stash "${e.stash}" (git stash list).` : ""} Assessment chooses another task.`;
     case "parallel-round": return `Parallel round ${e.round ?? ""}: ${Array.isArray(e.tasks) ? (e.tasks as { id: string; name: string }[]).map((t) => t.name || t.id).join(", ") : ""}`;
     case "parallel-task-started": return `Task ${e.taskId ?? ""} started in its own worktree (branch ${e.branch ?? ""})`;
     case "parallel-task-finished": return `Task ${e.taskId ?? ""} finished: ${e.status ?? ""}`;
     case "parallel-merged": return `Task ${e.taskId ?? ""} merged into your branch after its check passed on the combined code${e.commit ? ` (${String(e.commit).slice(0, 7)})` : ""}`;
     case "parallel-merge-failed": return `Task ${e.taskId ?? ""} not merged: ${first(e.message)} It stays on branch ${e.branch ?? ""}.`;
+    case "parallel-limit-cleared": return "No parallel task waits for a usage limit any more; the round continues";
+    case "parallel-orphans-stopped": return `Stopped ${e.count === 1 ? "a task engine" : `${e.count ?? ""} task engines`} an earlier run left running before starting the next round`;
     case "task-stepped-down": return `Task ${e.taskId ?? ""} failed review twice at ${e.from ?? ""} size: set aside and redone ${e.to ?? ""}-sized.${e.stash ? ` The first attempt is in git stash "${e.stash}".` : ""}`;
     case "task-mode-restored": return `The stepped-down work is done: back to ${e.mode ?? ""} size.`;
     case "qa-environment-retry": return `QA could not run its tools (environment, not the code); retrying once: ${first(e.qa, 120)}`;

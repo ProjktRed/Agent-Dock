@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AddProjectRequest, DirectoryInspection, EngineEvent, Project } from "@shared/types";
 import { isGitRepo, run } from "./lib/git";
+import { realPath, realWithin } from "./lib/real-path";
 import { parseImplementationPlan, PLAN_FILE, STARTER_PLAN } from "./lib/plan";
 
 export async function inspectDirectory(dir: string): Promise<DirectoryInspection> {
@@ -51,15 +52,21 @@ export async function addProject(request: AddProjectRequest, existing: Project[]
 
   if (request.mode === "local") {
     if (!existsSync(request.path)) throw new Error("That folder does not exist.");
+    if (!statSync(request.path).isDirectory()) throw new Error("That is a file, not a folder.");
     if (existing.some((p) => path.resolve(p.path) === path.resolve(request.path))) throw new Error("That folder is already registered.");
     const info = await inspectDirectory(request.path);
     return newProject({ name, path: request.path, repoUrl: info.remote, objective: request.objective }, stateRoot);
   }
 
+  // GitHub and new projects get a folder named after the project, inside the chosen parent folder.
+  const nameProblem = folderNameProblem(name);
+  if (nameProblem) throw new Error(nameProblem);
+  const target = path.join(request.parentDir, name);
+  if (!realWithin(request.parentDir, target) || path.resolve(target) === path.resolve(request.parentDir)) throw new Error("The project folder must be inside the chosen folder.");
+
   if (request.mode === "github") {
     const url = request.url.trim();
     if (!/^(https:\/\/|git@)/.test(url)) throw new Error("Enter an https:// or git@ repository URL.");
-    const target = path.join(request.parentDir, name);
     if (existsSync(target)) {
       if (!isGitRepo(target)) throw new Error(`${target} already exists and is not a Git repository.`);
     } else {
@@ -70,7 +77,6 @@ export async function addProject(request: AddProjectRequest, existing: Project[]
     return newProject({ name, path: target, repoUrl: url, objective: request.objective }, stateRoot);
   }
 
-  const target = path.join(request.parentDir, name);
   if (existsSync(target)) throw new Error(`${target} already exists. Choose “Local project” to register it.`);
   await mkdir(target, { recursive: true });
   if (request.starterPlan) await writeFile(path.join(target, PLAN_FILE), STARTER_PLAN);
@@ -94,9 +100,27 @@ export interface TaskHistoryEntry {
   summary: string;
 }
 
-/** Task outcomes from the engine's append-only activity log, newest first. */
-/** Same rule as engine/src/task-archive.mjs. */
-const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;
+/**
+ * The project folder under stateRoot that holds an app-managed project's state (<stateRoot>/<id>/state),
+ * or null when the state folder is anywhere else: only that folder may be deleted with the project.
+ */
+export function managedProjectFolder(stateRoot: string, stateDir: string): string | null {
+  const folder = path.dirname(path.resolve(stateDir));
+  const relative = path.relative(path.resolve(stateRoot), folder);
+  // By real location too: a junction under stateRoot must not take the delete somewhere else.
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !relative.split(/[\\/]/).includes("..") && realWithin(stateRoot, folder) && realPath(folder) !== realPath(stateRoot) ? folder : null;
+}
+
+/** A project name that is also a folder name: no separators, no "." or "..", nothing Windows refuses. */
+export function folderNameProblem(name: string): string | null {
+  if (/[\\/:*?"<>|\0]/.test(name) || [".", ".."].includes(name)) return "A project name cannot contain \\ / : * ? \" < > | or be . or ..";
+  if (/[. ]$/.test(name)) return "A project name cannot end with a dot or a space.";
+  if (/^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(name)) return `“${name}” is a name Windows reserves for a device.`;
+  return null;
+}
+
+/** A kept task definition's file name in <state>/tasks; same rule as engine/src/task-archive.mjs. */
+export const taskFileName = (id: string) => `${String(id).replace(/[^\w.-]+/g, "_").slice(0, 120)}.json`;
 
 /** Task ids whose definitions the engine kept (<state>/tasks), so they can run again. */
 export async function savedTaskIds(stateDir: string): Promise<Set<string>> {
@@ -120,6 +144,7 @@ export async function prepareRerun(stateDir: string, taskId: string, now = Date.
   return file;
 }
 
+/** Task outcomes from the engine's append-only activity log, newest first. */
 export function taskHistory(events: EngineEvent[]): TaskHistoryEntry[] {
   const outcomes: Record<string, TaskHistoryEntry["outcome"]> = {
     "qa-pass": "approved",
@@ -128,16 +153,21 @@ export function taskHistory(events: EngineEvent[]): TaskHistoryEntry[] {
     blocked: "blocked",
     stopped: "stopped",
   };
+  // A parallel task's engine ending: one that passed is listed once merged (its qa-pass), so only the others count here.
+  const parallelEnds: Record<string, TaskHistoryEntry["outcome"]> = { "user-attention": "attention", "manual-review": "attention", blocked: "blocked", stopped: "stopped", "correction-limit": "failed" };
   const latest = new Map<string, TaskHistoryEntry>();
   for (const event of events) {
-    const outcome = outcomes[event.type];
-    if (!outcome || !event.taskId) continue;
+    const outcome = event.type === "parallel-task-finished"
+      ? event.status === "passed" ? undefined : parallelEnds[String(event.status)] ?? "failed"
+      : event.type === "parallel-merge-failed" ? "failed" : outcomes[event.type];
+    // A parallel round's own entry (parallel-round-N) is not a task: each of its tasks has an entry of its own.
+    if (!outcome || !event.taskId || /^parallel-round-\d+$/.test(event.taskId)) continue;
     latest.set(event.taskId, {
       taskId: event.taskId,
       outcome,
       attempts: event.attempt ?? 0,
       finishedAt: event.timestamp,
-      summary: String(event.qa ?? "").split(/\r?\n/)[0].slice(0, 200),
+      summary: String(event.qa ?? event.summary ?? (event.type === "parallel-merge-failed" ? `Not merged: ${event.message ?? ""}` : "")).split(/\r?\n/)[0].slice(0, 200),
     });
   }
   return [...latest.values()].sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));

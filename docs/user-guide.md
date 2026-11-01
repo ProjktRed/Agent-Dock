@@ -8,7 +8,8 @@ works](how-it-works.md) has the details behind each number and setting.
 ## Getting started
 
 1. **Install** Agent Dock from the latest release (Windows installer or Linux AppImage). It updates
-   itself from signed releases.
+   itself from signed releases, downloading only what changed when it can (on Linux, a binary patch of
+   the AppImage).
 2. **CLIs**: on first launch Agent Dock finds the agent CLIs on your PATH (Codex, Claude Code, Cline,
    OpenCode) and local model servers (llama.cpp, Ollama). Sign in to each CLI in its own terminal
    first; Agent Dock never handles those logins.
@@ -23,6 +24,33 @@ works](how-it-works.md) has the details behind each number and setting.
 When something needs you (a manual review, a blocked case, a usage limit), the project shows
 **Resolve attention** with the reason and the choices.
 
+## CLI settings
+
+CLIs › select a connection › **Settings**:
+
+- **Codex and Claude Code: run settings.** Used for every Assessment, QA, Resolver, Elevation and implementation run:
+  for Codex the reasoning summary, verbosity, AGENTS.md read limit, tool output limit and when to compact;
+  for Claude Code a fallback model, output and thinking tokens, command timeouts, and turning off
+  telemetry and error reports. Settings that could loosen what Agent Dock allows (sandbox, approvals,
+  permissions, hooks, network, MCP) are not offered. When Codex or Claude Code implements a task, the task
+  scope guard's own flags come after them, so the guard always has the last word.
+- **Cline and OpenCode: run settings.** Used when they implement a task: for Cline the retries (mistakes
+  in a row before it stops) and how it compacts a long conversation; for OpenCode the most steps per
+  task and the model's reasoning variant. Agent Dock runs both with their own config kept apart, so
+  there is no config file of theirs to show here.
+- **Codex and Claude Code: where their own config file is** (`~/.codex/config.toml`,
+  `~/.claude/settings.json`, or under `CODEX_HOME` / `CLAUDE_CONFIG_DIR`). **Show config file** shows it
+  in your file manager so you can edit it in your own editor. Agent Dock does not change it: it changes
+  the CLI everywhere, also outside Agent Dock.
+- **Ollama: its server settings** (requests at once, default context length, KV cache type, flash
+  attention, keep-alive, models loaded at once, models folder), as the running Ollama uses them (from
+  its `server.log`) and as your Windows user environment has them. Change them in Ollama's own settings
+  window or as environment variables, then restart Ollama; Agent Dock does not change them. Set the
+  connection's **Requests at once** to match `OLLAMA_NUM_PARALLEL`.
+
+Cline, OpenCode, the OpenAI-compatible providers and llama.cpp's server settings are not on this tab
+yet.
+
 ## Choosing a task size
 
 Settings › Workflow rules › **Task size**, or per project in Projects › Workflow:
@@ -33,8 +61,7 @@ Settings › Workflow rules › **Task size**, or per project in Projects › Wo
 - **Max**: no size limits. Agent Dock asks before turning it on, and a **Max limits** button appears
   in the sidebar so you can set your own caps. Use it only when you know your model and plan can take it.
 
-**Suggested** shows which mode fits your Implementation agent. With **Step down** on, a large task
-that fails review twice is redone one size smaller, so a stuck run keeps moving.
+**Suggested** shows which mode fits your Implementation agent.
 
 ## Running unattended
 
@@ -43,9 +70,34 @@ with the tool guard on, and stops at the limits you set: approved tasks, hours, 
 Elevations, tokens and spend per run and per day. A run report is written at the end (Overview ›
 Runs, exportable as Markdown or HTML).
 
-**Scheduled runs** (Projects › Workflow) start a project at a set time on chosen days. On Windows,
-**Also when closed** lets Task Scheduler launch Agent Dock for it. Pair a schedule with Unattended
-mode for overnight work, and check the run report in the morning.
+**Scheduled runs** (Projects › Workflow) start a project at a set time on chosen days while Agent
+Dock is open. Pair a schedule with Unattended mode for overnight work, leave the app open, and check
+the run report in the morning.
+
+- **Late starts**: a start up to 30 minutes late still runs, also past midnight (a 23:50 start
+  checked at 00:05 counts). Later than that (the app was closed, the PC asleep) it is skipped, never
+  run hours late.
+- **Notifications**: a scheduled start that could not start goes to your saved notification channels
+  (webhook, Discord, Slack, Telegram and email) and to a Windows notification when **Usage limits and
+  engine exits** is on. A start that went ahead goes to the same channels except email.
+- **Upgrading from 0.35–0.38**: schedules set to run **Also when closed** keep running while the app is
+  open; the Task Scheduler tasks (or systemd timers) that launched Agent Dock are removed on the first
+  launch.
+
+## Project checks and safety
+
+Checks such as `npm test` run the project's own scripts and tests, which agents can edit. Settings ›
+Execution & safety › **Project checks** decides how much Agent Dock trusts them:
+
+- **Off (the default)**: while a run is going, Agent Dock watches its own settings and engine files.
+  Anything else that changes them is put back (the changed copy is kept beside it, named
+  `<file>.changed-<time>`), and every run stops with a notice. Review the last task's changes before
+  you resume.
+- **On**: checks run as your own code and nothing is watched. Use it only for projects whose tests you
+  trust completely.
+
+Neither setting is a sandbox: a check can still read the project's files. Turning off the tool guard,
+trusting checks, unprotecting a path or changing a program Agent Dock runs asks you to confirm first.
 
 ## Spend and usage
 
@@ -59,21 +111,35 @@ mode for overnight work, and check the run report in the morning.
 
 - **Task history** (Projects): every task with its outcome. **Run again** repeats one with the same
   prompt, files and check.
+- **Choosing what comes next** (Tasks): **Do next** (the play button) puts a planned item first in the
+  whole priority order and removes its deferred mark; the next Assessment takes it unless it cannot be
+  done within the task size and safety limits. The ✕ on a Deferred badge only removes the mark. **Set
+  aside** at the bottom lists every set-aside task: **Remove mark**, or **Run next** to make it the first
+  task of the next start.
+- **Stash and pop** (Overview › Workspace, while the project is stopped): **Stash changes** puts all
+  uncommitted work, untracked files included, in a named git stash so a run can start on a clean
+  workspace. **Pop** puts a stash back (the workspace must be clean; on a conflict git keeps the stash).
+  **Delete** drops a stash after a second click. A set-aside task's unfinished work is one of these
+  stashes. The card starts collapsed; **Show stashes** opens the list.
+- **Project skill** (Projects › Project skill): Generate has a read-only agent draft a SKILL.md for this
+  project (layout, exact commands, conventions, pitfalls). Review and edit it, then Save; every role of
+  the project gets it from the next start. It is stored in Agent Dock's state folder, not in the
+  repository; Remove skill deletes it.
 - **Pull-request mode** (Projects › Workflow): each run works on its own `agent-dock/run-…` branch.
-  Nothing is pushed until you press **Open pull request**.
+  Nothing is pushed until you press **Open pull request**. On GitLab this opens a merge request.
+- **GitHub CI** (Projects › Workflow): after Open pull request, the pushed commit's GitHub Actions
+  runs show there, each linking to GitHub, with a notification when they finish. Needs GitHub CLI
+  signed in (`gh auth login`).
 - **Parallel tasks** (Settings › Workflow rules): up to 4 tasks of the same objective at once, each
   in its own worktree; each change is checked again on the combined code before it is committed.
   Needs a cloud Implementation agent. A task that did not finish or merge keeps its worktree and
   branch; Projects › Workflow › **Clean up parallel worktrees** removes them all once you are done.
-- **Parallel lanes**: run another objective at the same time in a git worktree on its own branch.
-  Each lane shows up as its own project; merge its branch when you are happy with it.
 - **WSL isolation** (opt-in, Windows): the engine and agent CLIs run inside a WSL distro.
 
 ## Your own review steps
 
-The **Workflow** page adds roles at three points: before implementation (guidance), before QA (a
-review, optionally a **gate** that sends work back, or a **fixer** that fixes small problems itself),
-and after QA passes (a report). Templates include a second-opinion QA on the other CLI.
+The **Workflow** page has one optional **Second review** before QA, on an agent using the other CLI
+from QA. When it finds a concrete problem, the attempt goes back for correction instead of to QA.
 
 ## Troubleshooting
 
@@ -84,6 +150,12 @@ and after QA passes (a report). Templates include a second-opinion QA on the oth
   Agent Dock stops rather than guess. Check `git status`, then Resume or set the task aside.
 - **QA could not run its tools**: an environment problem, not the code. Fix the tool or permission,
   then press **Retry QA**.
+- **"Stopped every run: something other than Agent Dock changed its own files"**: a check or another
+  program changed Agent Dock's settings or engine during a run. The settings were put back; look at
+  the `.changed-` copy in the config folder and at the last task's diff before you resume. If Agent
+  Dock's engine files were changed, reinstall or update before running again.
+- **Remote approvals by email**: an email reply can only Stop or Dismiss. Resume, Elevate, Resolve and
+  Retry QA are answered in the app or with the Telegram buttons.
 - **EPERM on Windows**: antivirus or indexing locked a state file. Excluding the engine state
   folders from real-time scanning usually fixes it.
 - **An update failed**: nothing is installed unless every file matches the signed release. Try

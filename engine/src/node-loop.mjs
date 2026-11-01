@@ -9,10 +9,13 @@ import { captureGitBaseline } from "./qa-runner.mjs";
 import { classifyQaCommand, prepareQaPacket, collectGitEvidence } from "./qa-packet.mjs";
 import { buildCorrectionPrompt, buildInitialPrompt } from "./workflow.mjs";
 import { diagnostic } from "./diagnostics.mjs";
+import { waitOutLimit } from "./run-budget.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const git = async (workspace, ...args) => (await exec("git", args, { cwd: workspace, windowsHide: true })).stdout.trim();
+// Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
+const git = async (workspace, ...args) => (await exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true })).stdout.trim();
 const pendingPath = (stateDir) => path.join(stateDir, "pending-codex.json");
 
 export async function readPendingCodex(stateDir) {
@@ -120,18 +123,16 @@ export async function runRecoverableCodex({
       });
     }
 
-    for (;;) {
-      const control = await readControl();
-      if (control.stopAfterSafePoint) {
-        await emit("stopped");
-        return { stopped: true };
-      }
-      if (Number(control.resumeGeneration ?? 0) > waitingResumeGeneration) {
-        waitBeforeInvoke = false;
-        break;
-      }
-      await sleep(pollMs);
+    // The same wait as implementation's: Stop ends it, Resume continues, and with automatic retry
+    // (unattended runs) it ends by itself once the interval since the limit was saved has passed.
+    const since = Date.parse(record.updatedAt ?? "") || Date.now();
+    const outcome = await waitOutLimit({ readControl, generation: waitingResumeGeneration, since, pollMs, sleep });
+    if (outcome === "stopped") {
+      await emit("stopped");
+      return { stopped: true };
     }
+    await emit("orchestration-limit-resumed", { operation, attempt: inputs.attempt, automatic: outcome === "retry" });
+    waitBeforeInvoke = false;
   }
 }
 

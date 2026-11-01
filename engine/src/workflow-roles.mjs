@@ -2,17 +2,13 @@ import { readFile } from "node:fs/promises";
 import { managerHandoffSkill } from "./task-handoff-skill.mjs";
 import { REASONING_EFFORTS } from "./loop-options.mjs";
 import { READ_ONLY_SANDBOX } from "./codex-worker.mjs";
-import { describeAllowedPaths } from "./workflow.mjs";
 
-// User-defined workflow roles (--roles-file). Every role reviews read-only: it never edits files,
-// commits or changes HEAD, so scope/HEAD verification and QA's single commit stay intact.
-// A fixer (a before-QA gate with fix: true) may then make its own requested fix once per attempt,
-// as a guarded implementation run limited to the task's allowed paths; the result is checked again.
-export const ROLE_STAGES = ["before-implementation", "before-qa", "after-pass"];
+// Second review (--roles-file): an optional reviewer on its own agent that reads each attempt after the engine's
+// checks and before QA. It is read-only (it never edits files, commits or changes HEAD, so scope/HEAD verification
+// and QA's single commit stay intact), and a "changes-needed" verdict sends the change back for correction.
+export const ROLE_STAGES = ["before-qa"];
 const STAGE_PURPOSE = {
-  "before-implementation": "You run once per task before the implementation worker starts. Give the implementer concise, concrete guidance for this task in `guidance`.",
   "before-qa": "You review the worker's change after it finishes and before independent QA. Report concrete problems in `findings`; QA and Assessment read them.",
-  "after-pass": "The task passed QA and was committed. Write a short report in `summary` (and `findings` if useful). Nothing you return changes the result.",
 };
 
 export const roleOutputSchema = {
@@ -55,9 +51,7 @@ export function parseRoles(value) {
       id: role.id,
       name: role.name.trim(),
       stage: role.stage,
-      // Only a review before QA can hold the change back.
-      gate: role.stage === "before-qa" && role.gate === true,
-      fix: role.stage === "before-qa" && role.gate === true && role.fix === true,
+      gate: true,
       cli: role.cli,
       model: role.model || null,
       effort: role.effort || null,
@@ -74,7 +68,7 @@ export async function readRolesFile(file) {
 
 export function buildRolePrompt(role, input) {
   return [
-    `You are ${role.name}, a custom workflow role in a bounded automation loop (stage: ${role.stage}).`,
+    `You are ${role.name}, the second reviewer in a bounded automation loop, before independent QA.`,
     managerHandoffSkill(`role:${role.id}`),
     STAGE_PURPOSE[role.stage],
     "You are read-only: do not edit, create, move or delete files, stage, commit, change HEAD or git configuration, launch workers, or choose tasks. Read only what INPUT and the task need.",
@@ -104,28 +98,6 @@ export function createRoleRunner(workers) {
       parse: parseRoleResult,
     });
   };
-}
-
-/** Guidance appended to the implementation prompt (advisory; never overrides scope or QA). */
-export function roleGuidanceText(results) {
-  const lines = results.filter((r) => r.result?.guidance?.trim()).map((r) => `- ${r.name}: ${r.result.guidance.trim()}`);
-  if (!lines.length) return "";
-  return ["Guidance from workflow roles (advisory; the task, allowed paths and QA command above take precedence):", ...lines].join("\n");
-}
-
-/** The fixer's prompt: its own findings, the original task and the same scope rules as a correction. */
-export function fixPromptText(task, fix, { workspace } = {}) {
-  return [
-    `Fix for task ${task.id} (attempt ${fix.attempt}), requested by the workflow role ${fix.roleName}:`,
-    fix.text,
-    "Original task and acceptance criteria (preserve; do not redo completed work):",
-    task.prompt,
-    task.allowedPaths?.length ? `Change only these approved paths: ${task.allowedPaths.join(", ")}.` : "Change only files required by the original task.",
-    describeAllowedPaths(task, workspace),
-    "Make only the fixes listed above. Do not commit or change git HEAD; QA owns the task commit.",
-    `Run this check before finishing: ${task.qaCommand}`,
-    "The change is reviewed and checked again after you finish; your completion claim is not trusted.",
-  ].filter(Boolean).join("\n\n");
 }
 
 export function gateFailureText(entry) {

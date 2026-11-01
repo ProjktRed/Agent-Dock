@@ -3,6 +3,7 @@
 // folder that becomes the delta zip:
 //
 //   release-delta.mjs index --dir dist/win-unpacked --out AgentDock-<v>-win-x64.files.json
+//   release-delta.mjs appimage --previous <old.AppImage> --file <new.AppImage> --out <x-from-y.adpatch>   (Linux, 0.38)
 //   release-delta.mjs changed --dir dist/win-unpacked --index <new.files.json> --previous <old.files.json> --out delta/
 //                            [--previous-dir <the previous release, unpacked>]
 //
@@ -21,6 +22,18 @@ import { makePatch } from "../src/shared/block-patch.ts";
 
 export const PATCH_DIR = "__adpatch";
 const PATCH_MIN_BYTES = 1024 * 1024;
+
+/**
+ * Linux (0.38): the AppImage is one file, so its smaller update is a binary patch against the previous
+ * release's AppImage. Written only when it is under half the AppImage's size.
+ */
+export function appImagePatch(previous, file, out) {
+  const target = readFileSync(file);
+  const patch = makePatch(readFileSync(previous), target);
+  if (patch.length >= target.length / 2) return { written: false, bytes: patch.length };
+  writeFileSync(out, patch);
+  return { written: true, bytes: patch.length };
+}
 
 /** Copies each changed file into `out`, or a binary patch against `previousDir` when that is much smaller. */
 export function collectChanged(changed, dir, out, previousDir) {
@@ -83,7 +96,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const changed = changedFiles(JSON.parse(readFileSync(args.index, "utf8")), JSON.parse(readFileSync(args.previous, "utf8")));
       const summary = collectChanged(changed, args.dir, args.out, args["previous-dir"]);
       console.log(`${changed.length} changed file(s) in ${args.out}: ${summary.copied} copied, ${summary.patched} as binary patches, ${Math.round(summary.bytes / 1048576)} MB.`);
-    } else throw new Error("usage: release-delta.mjs index|changed ...");
+    } else if (command === "appimage") {
+      const result = appImagePatch(args.previous, args.file, args.out);
+      console.log(result.written ? `AppImage patch ${args.out}: ${Math.round(result.bytes / 1048576)} MB.` : `No AppImage patch: it would be ${Math.round(result.bytes / 1048576)} MB, not much smaller than the AppImage.`);
+    } else throw new Error("usage: release-delta.mjs index|changed|appimage ...");
   } catch (error) {
     console.error(`[release-delta] ${error.message}`);
     process.exitCode = 1;

@@ -17,5 +17,7 @@ module.exports = async function hardenElectron(context) {
     [FuseV1Options.EnableNodeCliInspectArguments]:false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]:true,
     [FuseV1Options.OnlyLoadAppFromAsar]:true,
+    // The window loads app://agent-dock/ (src/main/lib/app-protocol.ts), so file:// pages need no extra privileges.
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]:false,
   });
 };

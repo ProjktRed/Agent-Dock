@@ -8,7 +8,12 @@ import { migrateRecoveryState, qaRetryAvailability, recoveryClassification } fro
 import {loadResolverCase,resolverAvailability} from './blocked-resolver.mjs';
 import { selectedAutoSkills } from './task-handoff-skill.mjs';
 import { appendAction, flushActionLog } from './action-log.mjs';
+import { redactText } from "./redact.mjs";
 import { redactDeep } from './redact.mjs';
+import { clipDeep, clipText } from './clip.mjs';
+
+// No text in an event is longer than this (the app reads activity and live state on every poll).
+export const EVENT_TEXT_LIMIT = 20_000;
 export { flushActionLog };
 
 async function readJson(file, fallback) {
@@ -46,12 +51,16 @@ export class DashboardState {
     this.controlPath = path.join(this.stateDir, "control.json");
     this.activityPath = path.join(this.stateDir, "activity.ndjson");
     this.live = null;
+    // false: a fresh run whose events, until it loads a task, belong to no task (not the last run's).
+    this.carryTask = true;
   }
 
   async initialize({ task, workspace, maxAttempts, contextTokens, timeoutSeconds, model, provider }) {
     const codexOperation = this.live?.codexOperation ?? null;
+    this.carryTask = true;
     this.live = {
-      task: { ...task, id: task.id, name: task.name ?? task.id, prompt: task.prompt },
+      // Known secret values never reach live.json (the dashboard, diagnostics) through a prompt.
+      task: { ...task, id: task.id, name: task.name ?? task.id, prompt: redactText(task.prompt, { assignments: false }) },
       workspace,
       stage: "waiting",
       clineStatus: "idle",
@@ -90,6 +99,7 @@ export class DashboardState {
   }
 
   async record(event) {
+    // Decisions below (the manual-review classification) read the whole text; only what is written is clipped.
     event = redactDeep(event);
     this.live ??= await this.readLive();
     const next = { ...this.live, updatedAt: new Date().toISOString() };
@@ -193,6 +203,8 @@ export class DashboardState {
       "user-attention": ["USER_ATTENTION", "idle", "fail", false],
       "blocked": ["BLOCKED", "idle", "fail", false],
       "task-set-aside": ["waiting", "idle", "waiting", false],
+      // Also after a restart, when the stage was still "stopped": the run is waiting for your Approve.
+      "task-approval-requested": ["waiting", "idle", "waiting", false],
       "sol-reassessment-started": ["elevating", "idle", "fail", false],
       "sol-reassessment-finished": ["USER_ATTENTION", "idle", "fail", false],
       "resolver-started": ["resolving", "idle", "waiting", false],
@@ -200,6 +212,8 @@ export class DashboardState {
       "resolver-error": ["BLOCKED", "idle", "fail", false],
       "codex-usage-limit": ["WAITING_FOR_LIMIT", "idle", "waiting-for-codex", false],
       "waiting-for-codex": ["WAITING_FOR_LIMIT", "idle", "waiting-for-codex", false],
+      // A parallel round: no task waits out a usage limit any more, so the run is back at its round's stage.
+      "parallel-limit-cleared": ["waiting", "idle", "waiting", false],
       paused: ["paused", "idle", next.qaStatus, next.manualReview],
       stopped: ["stopped", "idle", next.qaStatus, next.manualReview],
     };
@@ -224,15 +238,25 @@ export class DashboardState {
       }
       if(event.operation==='resolver')next.resolverRunning=false;
       if (event.operation === "qa" && event.source === "manual-elevate") next.elevateRunning = false;
-    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished' || event.type === "cline-started" || event.type === "implementation-limit-resumed") {
+    } else if (event.type === "codex-finished" || event.type === "codex-qa-finished" || event.type === 'sol-reassessment-finished' || event.type==='resolver-finished' || event.type === "cline-started" || event.type === "implementation-limit-resumed" || event.type === "parallel-limit-cleared") {
       next.interruptedOperation = null;
       next.codexLimitMessage = null;
       next.codexRetryAt = null;
     }
+    // Only the display texts are clipped: other fields (the private codexOperation receipt) are read back to resume.
+    for (const key of ["latestQa", "blockedReason", "userAttentionReason"]) next[key] = clipText(next[key], EVENT_TEXT_LIMIT);
     this.live = next;
-    await atomicWriteJson(this.livePath, next);
+    await atomicWriteJson(this.livePath, this.live);
     const { codexOperation: _privateCompletion, recovery: _privateRecovery, ...activityEvent } = event;
     if(event.type!=='recovery-state')await this.appendEvent(activityEvent);
+  }
+
+  /** Names the task this start was given (--task) before it loads, so what happens first is filed under it. No event. */
+  async showTask(task) {
+    this.live ??= await this.readLive();
+    if (!this.live) return;
+    this.live = { ...this.live, task: { ...task, id: task.id, name: task.name ?? task.id, prompt: redactText(task.prompt, { assignments: false }) }, updatedAt: new Date().toISOString() };
+    await atomicWriteJson(this.livePath, this.live);
   }
 
   async configureRuntime({ contextTokens, timeoutSeconds, model, provider }) {
@@ -248,8 +272,8 @@ export class DashboardState {
 
   async appendEvent(event) {
     await mkdir(this.stateDir, { recursive: true });
-    const currentTaskId = (await this.readLive())?.task?.id;
-    const entry = redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event });
+    const currentTaskId = this.carryTask ? (await this.readLive())?.task?.id : undefined;
+    const entry = clipDeep(redactDeep({ timestamp: new Date().toISOString(), taskId: currentTaskId, ...event }), EVENT_TEXT_LIMIT);
     await appendFile(this.activityPath, `${JSON.stringify(entry)}\n`);
     // The tamper-evident copy (about 1.5 ms per entry). A failure to write it is reported but never stops the run.
     await appendAction(this.stateDir, entry).catch((error) => diagnostic("ACTION_LOG_WRITE_FAILED", { message: error.message }));
@@ -287,6 +311,8 @@ export class DashboardState {
     } else if (action === "stop") next.stopAfterSafePoint = true;
     // Picked up by the loop at its next boundary (no worker running): the task is set aside, its work stashed.
     else if (action === "defer") { next.deferGeneration = Number(current.deferGeneration ?? 0) + 1; next.deferReason = String(reason ?? "Deferred").slice(0, 400); }
+    // Approve each task: your answer for the task waiting before Implementation (reason carries its id).
+    else if (action === "approve-task" || action === "reject-task") next.taskDecision = { taskId: String(reason ?? ""), decision: action === "approve-task" ? "approve" : "reject", at: new Date().toISOString(), source: source ?? null };
     // Elevation for the failing task, taken up by the running loop when the task is waiting on a correction.
     else if (action === "request-elevation") next.elevateGeneration = Number(current.elevateGeneration ?? 0) + 1;
     else if(action==='retry-qa') {
@@ -342,7 +368,8 @@ export class DashboardState {
   async readEvents(limit = 50) {
     try {
       const lines = (await readFile(this.activityPath, "utf8")).trim().split(/\r?\n/).filter(Boolean);
-      return lines.slice(-limit).map((line) => JSON.parse(line));
+      // A line still being written (or cut by a crash) is skipped, not an error for every reader.
+      return lines.slice(-limit).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw error;

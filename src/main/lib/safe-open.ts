@@ -1,12 +1,8 @@
 import path from "node:path";
+import { realWithin } from "./real-path";
 
 /** Files the renderer may open with their default app; anything else (.exe, .bat, .lnk, ...) is refused. */
 const OPENABLE_FILES = new Set([".md", ".txt", ".json", ".log"]);
-
-const within = (root: string, target: string) => {
-  const relative = path.relative(path.resolve(root), target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-};
 
 /**
  * Whether `shell:open` may open `target`: a folder or a plain document under one of the app's
@@ -16,7 +12,8 @@ const within = (root: string, target: string) => {
 export function canOpenPath(target: unknown, roots: string[], isDirectory: boolean): boolean {
   if (typeof target !== "string" || !target.trim()) return false;
   const resolved = path.resolve(target);
-  if (!roots.some((root) => root && within(root, resolved))) return false;
+  // Real locations too: a link inside a known folder may point anywhere.
+  if (!roots.some((root) => root && realWithin(root, resolved))) return false;
   return isDirectory || OPENABLE_FILES.has(path.extname(resolved).toLowerCase());
 }
 

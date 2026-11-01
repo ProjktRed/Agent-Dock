@@ -1,9 +1,5 @@
 // Loop limits that were fixed in the engine. Defaults reproduce the original behaviour exactly;
 // the app passes other values only when its engine guardrails are off.
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { replaceWithRetry } from "./fs-retry.mjs";
 
 export const DEFAULT_TUNING = Object.freeze({
   /** Automatic Elevation after this many attempted Assessment corrections. */
@@ -18,8 +14,6 @@ export const DEFAULT_TUNING = Object.freeze({
   taskMaxReadFiles: 3,
   /** Task size mode: eco splits plan items into small tasks, standard does one plan item per task, max has no fixed size. */
   taskMode: "eco",
-  /** In standard or max mode, a task that fails review twice is set aside and redone one size smaller. */
-  stepDown: true,
 });
 
 export const TASK_MODES = ["eco", "standard", "max"];
@@ -48,10 +42,6 @@ export function parseTuning(options) {
   const mode = options["task-mode"] ?? "eco";
   if (!TASK_MODES.includes(mode)) throw new Error("--task-mode must be eco, standard or max");
   const tuning = { ...DEFAULT_TUNING, ...MODE_SIZING[mode], taskMode: mode };
-  if (options["step-down"] !== undefined) {
-    if (!["true", "false"].includes(options["step-down"])) throw new Error("--step-down must be true or false");
-    tuning.stepDown = options["step-down"] === "true";
-  }
   for (const [key, [flag, min]] of Object.entries(FLAGS)) {
     const value = options[flag];
     if (value === undefined) continue;
@@ -64,82 +54,6 @@ export function parseTuning(options) {
 
 export function useTuning(values = {}) {
   Object.assign(TUNING, DEFAULT_TUNING, values);
-  STEP_DOWN.active = null;
-  STEP_DOWN.file = null;
-}
-
-const SIZING_KEYS = ["taskMode", "taskMaxFiles", "taskMaxNewLines", "taskMaxReadFiles"];
-const ECO_SIZING = { taskMaxFiles: DEFAULT_TUNING.taskMaxFiles, taskMaxNewLines: DEFAULT_TUNING.taskMaxNewLines, taskMaxReadFiles: DEFAULT_TUNING.taskMaxReadFiles };
-/** How many approved tasks a step-down lasts at most when its plan items are not all checked off sooner. */
-export const STEP_DOWN_TASKS = 5;
-/** The step-down in force this run: { from, to, taskId, taskName, items, left, configured }.
- *  file: where it is saved (set by loadStepDown); saving: the queued write, for callers that wait for it. */
-export const STEP_DOWN = { active: null, file: null, saving: Promise.resolve() };
-
-const sizingOf = (t) => Object.fromEntries(SIZING_KEYS.map((key) => [key, t[key]]));
-const applySize = (mode) => Object.assign(TUNING, mode === "eco" ? ECO_SIZING : MODE_SIZING[mode], { taskMode: mode });
-
-/** Saves (or, with no step-down in force, removes) step-down.json; writes are queued so they land in order. */
-function saveStepDown() {
-  const file = STEP_DOWN.file;
-  if (!file) return STEP_DOWN.saving;
-  const value = STEP_DOWN.active && JSON.parse(JSON.stringify(STEP_DOWN.active));
-  STEP_DOWN.saving = STEP_DOWN.saving.then(async () => {
-    if (!value) return rm(file, { force: true });
-    await mkdir(path.dirname(file), { recursive: true });
-    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
-    await replaceWithRetry(temporary, file);
-  }).catch(() => {});
-  return STEP_DOWN.saving;
-}
-
-/** At engine start, after useTuning: saves step-downs in stateDir/step-down.json from now on and restores one saved
- *  by an earlier engine of this run. A saved step-down is discarded when the configured size (--task-mode or the
- *  --task-max-* flags) changed since, or step-down is off. Returns the restored step-down or null. */
-export async function loadStepDown(stateDir, mode = TUNING.taskMode) {
-  STEP_DOWN.file = path.join(path.resolve(stateDir), "step-down.json");
-  const saved = await readFile(STEP_DOWN.file, "utf8").then((text) => { try { return JSON.parse(text); } catch { return false; } }, () => null);
-  const configured = { ...sizingOf(TUNING), taskMode: mode };
-  const valid = saved && TUNING.stepDown && TASK_MODES.includes(saved.to) && Array.isArray(saved.items) && Number.isInteger(saved.left)
-    && saved.configured && SIZING_KEYS.every((key) => saved.configured[key] === configured[key]);
-  if (!valid) {
-    STEP_DOWN.active = null;
-    if (saved !== null) await saveStepDown();
-    return null;
-  }
-  applySize(saved.to);
-  STEP_DOWN.active = saved;
-  return saved;
-}
-
-/** One size smaller for the redo of a task that failed review twice: max to standard, standard to eco. */
-export function stepDown(task) {
-  const from = TUNING.taskMode;
-  const to = from === "max" ? "standard" : from === "standard" ? "eco" : null;
-  if (!to) return null;
-  const configured = STEP_DOWN.active?.configured ?? sizingOf(TUNING);
-  applySize(to);
-  STEP_DOWN.active = { from, to, taskId: task.id, taskName: task.name ?? task.id, items: [...(task.planItems ?? [])], left: STEP_DOWN_TASKS, configured };
-  saveStepDown();
-  return { from, to };
-}
-
-/** After an approved task during a step-down: back to the configured size once the set-aside task's plan items are done. */
-export function noteStepDownApproval(task) {
-  const active = STEP_DOWN.active;
-  if (!active) return null;
-  const done = new Set(task.planItems ?? []);
-  active.items = active.items.filter((item) => !done.has(item));
-  active.left--;
-  if (active.items.length && active.left > 0) {
-    saveStepDown();
-    return null;
-  }
-  Object.assign(TUNING, active.configured);
-  STEP_DOWN.active = null;
-  saveStepDown();
-  return { mode: TUNING.taskMode, from: active.to };
 }
 
 /** The sizing sentence in the Assessment prompt, from the current task-size limits. */

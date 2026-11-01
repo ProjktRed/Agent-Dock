@@ -4,7 +4,9 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import {existsSync} from 'node:fs';
 import {interruptedQaCommit} from '../src/interrupted-qa.mjs';
+import {runCheckCommand} from '../src/qa-runner.mjs';
 import {runNodeLoop} from '../src/node-loop.mjs';
 import {DashboardState} from '../src/dashboard-state.mjs';
 
@@ -57,4 +59,14 @@ test('the loop resumes a QA killed after its commit as an approved task, without
  assert.ok(events.some(e=>e.type==='qa-commit-recovered'));
  assert.ok(events.some(e=>e.type==='qa-pass'));
  assert.equal(git('rev-parse','HEAD'),committed);
+});
+
+test('the recovered commit is checked only with an approved check command',async t=>{
+ const {ws,git,base}=await repo(t);
+ await writeFile(path.join(ws,'a.js'),'2\n');git('commit','-qam','QA commit');
+ const marker=path.join(ws,'ran.txt');
+ const other={...task,qaCommand:`node -e "require('fs').writeFileSync(${JSON.stringify(marker)},'x')"`};
+ assert.equal(await interruptedQaCommit({workspace:ws,task:other,baselineSha:base}),null);
+ assert.equal(existsSync(marker),false,'an unapproved command never runs');
+ await assert.rejects(runCheckCommand('node -e "process.exit(0)"',ws),/not an approved project check/);
 });

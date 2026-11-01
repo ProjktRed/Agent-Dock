@@ -2,38 +2,11 @@ import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync
 import path from "node:path";
 import { run } from "./git";
 
-// Parallel lanes: a project can run extra tasks side by side in linked git worktrees. Each lane is a
-// worktree of the project on its own agent-dock/lane-<name> branch, registered as its own project
-// (own engine, own state folder), so lanes never share a working tree or a lock. You merge a lane's
-// branch when you are happy with it (or open a pull request from it).
-
-export const laneSlug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-
-/** Where a lane's worktree goes: next to the project, in "<project>-lanes/<slug>". */
-export const lanePath = (projectPath: string, slug: string) => path.join(`${path.resolve(projectPath)}-lanes`, slug);
-
 const git = async (cwd: string, ...args: string[]) => {
   const r = await run("git", args, { cwd, timeoutMs: 120_000 });
   if (r.code !== 0) throw new Error(`git ${args.slice(0, 2).join(" ")} failed: ${(r.stderr || r.stdout).trim().split(/\r?\n/).pop()}`);
   return r.stdout.trim();
 };
-
-/** Creates the lane's worktree and branch from the project's current HEAD. */
-export async function addLaneWorktree(projectPath: string, name: string): Promise<{ path: string; branch: string; slug: string }> {
-  const slug = laneSlug(name);
-  if (!slug) throw new Error("Give the lane a name with letters or digits.");
-  const target = lanePath(projectPath, slug), branch = `agent-dock/lane-${slug}`;
-  if (existsSync(target)) throw new Error(`${target} already exists.`);
-  await git(projectPath, "rev-parse", "--verify", "HEAD");
-  await git(projectPath, "worktree", "add", "-b", branch, target, "HEAD");
-  return { path: target, branch, slug };
-}
-
-/** Removes the lane's worktree (its branch and commits stay, so nothing approved is lost). */
-export async function removeLaneWorktree(projectPath: string, worktreePath: string, force = false): Promise<void> {
-  if (!existsSync(worktreePath)) { await git(projectPath, "worktree", "prune"); return; }
-  await git(projectPath, "worktree", "remove", ...(force ? ["--force"] : []), worktreePath);
-}
 
 // Parallel tasks (engine --parallel) keep a worktree, on an agent-dock/parallel-… branch, for each task
 // that did not finish or did not merge, in "<project>-parallel/<task>-<run>". Cleanup removes them all;
@@ -41,7 +14,7 @@ export async function removeLaneWorktree(projectPath: string, worktreePath: stri
 
 export const PARALLEL_BRANCH = "agent-dock/parallel-";
 
-/** The folder parallel tasks keep their worktrees in: next to the project, like lanes. */
+/** The folder parallel tasks keep their worktrees in: next to the project. */
 export const parallelRoot = (projectPath: string) => `${path.resolve(projectPath)}-parallel`;
 
 /** A path as git writes it: long names, not 8.3 short ones (C:UsersRUNNER~1), which Node keeps as given.
@@ -77,7 +50,7 @@ export interface ParallelLeftovers {
 }
 
 /** What cleanup would remove, from git's worktree and branch lists. A parallel branch checked out in a
- *  worktree outside the "-parallel" folder (yours, or a lane's run) is left alone. All projects and lanes of
+ *  worktree outside the "-parallel" folder (yours, or another project's run) is left alone. All projects of
  *  a repo share its branches, so a branch with no worktree counts as this project's only when its name
  *  (agent-dock/parallel-<worktree folder>) matches a folder this project's runs used: one git lists inside
  *  "-parallel" (also when prunable), or one of `ownNames` (folders found there, or in the state folder).

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { AddProjectRequest, CliConnection, DirectoryInspection, Project } from "@shared/types";
 import { cleanError, useApp } from "../../store";
 import { Modal, Spinner, St, Toggle } from "../../components/ui";
+import { plural } from "../../lib/format";
+import { planCounts } from "../../lib/plan-text";
 
 type Mode = "local" | "github" | "new";
 const MODES: { value: Mode; label: string; help: string }[] = [
@@ -33,8 +35,7 @@ function PlanStep({ project, connection, model, onDone }: { project: Project; co
       .finally(() => clearInterval(timer));
     return () => { live = false; clearInterval(timer); };
   }, [run]);
-  const phases = (text.match(/^##s+Phases+d+/gim) ?? []).length;
-  const tasks = (text.match(/^s*-s+[[ xX]]s+/gm) ?? []).length;
+  const { phases, tasks } = planCounts(text);
   const save = async () => {
     setSaving(true); setError(null);
     try { await window.api.savePlan(project.id, text); onDone(); } catch (e) { setError(cleanError(e)); } finally { setSaving(false); }
@@ -54,7 +55,7 @@ function PlanStep({ project, connection, model, onDone }: { project: Project; co
       {state === "review" && (
         <>
           <textarea className="ta mono" style={{ minHeight: 320 }} value={text} onChange={(e) => setText(e.target.value)} aria-label="Generated implementation plan" />
-          <span className="sub">{phases} phase(s) · {tasks} task(s). Edit freely; each phase needs “## Phase N — Title” and “- [ ]” tasks. Save writes IMPLEMENTATION_PLAN.md{project.path ? " and commits only that file in a Git repository" : ""}.</span>
+          <span className="sub">{plural(phases, "phase")} · {plural(tasks, "task")}. Edit freely; each phase needs “## Phase N — Title” and “- [ ]” tasks. Save writes IMPLEMENTATION_PLAN.md{project.path ? " and commits only that file in a Git repository" : ""}.</span>
         </>
       )}
       {error && <div className="banner errb" role="alert"><span className="err">{error}</span></div>}

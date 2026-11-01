@@ -6,12 +6,22 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { atomicWriteJson } from "./dashboard-state.mjs";
-import { withoutSecrets } from "./secret-env.mjs";
-import {isProtectedPath,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
+import { checkEnv } from "./secret-env.mjs";
+import { appendBounded, CHECK_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
+import {protectionChecker,protectedPathsFor,assertSafeQaCommand} from './guard/protected-paths.mjs';
+import { noInstall } from "./qa-runner.mjs";
+import { checksSandboxed, sandboxedSpawn } from "./sandbox.mjs";
+import { safeGitArgs } from "./git-safe.mjs";
 
 const exec = promisify(execFile);
 const OUTPUT_LIMIT = 12_000;
 const DIFF_LIMIT = 200_000;
+
+/** The first paths and how many more: an untracked node_modules lists tens of thousands. */
+export function listPaths(paths, shown = 20) {
+  const more = paths.length - shown;
+  return paths.slice(0, shown).join(", ") + (more > 0 ? ` and ${more} more` : "");
+}
 
 function bounded(text, limit) {
   const value = String(text ?? "");
@@ -72,31 +82,41 @@ export async function runDeterministicCommand(command, cwd) {
   return { exitCode, stdout, stderr, steps, durationMs: Date.now() - started };
 }
 
-function runShellCommand(command, cwd) {
+/** One check step: ended with its whole process tree after CHECK_TIMEOUT_MS, output kept to its newest part. */
+export async function runShellCommand(command, cwd, { timeoutMs = CHECK_TIMEOUT_MS } = {}) {
+  const windows = process.platform === "win32";
+  const launch = checksSandboxed()
+    ? await sandboxedSpawn(noInstall(command), cwd, { windowsShell: "cmd", env: { CODEX_QA: "1" } })
+    : { file: windows ? "cmd.exe" : "/bin/sh", args: windows ? ["/d", "/s", "/c", noInstall(command)] : ["-c", noInstall(command)], env: { ...checkEnv(), CODEX_QA: "1" }, release() {} };
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const executable = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-    const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-c", command];
-    const child = spawn(executable, args, {
-      cwd, env: { ...withoutSecrets(), CODEX_QA: "1" }, windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(launch.file, launch.args, { cwd, env: launch.env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) { launch.release(); reject(error); return; }
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; killProcessTree(child); }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", (exitCode) => resolve({
-      exitCode: exitCode ?? 1, stdout, stderr, durationMs: Date.now() - started,
-    }));
+    child.stdout.on("data", (chunk) => { stdout = appendBounded(stdout, chunk); });
+    child.stderr.on("data", (chunk) => { stderr = appendBounded(stderr, chunk); });
+    child.on("error", (error) => { clearTimeout(timer); launch.release(); reject(error); });
+    child.on("close", (exitCode) => {
+      clearTimeout(timer);
+      launch.release();
+      resolve(timedOut
+        ? { exitCode: 1, timedOut: true, stdout, stderr: `${stderr}\nThe check was ended after ${Math.round(timeoutMs / 60_000) || "<1"} minutes without finishing.`, durationMs: Date.now() - started }
+        : { exitCode: exitCode ?? 1, stdout, stderr, durationMs: Date.now() - started });
+    });
   });
 }
 
+// Read-only git calls: no fsmonitor program from the repository's config runs (same results without it).
 async function git(workspace, args) {
   try {
-    const result = await exec("git", args, { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
+    const result = await exec("git", safeGitArgs(args), { cwd: workspace, windowsHide: true, maxBuffer: 4 * 1024 * 1024, encoding: "utf8" });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     return { exitCode: Number.isInteger(error.code) ? error.code : 1, stdout: error.stdout ?? "", stderr: error.stderr ?? error.message };
@@ -134,7 +154,8 @@ export async function collectGitEvidence({ workspace, task, baselineSha, stateDi
   const changedFiles = status.exitCode === 0 ? parseStatus(status.stdout) : [];
   const allowed = new Set(task.allowedPaths.map((item) => item.replaceAll("\\", "/")));
   const unexpectedPaths = changedFiles.filter((item) => !allowed.has(item));
-  const protectedChanges = changedFiles.filter(item => isProtectedPath(protection,item));
+  const isProtected = protectionChecker(protection);
+  const protectedChanges = changedFiles.filter(item => isProtected(item));
   let scopeStatus = "PASS";
   let scopeMessage = "All changed paths are approved.";
   if (head.exitCode !== 0 || status.exitCode !== 0) {
@@ -144,10 +165,10 @@ export async function collectGitEvidence({ workspace, task, baselineSha, stateDi
     scopeStatus = "FAIL";
     scopeMessage = head.stdout.trim() !== baselineSha
       ? `HEAD differs from baseline ${baselineSha}.`
-      : `Changes outside allowedPaths: ${unexpectedPaths.join(", ")}`;
+      : `Changes outside allowedPaths: ${listPaths(unexpectedPaths)}`;
   }
 
-  if(protectedChanges.length){scopeStatus='FAIL';scopeMessage=`Changes to protected paths: ${protectedChanges.join(', ')}`;}
+  if(protectedChanges.length){scopeStatus='FAIL';scopeMessage=`Changes to protected paths: ${listPaths(protectedChanges)}`;}
 
   // A rename/copy can carry protected contents into an otherwise approved name.
   // Once protected changes exist, fail closed on the entire diff rather than exposing it.
@@ -188,7 +209,7 @@ function conciseClineSummary(workerResult) {
 
 /** Hash tracked and non-ignored input files, including unchanged dependencies in the repository. */
 export async function workspaceFingerprint(workspace) {
-  const protection={workspace,protectedPaths:protectedPathsFor({workspace})};
+  const isProtected=protectionChecker({workspace,protectedPaths:protectedPathsFor({workspace})});
   const [head, index, untracked] = await Promise.all([
     git(workspace, ["rev-parse", "HEAD"]),
     git(workspace, ["ls-files", "--stage", "-z"]),
@@ -203,7 +224,7 @@ export async function workspaceFingerprint(workspace) {
     const relative = path.relative(workspace, fullPath);
     if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
     hash.update(JSON.stringify(file));
-    if(isProtectedPath(protection,file)){hash.update('protected');continue;}
+    if(isProtected(file)){hash.update('protected');continue;}
     const details = await lstat(fullPath).catch(error => { if (error.code === "ENOENT") return null; throw error; });
     if (!details) { hash.update("missing"); continue; }
     if (details.isSymbolicLink()) hash.update("link:" + await readlink(fullPath));
@@ -238,7 +259,12 @@ export async function prepareQaPacket({
   const beforeFingerprint = await workspaceFingerprint(workspace);
   const previous = previousPacket?.qaEvidence;
   const reusable = beforeFingerprint && before.scope.status === "PASS" && previous?.fingerprint?.request === request && previous.fingerprint.workspace === beforeFingerprint && previous.workspaceStable === true && previous.command.exitCode === 0 && previous.scope.status === "PASS" && !Object.values(previous.categories).some(status => ["FAIL", "INCONCLUSIVE", "TIMEOUT", "RUNNING", "NON-TERMINATING"].includes(status));
-  const commandResult = reusable ? null : await runCommand(task.qaCommand, workspace);
+  // The project's check runs only on work that passed the scope check: changes outside the task's paths (or to
+  // protected ones) could be what the check would execute. The run stops on the failed scope, as before.
+  const scopeGate = !reusable && before.scope.status !== "PASS";
+  const commandResult = reusable ? null : scopeGate
+    ? { exitCode: null, stdout: `Not run: the scope check failed first (${before.scope.message})`, stderr: "", durationMs: 0, steps: [{ command: task.qaCommand, status: "NOT RUN", exitCode: null, durationMs: 0 }] }
+    : await runCommand(task.qaCommand, workspace);
   const after = await collectGitEvidence({ workspace, task, baselineSha, stateDir });
   const afterFingerprint = await workspaceFingerprint(workspace);
   const combined = commandResult ? [commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n").trim() : "";
@@ -265,6 +291,7 @@ export async function prepareQaPacket({
         durationMs: commandResult.durationMs,
         summary: summary.text,
         truncated: summary.truncated,
+        ...(checksSandboxed() ? { sandboxed: true } : {}),
       },
       categories,
       ...(reusable ? (previous.steps ? { steps: previous.steps } : {}) : (commandResult.steps ? { steps: commandResult.steps } : {})),

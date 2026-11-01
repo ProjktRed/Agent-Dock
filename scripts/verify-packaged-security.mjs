@@ -6,7 +6,7 @@ import {getCurrentFuseWire,FuseV1Options} from '@electron/fuses';
 
 const executable=path.resolve(process.argv[2]);
 const wire=await getCurrentFuseWire(executable);
-for(const option of [FuseV1Options.EnableNodeOptionsEnvironmentVariable,FuseV1Options.EnableNodeCliInspectArguments])assert.equal(wire[option],48);
+for(const option of [FuseV1Options.EnableNodeOptionsEnvironmentVariable,FuseV1Options.EnableNodeCliInspectArguments,FuseV1Options.GrantFileProtocolExtraPrivileges])assert.equal(wire[option],48);
 for(const option of [FuseV1Options.RunAsNode,FuseV1Options.EnableCookieEncryption,FuseV1Options.EnableEmbeddedAsarIntegrityValidation,FuseV1Options.OnlyLoadAppFromAsar])assert.equal(wire[option],49);
 const exec=promisify(execFile);
 const runtime=await exec(executable,['--version'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},windowsHide:true,timeout:10000});

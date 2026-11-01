@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { decide } from "../decide.mjs";
 import { parsePatchPaths } from "../action.mjs";
 import {stripCheckOutputFilter} from '../check-output-filter.mjs';
+import {canonical} from '../protected-paths.mjs';
 import {
   CODEX_EDIT_MUST_BE_PATCH,
   codexHookError,
@@ -21,7 +22,12 @@ const READ_ONLY = [
 ];
 const CHECKS = ["npm test", "npm run test", "npm run typecheck", "npm run lint", "npx tsc", "npx eslint", "npx prettier --check", "npx vitest run"];
 
-const norm = (p) => path.resolve(p).replaceAll("\\", "/").toLowerCase();
+// Real paths only (a link inside the workspace may point outside it); case folds only where the
+// file system does.
+const FOLDS_CASE = process.platform === "win32" || process.platform === "darwin";
+const key = (p) => { const s = p.replaceAll("\\", "/"); return FOLDS_CASE ? s.toLowerCase() : s; };
+const real = (base, file) => { try { return canonical(path.resolve(base, file)); } catch { return null; } };
+const inside = (root, file) => { const r = path.relative(root, file); return r === "" || (!r.startsWith(".." + path.sep) && r !== ".." && !path.isAbsolute(r)); };
 const HOOK_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "codex-scope-hook.mjs");
 
 /** Files a Codex patch adds, updates, deletes or moves to. Null means no patch input. */
@@ -79,15 +85,35 @@ export function checkToolUse(policy, event) {
   return result.effect === "allow" ? null : result.reason;
 }
 
-export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile }) {
-  const command = [nodePath, hookScript, policyFile, logFile].map((p) => `"${p}"`).join(" ");
-  return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`];
+/**
+ * The hook's command line. On Windows Codex runs it as `powershell.exe -NoProfile -Command "<command>"`:
+ * a leading quoted path is only a string there and a native exit code is not passed on, so the hook
+ * never ran. The call operator runs it, single quotes expand nothing (' and the curly quotes PowerShell
+ * also reads as ' are doubled), and any exit but 0 (a hook error, node missing) becomes the blocking 2.
+ */
+export function codexHookCommand(parts, platform = process.platform) {
+  if (platform !== "win32") return parts.map((p) => `"${p}"`).join(" ");
+  const quoted = parts.map((p) => `'${String(p).replace(/['‘’‚‛]/g, "$&$&")}'`).join(" ");
+  return `& ${quoted}; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 2 }`;
+}
+
+/**
+ * Codex roles that write (implementation, QA commits) run in Codex's workspace-write sandbox and are
+ * never let out of it: with --approve-for-me an automatic reviewer granted a command network access
+ * outside the sandbox (a live run downloaded and ran an npm package that way).
+ */
+export const CODEX_WRITE_SANDBOX = Object.freeze(["--sandbox", "workspace-write", "-c", 'approval_policy="never"']);
+
+export function codexScopeHookArgs({ nodePath = process.execPath, hookScript = HOOK_SCRIPT, policyFile, logFile, platform = process.platform, timeout = 30 }) {
+  const command = codexHookCommand([nodePath, hookScript, policyFile, logFile], platform);
+  return ["--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=${Math.round(timeout)}}]}]`];
 }
 
 export const adapter = {
   id: "codex",
   label: "Codex",
   stateSubdir: "codex",
+  maxHookInput: 2_000_000,
   capabilities: {
     narrowsToolSchema: false, enumeratesCommands: false, postToolEvents: false,
     outOfProcessHooks: true, counters: false, editDiscipline: false,
@@ -101,11 +127,12 @@ export const adapter = {
   patchPaths: (input) => parsePatchPaths(input, { requireBegin: true, trimPaths: true }),
   shellScript,
   approvedPath(policy, file, cwd = policy.workspace) {
-    const allowed = new Set(policy.allowedPaths.map((p) => norm(path.resolve(policy.workspace, p))));
-    return allowed.has(norm(path.resolve(cwd || policy.workspace, file)));
+    const root = real(policy.workspace, "."), target = real(cwd || policy.workspace, file);
+    if (!root || !target || !inside(root, target)) return false;
+    return policy.allowedPaths.some((p) => { const scope = real(policy.workspace, p); return scope !== null && key(scope) === key(target); });
   },
   validatePolicy(policy) {
-    return new Set(policy.allowedPaths.map((p) => norm(path.resolve(policy.workspace, p))));
+    return new Set(policy.allowedPaths.map((p) => key(path.resolve(policy.workspace, p))));
   },
   approvedCommand(policy, script) {
     return !policy.toolGuard || shellAllowed(script, policy.qaCommand);

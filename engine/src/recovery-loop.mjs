@@ -11,12 +11,14 @@ import {ELEVATE_MODEL} from './codex-worker.mjs';
 import {compactCorrections,correctionInstructions,correctionText,packetForPrompt,qaEnvironmentFailure,qaRetryAvailability,recoveryClassification,recoveryFingerprint} from './recovery-policy.mjs';
 import {selectKnowledge,recordVerifiedIssue} from './worker-knowledge.mjs';
 import {captureScratchBaseline,recordScratchEvent,finalizeScratchOwnership,loadResolverCase,runBlockedResolver} from './blocked-resolver.mjs';
-import {TUNING,stepDown,noteStepDownApproval} from './engine-tuning.mjs';
+import {TUNING} from './engine-tuning.mjs';
 import {elevationAllowed,waitOutLimit} from './run-budget.mjs';
 import {deferTask,objectiveWithDeferred} from './defer-task.mjs';
-import {fixPromptText,gateFailureText,roleGuidanceText} from './workflow-roles.mjs';
+import {objectiveWithPriority} from './task-priority.mjs';
+import {gateFailureText} from './workflow-roles.mjs';
 import {interruptedQaCommit} from './interrupted-qa.mjs';
 import {assertSafeQaCommand} from './guard/protected-paths.mjs';
+import {missingTools as findMissingTools} from './tool-check.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=async file=>{try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 const compactWorkerResult=value=>({exitCode:value.exitCode,runResult:{finishReason:value.runResult?.finishReason??null,text:String(value.summary??value.runResult?.summary??value.runResult?.text??'No structured summary provided.').slice(0,2000)}});
@@ -32,8 +34,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
   solReassessmentEnabled=true,baseline=()=>captureGitBaseline(workspace),verify=verifyReview,
   prepareQa=input=>prepareQaPacket({workspace,stateDir,...input}),
   reconcile=async(task,sha)=>{const evidence=await collectGitEvidence({workspace,task,baselineSha:sha});if(evidence.scope.status!=='PASS')throw new Error('Cannot reconcile scope/HEAD: '+evidence.scope.message);},
-  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,
-  knowledgeFile,roles=[],runRole=null,fixWorkers={},
+  readControl,onEvent,onTask=async()=>{},betweenTasks=async()=>{},pollMs=1000,missingTools=findMissingTools,toolPollMs=10_000,pendingCodex=null,correctionResume=null,stopAfterTask=false,manualElevation=false,manualResolver=false,approveTasks=false,
+  knowledgeFile,roles=[],runRole=null,
 }) {
   const emit=(type,fields={})=>onEvent({type,...fields});
   const stageRoles=stage=>runRole?roles.filter(role=>role.stage===stage):[];
@@ -149,7 +151,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       // QA was killed after committing but before reporting: accept the commit only if the engine's own checks pass.
       // Retry QA after such a block (HEAD moved by the unreported commit) uses the same check.
       if(!completedPass&&((pending?.operation==='qa'&&pending.status!=='completed'&&['review','qa'].includes(r.phase))||(r.forceFreshQa&&r.phase==='evidence'))){
-        const recovered=await interruptedQaCommit({workspace,task,baselineSha:r.baselineSha});
+        const recovered=await interruptedQaCommit({workspace,task,baselineSha:r.baselineSha,stateDir});
         if(recovered){
           completedPass=recovered;r.failure=recovered;r.phase='decision';r.forceFreshQa=false;r.blockedReason=null;
           await rm(path.join(stateDir,'pending-codex.json'),{force:true});pending=null;
@@ -169,6 +171,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         r.elevationFingerprint=fingerprint;
         r.phase='elevation';r.elevationAutomatic=false;
       }
+      // Approve each task: a run stopped while the task waited for you asks again, so the window shows it.
+      if(r.awaitingApproval)r.approvalRequestedAt=null;
       await save();
     }
     for(;;) {
@@ -185,7 +189,7 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           const sha=correctionResume?.baselineSha??pending?.inputs?.baselineSha??pending?.inputs?.baselineHead??pending?.context?.baselineHead??(await baseline()).head;
           let assessmentOperationId;
           if(!task) {
-            const op=await operation('assessment',{objective:await objectiveWithDeferred(stateDir,objective),previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
+            const op=await operation('assessment',{objective:await objectiveWithPriority({workspace,stateDir,objective:await objectiveWithDeferred(stateDir,objective)}),previous},assess,{baselineHead:sha});if(op.stopped)return{status:'stopped'};
             if(op.result.status==='done'){await emit('loop-complete');return{status:'done'};}
             if(op.result.status!=='task'){await consumeAssessment();return block(op.result.output??'Assessment could not produce a safe task');}
             task=op.result.task;if((await baseline()).head!==sha)return block('Unexpected baseline HEAD after assessment');
@@ -205,6 +209,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
           r={version:1,baselineSha:sha,attempt:correctionResume?.attempt??pending?.attempt??1,phase:resumeQa?'qa':'worker',
             prompt:correctionResume?.prompt??buildInitialPrompt(task,{workspace}),history:correctionResume?.history??pending?.context?.history??[],
             correctionCount:0,correctionHistory:[],elevations:[],lastElevationCount:0,userAttention:false,lastAppliedOperationId:assessmentOperationId,stopAfterTask,deferGeneration:deferBase,
+            // Settings › Approve each task: a new task waits for you before Implementation starts.
+            ...(approveTasks&&!resumeQa&&!correctionResume?{awaitingApproval:true}:{}),
             ...(resumeQa?{qaPacket:pending.inputs,workerResult:{exitCode:pending.inputs.clineSummary?.exitCode??pending.inputs.workerResult?.exitCode??0}}:{})};
           if(correctionResume){await reconcile(task,sha);r.currentCorrection=correctionResume.currentCorrection??{id:randomUUID(),source:'elevation',prompt:r.prompt,attempted:false};}
           if(!resumeQa&&!correctionResume)await onTask(task);
@@ -212,6 +218,42 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
         }
         for(;;) {
           if(await stopped())return{status:'stopped'};
+          if(r.awaitingApproval) {
+            if(!r.approvalRequestedAt){
+              r.approvalRequestedAt=new Date().toISOString();
+              await emit('task-approval-requested',{taskId:task.id,name:task.name??task.id,objective:String(task.objective??task.prompt??'').slice(0,1500),allowedPaths:task.allowedPaths??[],qaCommand:task.qaCommand??''});
+              await save();
+            }
+            const decision=(await readControl()).taskDecision;
+            if(decision?.taskId===task.id&&String(decision.at)>=r.approvalRequestedAt) {
+              if(decision.decision==='approve'){r.awaitingApproval=false;await emit('task-approved',{taskId:task.id,source:decision.source??null});await save();continue;}
+              // Set aside: the task is deferred untouched (no Implementation ran) and Assessment chooses again.
+              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:'Set aside by you before implementation'});
+              if(deferred.blocked)return block(deferred.blocked);
+              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+              await emit('task-deferred',{taskId:task.id,reason:deferred.entry.reason,stash:deferred.entry.stash?.message??null});
+              return{status:'deferred'};
+            }
+            await new Promise(resolve=>setTimeout(resolve,pollMs));
+            continue;
+          }
+          // Missing tools: the check needs a toolchain that is not installed. Nothing has run yet; wait (the app
+          // suggests installing it) and continue once it is found. Set aside defers the task untouched.
+          if(r.phase==='worker'&&!r.toolsChecked) {
+            const missing=await missingTools({workspace,command:task.qaCommand});
+            if(!missing.length){if(r.toolsMissingAt)await emit('tools-ready',{taskId:task.id});r.toolsChecked=true;r.toolsMissingAt=null;await save();continue;}
+            if(!r.toolsMissingAt){r.toolsMissingAt=new Date().toISOString();await emit('tools-missing',{taskId:task.id,tools:missing,qaCommand:task.qaCommand??''});await save();}
+            const decision=(await readControl()).taskDecision;
+            if(decision?.taskId===task.id&&decision.decision==='reject'&&String(decision.at)>=r.toolsMissingAt) {
+              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason:`Set aside by you: ${missing.map(t=>t.name).join(', ')} not installed`});
+              if(deferred.blocked)return block(deferred.blocked);
+              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
+              await emit('task-deferred',{taskId:task.id,reason:deferred.entry.reason,stash:deferred.entry.stash?.message??null});
+              return{status:'deferred'};
+            }
+            await sleep(toolPollMs);
+            continue;
+          }
           const boundaryControl=await readControl();
           // Defer (Supervisor, when allowed): only between steps, with no worker or model call running.
           if(r.deferGeneration===undefined)r.deferGeneration=Number(boundaryControl.deferGeneration??0);
@@ -229,12 +271,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             if(!r.elevations.includes(r.elevationFingerprint)){r.phase='elevation';r.elevationAutomatic=false;await save();}
           }
           if(r.phase==='passed') {
-            if(!r.afterPassDone&&stageRoles('after-pass').length) {
-              const reports=await runStageRoles('after-pass',{task,commit:r.failure?.commit??null,qaOutput:r.failure?.output??'',attempts:r.attempt,changedFiles:r.qaPacket?.changedFiles??[]});
-              if(reports.stopped)return{status:'stopped'};
-              for(const report of reports.results)await appendFile(path.join(stateDir,'role-reports.ndjson'),JSON.stringify({at:new Date().toISOString(),taskId:task.id,role:report.name,...report.result})+'\n');
-              r.afterPassDone=true;await save();
-            }
             return{status:'passed',attempts:r.attempt,qa:r.failure,history:r.history};
           }
           if(r.phase==='worker-limit') {
@@ -250,16 +286,13 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             continue;
           }
           if(r.phase==='worker') {
-            const guidance=await runStageRoles('before-implementation',{objective,task,fileStatus:describeAllowedPaths(task,workspace)});
-            if(guidance.stopped)return{status:'stopped'};
             if(codex.activeCount!==0)throw new Error('Cannot launch local worker while Codex is alive');
             await codex.assertIdle?.();
             // Kept across a usage-limit retry, so files the stopped run created still count as the worker's own.
             r.scratchBaseline??=await captureScratchBaseline(workspace);await save();
             const knowledge=await selectKnowledge(knowledgeFile,task.prompt+' '+(r.failure?.output??''));
             await emit('known-issues-selected',{knownIssues:[...knowledge.matchAll(/^## (.+)$/gm)].map(m=>m[1])});
-            const roleText=roleGuidanceText(guidance.results);
-            r.promptWithKnowledge=r.prompt+(roleText?'\n\n'+roleText:'')+(knowledge?'\n\n'+knowledge:'');
+            r.promptWithKnowledge=r.prompt+(knowledge?'\n\n'+knowledge:'');
             r.phase='worker-launching';await save();
             const started=Date.now();await emit('cline-started',{attempt:r.attempt,startedAt:new Date(started).toISOString()});
             let workerResult;
@@ -299,11 +332,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             // Reviews travel with the packet: QA and Assessment read them.
             r.qaPacket.roleReviews=reviews.results.map(x=>({role:x.name,gate:x.gate,...x.result}));
             const gate=reviews.results.find(x=>x.gate&&x.result.verdict==='changes-needed');
-            // A fixer makes its own requested fix once per attempt; the result goes through evidence and review again.
-            if(gate&&roles.find(role=>role.id===gate.id)?.fix&&fixWorkers[gate.id]&&!r.fixes?.[r.attempt]) {
-              (r.fixes??={})[r.attempt]={attempt:r.attempt,roleId:gate.id,roleName:gate.name,text:gateFailureText(gate),started:false};
-              r.phase='fixing';await save();continue;
-            }
             if(gate) {
               r.failure={status:'fail',output:gateFailureText(gate),correction:'',commit:'',manualReviewCause:null,gateRole:gate.name};
               await verify({workspace,baselineHead:r.baselineSha,decision:r.failure,task});
@@ -311,20 +339,8 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
               r.phase='decision';await save();await emit('role-gate-failed',{attempt:r.attempt,roleName:gate.name,qa:r.failure.output});
             } else {r.phase='qa';await save();}
           }
-          if(r.phase==='fixing') {
-            const fix=r.fixes[r.attempt],fixer=fixWorkers[fix.roleId];
-            // Resumed after a crash mid-fix: never rerun it; whatever it left is checked like any change.
-            if(!fix.started&&fixer) {
-              if(codex.activeCount!==0)throw new Error('Cannot launch the fixer while Codex is alive');
-              await codex.assertIdle?.();
-              fix.started=true;await save();
-              const started=Date.now();await emit('role-fix-started',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName});
-              try{const result=await fixer.run(fixPromptText(task,fix,{workspace}),{task,onEvent:async({type,...event})=>{await emit(type,{...event,attempt:r.attempt});}});fix.exitCode=result.exitCode;}
-              catch(error){fix.error=String(error?.message??error).slice(0,500);}
-              await emit('role-fix-finished',{attempt:r.attempt,roleId:fix.roleId,roleName:fix.roleName,exitCode:fix.exitCode??null,error:fix.error??null,durationMs:Date.now()-started});
-            }
-            r.forceFreshQa=true;r.phase='evidence';await save();continue;
-          }
+          // A state saved by 0.38 mid-fix (the removed self-fixing review): whatever the fix left is checked like any change.
+          if(r.phase==='fixing'){r.forceFreshQa=true;r.phase='evidence';await save();continue;}
           if(r.phase==='qa') {
             if(r.qaPacket.qaEvidence?.scope?.status==='FAIL' || r.qaPacket.qaEvidence?.categories?.scopeCheck==='FAIL')return block(r.qaPacket.qaEvidence.scope?.message??'Out-of-scope mutation');
             const op=await operation('qa',r.qaPacket,review);if(op.stopped)return{status:'stopped'};
@@ -357,17 +373,6 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
             const control=await readControl();
             const manual=manualElevation || Number(control.elevateGeneration??0)>Number(r.elevateGeneration??0);
             if(manual)r.elevateGeneration=control.elevateGeneration;
-            // Step-down: a standard- or max-sized task that failed review twice is set aside (work stashed) and redone one size smaller.
-            const failedReviews=r.history.filter(h=>h.qa&&h.qa.status!=='pass').length;
-            if(!manual&&TUNING.stepDown&&TUNING.taskMode!=='eco'&&failedReviews>=2) {
-              const from=TUNING.taskMode,to=from==='max'?'standard':'eco',reason=`Stepped down from ${from} to ${to} size after ${failedReviews} failed reviews`;
-              const deferred=await deferTask({workspace,stateDir,task,baselineSha:r.baselineSha,reason,stepDown:{from,to}});
-              if(deferred.blocked)return block(deferred.blocked);
-              stepDown(task);
-              await atomicWriteJson(file,{...task,automation:{deferred:deferred.entry}});
-              await emit('task-stepped-down',{taskId:task.id,from,to,reason,stash:deferred.entry.stash?.message??null});
-              return{status:'stepped-down',reason};
-            }
             const auto=solReassessmentEnabled&&elevationAllowed()&&r.correctionCount-r.lastElevationCount>=TUNING.elevationAfter&&!r.elevations.includes(fingerprint);
             // Optional correction limit: stop for the user; Resume grants another round of corrections.
             if(!manual&&!auto&&TUNING.maxCorrections>0&&r.correctionCount-(r.correctionLimitBase??0)>=TUNING.maxCorrections) {
@@ -418,11 +423,9 @@ export async function runNodeLoop({workspace,stateDir,objective,initialTask,code
       if(result.status==='resolver-ready')continue;
       // One task's engine (parallel run) never asks Assessment for another task: the parent plans the next round.
       // (A reassess comes only from this loop's own Assessment, which such an engine never runs.)
-      if(stopAfterTask&&['deferred','stepped-down'].includes(result.status))return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
+      if(stopAfterTask&&result.status==='deferred')return{status:result.status,output:result.reason??'Deferred: '+((await readControl()).deferReason??'')};
       if(result.status==='reassess'){previous={task:result.task,result:result.qa};task=null;continue;}
       if(result.status==='deferred'){previous={task,result:'Deferred: '+((await readControl()).deferReason??'')};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
-      if(result.status==='stepped-down'){previous={task,result:result.reason};task=null;r=null;saved=null;pending=null;correctionResume=null;continue;}
-      if(result.status==='passed'){const restored=noteStepDownApproval(task);if(restored)await emit('task-mode-restored',{mode:restored.mode,from:restored.from});}
       if(result.status!=='passed'||stopAfterTask)return result;
       previous={task,result:result.qa};task=null;r=null;saved=null;
     }

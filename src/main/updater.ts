@@ -6,7 +6,7 @@ import { DEFAULT_RELEASE_REPO, FORMER_SOURCE, SOURCE_URL, updateChannel } from "
 import type { BuildInfo, Settings, UpdateStatus } from "@shared/types";
 import { run } from "./lib/git";
 import { LOG_FORMAT, parseLog, parseLsRemote } from "./updater-parse";
-import { applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
+import { applyAppImageDelta, applyDelta, checkRelease, deltaUsable, downloadRelease, extractRelease, installAppImage, launchSwap, releasePlatform, type ReleaseInfo } from "./release-channel";
 import { RELEASE_PUBLIC_KEY } from "./release-key";
 
 // The update workspace sits next to the installed app: <root>\App\AgentDock.exe → <root>\Updates.
@@ -125,7 +125,8 @@ export class Updater {
     }
     // A quiet check keeps the current status (and any update notice) visible while it runs.
     if (!quiet) this.set({ state: "checking", source, branch, error: null });
-    const remote = await run("git", ["ls-remote", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
+    // "--": the source is always a repository, never read as an option.
+    const remote = await run("git", ["ls-remote", "--", source, `refs/heads/${branch}`], { timeoutMs: 60_000 });
     const latest = remote.code === 0 ? parseLsRemote(remote.stdout, branch) : null;
     if (!latest) {
       this.set({ state: "error", checkedAt: new Date().toISOString(), error: remote.code === 0 ? `Branch “${branch}” not found in ${source}` : `Could not read ${source}: ${remote.stderr.trim().split(/\r?\n/).pop()}` });
@@ -145,10 +146,10 @@ export class Updater {
   private async listCommits(source: string, branch: string, latest: string): Promise<UpdateStatus["commits"]> {
     mkdirSync(STAGING, { recursive: true });
     if (!existsSync(path.join(REPO, ".git"))) {
-      const clone = await run("git", ["clone", "--no-checkout", source, REPO], { timeoutMs: 10 * 60_000 });
+      const clone = await run("git", ["clone", "--no-checkout", "--", source, REPO], { timeoutMs: 10 * 60_000 });
       if (clone.code !== 0) return [];
     } else {
-      await run("git", ["remote", "set-url", "origin", source], { cwd: REPO });
+      await run("git", ["remote", "set-url", "--", "origin", source], { cwd: REPO });
     }
     await run("git", ["fetch", "--force", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: REPO, timeoutMs: 10 * 60_000 });
     const known = await run("git", ["cat-file", "-e", `${this.installed!.commit}^{commit}`], { cwd: REPO });
@@ -206,9 +207,22 @@ export class Updater {
         onReadyToQuit();
         return;
       }
-      this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
-      const zip = await downloadRelease(info, dir);
-      this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      let zip: string | null = null;
+      // Linux: a binary patch of the running AppImage first, checked against the signed manifest.
+      if (info.manifest.platform === "linux-x64" && deltaUsable(info, this.appVersion)) {
+        this.append(`Downloading the AppImage patch (${Math.max(1, Math.round(info.manifest.delta!.size / 1048576))} MB instead of ${Math.round(info.manifest.size / 1048576)} MB)…`);
+        try {
+          zip = await applyAppImageDelta(info, dir, process.env.APPIMAGE ?? "");
+          this.append(`Patched to ${info.manifest.version}; the AppImage matches the signed SHA-256.`);
+        } catch (error) {
+          this.append(`The smaller update could not be used (${(error as Error).message}); downloading the full release.`);
+        }
+      }
+      if (!zip) {
+        this.append(`Downloading ${info.manifest.file} (${Math.round(info.manifest.size / 1048576)} MB)…`);
+        zip = await downloadRelease(info, dir);
+        this.append(`Signature and SHA-256 verified (${info.manifest.sha256.slice(0, 16)}…).`);
+      }
       if (info.manifest.platform === "linux-x64") {
         const target = process.env.APPIMAGE ?? "";
         installAppImage(zip, target);

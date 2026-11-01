@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Agent, CliConnection, EngineEvent, Project, Settings, WorkflowRole } from "@shared/types";
 import { parseLlamaSlots } from "../src/main/local-models";
 import { isHiddenEvent } from "../src/renderer/src/lib/events";
+import { runFinished } from "../src/renderer/src/lib/format";
 import { parseRoleFile, roleSlug, serializeRole } from "../src/main/roles";
 import { parseImplementationPlan } from "../src/main/lib/plan";
-import { buildStatus, cycleStage, deriveRunState, interruptedWork } from "../src/main/lib/status";
+import { buildStatus, cycleStage, deriveRunState, interruptedWork, parallelRound } from "../src/main/lib/status";
 import { agentForRole, buildEngineArgs } from "../src/main/lib/engine-args";
 import { classifyPrompt, countCompactions, implementationUsage, parseInvocationUsage } from "../src/main/lib/usage";
 import { gitCommonDir, parsePorcelain } from "../src/main/lib/git";
@@ -114,16 +115,7 @@ describe("engine launch args", () => {
     const off = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, mode: "off" } } } });
     expect(off.args[off.args.indexOf("--supervisor") + 1]).toBe("off");
     expect(off.args).not.toContain("--sv-stall-minutes");
-    const review = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "act", reviewer: "local", reviewerModel: "qwen3", mayDefer: true } } } });
-    const rflag = (name: string) => review.args[review.args.indexOf(name) + 1];
-    expect([rflag("--supervisor-review"), rflag("--supervisor-reviewer"), rflag("--supervisor-model"), rflag("--supervisor-base-url"), rflag("--supervisor-may-defer")]).toEqual(["act", "local", "qwen3", "http://127.0.0.1:8080/v1", "true"]);
-    expect(rflag("--sv-plan-proposals")).toBe("true");
-    const noPlan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "propose", planProposals: false } } } });
-    expect(noPlan.args[noPlan.args.indexOf("--sv-plan-proposals") + 1]).toBe("false");
-    const noModel = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: { ...base, workflow: { ...base.workflow, supervisor: { ...base.workflow.supervisor!, review: "propose", reviewer: "local" } } } });
-    expect(noModel.problems).toContain("The local Supervisor reviewer needs a model name.");
-    expect(plan.args[plan.args.indexOf("--supervisor-review") + 1]).toBe("off");
-    expect(plan.args).not.toContain("--supervisor-reviewer");
+    for (const f of ["--supervisor-review", "--supervisor-reviewer", "--sv-plan-proposals"]) expect(plan.args).not.toContain(f);
   });
   it("maps the default agents onto engine flags", () => {
     const plan = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() });
@@ -389,6 +381,47 @@ describe("parsers", () => {
     ]);
     expect(history[1].summary).toBe("All checks passed");
   });
+  it("lists each task of a parallel round in task history, not the round itself", () => {
+    const history = taskHistory([
+      { timestamp: "2026-01-01T00:00:01Z", type: "parallel-task-finished", taskId: "A", status: "passed", attempt: 2 },
+      { timestamp: "2026-01-01T00:00:02Z", type: "parallel-task-finished", taskId: "B", status: "user-attention", summary: "QA failed twice" },
+      { timestamp: "2026-01-01T00:00:03Z", type: "parallel-task-finished", taskId: "C", status: "passed", attempt: 1 },
+      { timestamp: "2026-01-01T00:00:04Z", type: "qa-pass", taskId: "A", attempt: 2, qa: "Merged from agent-dock/parallel-A", parallel: true },
+      { timestamp: "2026-01-01T00:00:05Z", type: "parallel-merge-failed", taskId: "C", attempt: 1, message: "its check failed on the combined code" },
+      { timestamp: "2026-01-01T00:00:06Z", type: "user-attention", taskId: "parallel-round-1", qa: "Parallel round 1: ..." },
+    ]);
+    expect(history.map((h) => [h.taskId, h.outcome, h.attempts])).toEqual([
+      ["C", "failed", 1],
+      ["A", "approved", 2],
+      ["B", "attention", 0],
+    ]);
+    expect(history[0].summary).toBe("Not merged: its check failed on the combined code");
+    expect(history[2].summary).toBe("QA failed twice");
+  });
+  it("shows each task of a running parallel round with its own live stage", () => {
+    const round = { round: 2, startedAt: "2026-01-01T00:00:00Z", endedAt: null, tasks: [
+      { id: "A", name: "Add a", status: "running", folder: "A-x", branch: "agent-dock/parallel-A-x", startedAt: "2026-01-01T00:00:01Z" },
+      { id: "B", name: "Add b", status: "running", folder: "B-x", branch: "agent-dock/parallel-B-x", startedAt: "2026-01-01T00:00:01Z" },
+      { id: "C", status: "running", folder: "C-x" },
+      { id: "D", status: "merged", folder: "D-x" },
+      { id: "E", status: "starting" },
+    ] };
+    const lives = { "A-x": { stage: "implementing", clineStatus: "running", attempt: 1 }, "B-x": { stage: "WAITING_FOR_LIMIT", attempt: 2 }, "C-x": { stage: "qa", qaStatus: "running" }, "D-x": { stage: "pass" } };
+    const view = parallelRound(round, lives, true)!;
+    expect(view.round).toBe(2);
+    expect(view.tasks.map((t) => [t.id, t.stage, t.attempt, Boolean(t.waiting)])).toEqual([
+      ["A", "implementation", 1, false],
+      ["B", "waiting-limit", 2, true],
+      ["C", "qa", 0, false],
+      ["D", "merged", 0, false],
+      ["E", "starting", 0, false],
+    ]);
+    expect(view.tasks[0]).toMatchObject({ name: "Add a", branch: "agent-dock/parallel-A-x" });
+    expect(view.tasks[2].name).toBe("C");
+    expect(parallelRound({ ...round, endedAt: "2026-01-01T01:00:00Z" }, lives, true)).toBeNull();
+    expect(parallelRound(round, lives, false)).toBeNull();
+    expect(parallelRound(null, lives, true)).toBeNull();
+  });
 });
 
 describe("engine startup errors", () => {
@@ -503,43 +536,68 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(wrong.problems.join(" ")).toMatch(/not a Claude Code model/);
   });
 
-  it("passes enabled roles with an agent as a roles file and skips the rest with a warning", () => {
-    const list: Agent[] = [...agents(), { ...agents().find((a) => a.role === "qa")!, id: "sec", name: "Security agent", role: "custom", customRole: "security-review", model: "gpt-6.1-sol", reasoning: "high" }];
-    const roles = [role(), role({ id: "docs", name: "Docs", stage: "after-pass", gate: false }), role({ id: "off", name: "Off", enabled: false })];
+  it("passes only the Second review as a roles file; custom roles from earlier versions are not run", () => {
+    const qaKind = clis().find((c) => c.id === agents().find((a) => a.role === "qa")!.cliId)!.kind;
+    const other = clis().find((c) => c.kind === (qaKind === "codex" ? "claude" : "codex"))!;
+    const list: Agent[] = [...agents(), { ...agents().find((a) => a.role === "qa")!, id: "sec", name: "Review agent", role: "custom", customRole: "second-opinion-qa", cliId: other.id, model: "", reasoning: "high" }];
+    const roles = [role({ id: "second-opinion-qa", name: "Second review" }), role({ id: "docs", name: "Docs", stage: "after-pass", gate: false }), role({ id: "off", name: "Off", enabled: false })];
     const plan = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles });
-    expect(plan.roles).toEqual([{ id: "security-review", name: "Security review", stage: "before-qa", gate: true, cli: "codex", model: "gpt-6.1-sol", effort: "high", fast: false, instructions: "Look for injection." }]);
+    expect(plan.roles).toMatchObject([{ id: "second-opinion-qa", name: "Second review", stage: "before-qa", gate: true, cli: other.kind, effort: "high", instructions: "Look for injection." }]);
+    expect("fix" in plan.roles[0]).toBe(false);
     expect(flag(plan.args, "--roles-file")).toBe(path.join("C:\\state\\p1", "workflow-roles.json"));
-    expect(plan.warnings.join(" ")).toMatch(/“Docs” has no enabled agent/);
+    expect(plan.warnings.join(" ")).toMatch(/Custom workflow roles are no longer run: Docs/);
     expect(plan.problems).toEqual([]);
     const none = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings(), roles: [] });
     expect(none.args).not.toContain("--roles-file");
-    const fixer = buildEngineArgs({ project: project(), agents: list, clis: clis(), settings: settings(), roles: [role({ fix: true })] });
-    expect(fixer.roles[0].fix).toBe(true);
   });
 
-  it("passes loop limits only with guardrails off, and only those that differ from the engine defaults", () => {
+  it("never passes loop limits: the engine's own apply (settings saved by 0.38 lose them)", () => {
     const s = settings();
-    s.tuning = { ...s.tuning, elevationAfter: 5, maxCorrections: 8, taskMaxFiles: 1 };
-    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args).not.toContain("--elevation-after");
     s.advanced.engineGuardrails = false;
+    (s as unknown as { tuning: Record<string, unknown> }).tuning = { ...s.tuning, elevationAfter: 5, maxCorrections: 8, taskMaxFiles: 4 };
     const args = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
-    expect([flag(args, "--elevation-after"), flag(args, "--max-corrections")]).toEqual(["5", "8"]);
-    expect(args).not.toContain("--task-max-files");
+    for (const f of ["--elevation-after", "--max-corrections", "--resolver-max-strategies", "--task-max-files"]) expect(args).not.toContain(f);
   });
 
-  it("passes parallel tasks only for a cloud Implementation agent outside Unattended mode", () => {
+  it("passes per-run CLI settings for the CLIs a run uses, checked", () => {
+    expect(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: settings() }).args).not.toContain("--cli-settings");
+    const withSettings = clis().map((c) => (c.kind === "codex" || c.kind === "claude" ? { ...c, runSettings: c.kind === "codex" ? { model_verbosity: "low", sandbox_mode: "danger-full-access" } : { MAX_THINKING_TOKENS: 8000, permissionMode: "bypassPermissions" } } : c));
+    const args = buildEngineArgs({ project: project(), agents: agents(), clis: withSettings, settings: settings() }).args;
+    const passed = JSON.parse(args[args.indexOf("--cli-settings") + 1]);
+    const used = args[args.indexOf("--orchestrator") + 1];
+    expect(Object.keys(passed).every((k) => k === "codex" || k === "claude")).toBe(true);
+    expect(passed[used === "claude" ? "claude" : "codex"]).toEqual(used === "claude" ? { MAX_THINKING_TOKENS: 8000 } : { model_verbosity: "low" });
+    expect(JSON.stringify(passed)).not.toMatch(/sandbox_mode|permissionMode/);
+    // A Cline or OpenCode implementation gets its own connection's settings; one not used gets nothing.
+    const implCli = (clis().find((c) => c.id === agents().find((a) => a.role === "implementation")!.cliId))!;
+    expect(["cline", "opencode"]).toContain(implCli.kind);
+    const local = clis().map((c) => (c.kind === "cline" ? { ...c, runSettings: { retries: 3, yolo: true } } : c.kind === "opencode" ? { ...c, runSettings: { steps: 80 } } : c));
+    const localPassed = JSON.parse(flag(buildEngineArgs({ project: project(), agents: agents(), clis: local, settings: settings() }).args, "--cli-settings")!);
+    expect(localPassed[implCli.kind]).toEqual(implCli.kind === "cline" ? { retries: 3 } : { steps: 80 });
+    expect(localPassed[implCli.kind === "cline" ? "opencode" : "cline"]).toBeUndefined();
+  });
+
+  it("passes parallel tasks for cloud and local Implementation agents, in Unattended mode too", () => {
     const s = settings();
     s.workflow.parallelTasks = 3;
-    const local = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s });
-    expect(local.args).not.toContain("--parallel");
-    expect(local.warnings.join(" ")).toMatch(/need a cloud Implementation agent/);
+    // A local server: the engine caps the lanes to its slots; Ollama gets the requests at once set on its connection.
+    expect(flag(buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args, "--parallel")).toBe("3");
+    const ollamaAgents = agents().map((a) => (a.role === "implementation" ? { ...a, provider: "ollama" as const } : a));
+    const ollama = buildEngineArgs({ project: project(), agents: ollamaAgents, clis: clis(), settings: s });
+    expect(flag(ollama.args, "--ollama-parallel")).toBe("1");
+    expect(ollama.warnings.join(" ")).toMatch(/Ollama answers 1 request at once/);
+    const roomy = clis().map((c) => (c.kind === "ollama" ? { ...c, parallelRequests: 4 } : c));
+    const ok = buildEngineArgs({ project: project(), agents: ollamaAgents, clis: roomy, settings: s });
+    expect([flag(ok.args, "--ollama-parallel"), ok.warnings.some((w) => /Ollama answers/.test(w))]).toEqual(["4", false]);
     const claude = clis().find((c) => c.kind === "claude")!;
     const cloud = agents().map((a) => (a.role === "implementation" ? { ...a, cliId: claude.id, provider: undefined, model: "claude-sonnet-5-5" } : a));
     expect(flag(buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s }).args, "--parallel")).toBe("3");
     s.workflow.unattended = true;
+    // One budget for the whole run: the engine counts every task's usage toward the Unattended limits.
     const unattended = buildEngineArgs({ project: project(), agents: cloud, clis: clis(), settings: s });
-    expect(unattended.args).not.toContain("--parallel");
-    expect(unattended.warnings.join(" ")).toMatch(/off in Unattended mode/);
+    expect(flag(unattended.args, "--parallel")).toBe("3");
+    expect(flag(unattended.args, "--unattended")).toBe("true");
+    expect(unattended.warnings.join(" ")).not.toMatch(/Parallel tasks/);
   });
 
   it("passes the task size mode: eco by default, standard fixed, max with only the limits you set", () => {
@@ -548,16 +606,15 @@ describe("workflow roles, cloud implementation and loop limits", () => {
     expect(eco).not.toContain("--task-mode");
     s.workflow.taskMode = "standard";
     s.advanced.engineGuardrails = false;
-    s.tuning = { ...s.tuning, taskMaxFiles: 3 };
     const standard = buildEngineArgs({ project: project(), agents: agents(), clis: clis(), settings: s }).args;
     expect(flag(standard, "--task-mode")).toBe("standard");
     expect(standard).not.toContain("--task-max-files");
     s.workflow.taskMode = "eco";
-    const p = project({ workflowOverrides: { taskMode: "max", stepDown: false } });
+    const p = project({ workflowOverrides: { taskMode: "max" } });
     s.workflow.maxLimits = { files: 25, newLines: 0, readFiles: 0, timeoutMinutes: 90 };
     const max = buildEngineArgs({ project: p, agents: agents(), clis: clis(), settings: s }).args;
     expect(flag(max, "--task-mode")).toBe("max");
-    expect(flag(max, "--step-down")).toBe("false");
+    expect(max).not.toContain("--step-down");
     expect(flag(max, "--task-max-files")).toBe("25");
     expect(max).not.toContain("--task-max-new-lines");
     expect(flag(max, "--timeout-seconds")).toBe("5400");
@@ -636,6 +693,8 @@ describe("shared .git folder", () => {
     try {
       const repo = path.join(root, "repo");
       mkdirSync(path.join(repo, ".git", "worktrees", "wt"), { recursive: true });
+      mkdirSync(path.join(repo, ".git", "objects"));
+      writeFileSync(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
       mkdirSync(path.join(repo, "src"));
       writeFileSync(path.join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
       const wt = path.join(root, "wt");
@@ -665,6 +724,22 @@ describe("restart notice", () => {
     expect(interruptedWork(status(["cline-started"], { processAlive: true }))).toBeNull();
     expect(interruptedWork(status(["cline-started"], { runState: "paused" }))).toBeNull();
     expect(interruptedWork(status([]))).toBeNull();
+  });
+  it("never reports a usage-limit wait for an engine that is not running", () => {
+    expect(deriveRunState({ stage: "WAITING_FOR_LIMIT" }, {}, false).runState).toBe("idle");
+    expect(deriveRunState({ stage: "WAITING_FOR_CODEX" }, {}, false).runState).toBe("idle");
+  });
+  it("a run with every plan item checked is not finished when its engine died mid-step", () => {
+    const plan = { ...parseImplementationPlan(""), total: 2, completed: 2 };
+    const base = { projectId: "p", control: {}, processAlive: false, pid: null, git: { isRepo: true, branch: "main", head: null, remote: null, ahead: 0, behind: 0, changedFiles: [] }, plan, elevate: { available: false, reason: null }, resolver: { available: false, reason: null } };
+    const events = (types: string[]) => types.map((type) => ({ type, timestamp: "" })) as EngineEvent[];
+    const died = buildStatus({ ...base, live: { stage: "implementing" }, events: events(["qa-pass", "cline-started"]) });
+    expect(died.interrupted).toBe("Implementation");
+    expect(runFinished(died)).toBe(false);
+    const rested = buildStatus({ ...base, live: { stage: "pass" }, events: events(["cline-started", "cline-finished", "qa-pass"]) });
+    expect(rested.interrupted).toBeNull();
+    expect(runFinished(rested)).toBe(true);
+    expect(runFinished(buildStatus({ ...base, live: { stage: "complete" }, events: events(["loop-complete"]) }))).toBe(true);
   });
 });
 

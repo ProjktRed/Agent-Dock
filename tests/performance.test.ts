@@ -59,17 +59,18 @@ describe("second-opinion gate", () => {
   const role: WorkflowRole = { id: "second-opinion-qa", name: "Second-opinion QA", description: "Independent acceptance review", stage: "before-qa", gate: true, enabled: true, instructions: "Review acceptance criteria using engine evidence.", dir: "", warnings: [] };
   const plan = (agents: Agent[], roles = [role]) => buildEngineArgs({ project, agents, roles, clis: DEFAULT_CLIS, settings: structuredClone(DEFAULT_SETTINGS) });
   it("blocks an enabled second opinion without an agent and requires the other CLI", () => {
-    expect(plan(base()).problems.join(" ")).toMatch(/Second-opinion QA.*agent/i);
+    expect(plan(base()).problems.join(" ")).toMatch(/Second review.*agent/i);
     const same = { ...base().find(a => a.role === "qa")!, id: "second", role: "custom" as const, customRole: role.id };
     expect(plan([...base(), same]).problems.join(" ")).toMatch(/different CLI/i);
     const valid = plan([...base(), { ...same, cliId: "claude", model: "sonnet" }]);
     expect(valid.problems).toEqual([]);
     expect(valid.roles).toMatchObject([{ id: "second-opinion-qa", cli: "claude", gate: true, stage: "before-qa" }]);
   });
-  it("is opt-in and cannot silently become advisory or lose its instructions", () => {
+  it("is opt-in, always a gate before QA, and never runs without instructions", () => {
     expect(plan(base(), [{ ...role, enabled: false }]).problems).toEqual([]);
-    for (const changed of [{ ...role, gate: false }, { ...role, instructions: " " }, { ...role, stage: "after-pass" as const }]) {
-      expect(plan(base(), [changed]).problems.join(" ")).toMatch(/Second-opinion QA/i);
-    }
+    expect(plan(base(), [{ ...role, instructions: " " }]).problems.join(" ")).toMatch(/Second review needs instructions/i);
+    const reviewer = { ...base().find(a => a.role === "qa")!, id: "second", role: "custom" as const, customRole: role.id, cliId: "claude", model: "sonnet" };
+    const old = plan([...base(), reviewer], [{ ...role, gate: false, stage: "after-pass" as const }]);
+    expect(old.roles).toMatchObject([{ id: "second-opinion-qa", gate: true, stage: "before-qa" }]);
   });
 });

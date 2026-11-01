@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ProjectStatus } from "@shared/types";
 import { cleanError, useApp, type Route } from "../store";
-import { runTone } from "../lib/format";
+import { changedCount, plural, runTone } from "../lib/format";
 import { Icon, type IconName } from "./Icon";
 import { Dot, Modal } from "./ui";
 import { useUpdateStatus } from "../lib/updates";
@@ -23,6 +23,7 @@ function showAttentionPanel() {
 
 const NAV: { route: Route; label: string; icon: IconName }[] = [
   { route: "overview", label: "Overview", icon: "overview" },
+  { route: "tasks", label: "Tasks", icon: "board" },
   { route: "projects", label: "Projects", icon: "folder" },
   { route: "workflow", label: "Workflow", icon: "workflow" },
   { route: "agents", label: "Agents", icon: "agent" },
@@ -57,7 +58,7 @@ export function Sidebar() {
       <div className="sidefoot lbl">
         <span className="row" style={{ gap: 6 }}>
           <Dot tone={Object.values(statuses).some((s) => s.processAlive) ? "ok" : "mut"} />
-          {Object.values(statuses).filter((s) => s.processAlive).length} engine(s) running
+          {plural(Object.values(statuses).filter((s) => s.processAlive).length, "engine")} running
         </span>
         <span>{healthList.length ? `${healthy} of ${healthList.length} CLIs healthy` : "Checking CLIs…"}</span>
       </div>
@@ -334,7 +335,7 @@ export function StatusBar() {
       </span>
       {activeStatus?.git.isRepo && (
         <span>
-          Git: {activeStatus.git.branch} · {activeStatus.git.changedFiles.length ? `${activeStatus.git.changedFiles.length} changed` : "clean"}
+          Git: {activeStatus.git.branch} · {changedCount(activeStatus.git) ? `${changedCount(activeStatus.git)} changed` : "clean"}
           {activeStatus.git.head ? ` · ${activeStatus.git.head.slice(0, 7)}` : ""}
         </span>
       )}

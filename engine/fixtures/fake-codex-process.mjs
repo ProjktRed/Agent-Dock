@@ -4,6 +4,20 @@ if (process.argv.includes("--approve-for-me") && process.argv.includes("--sandbo
   console.error("Conflicting approval and sandbox arguments");
   process.exit(2);
 }
+// The run-start sandbox probe (codex sandbox -P ...): an old Codex without permissions profiles, unless a test
+// asks for a passing probe. Not counted as a Codex run.
+if (process.argv[3] === "sandbox") {
+  if (process.env.FAKE_CODEX_PROBE === "pass") console.log(JSON.stringify({ insideWrite: process.argv.includes("permissions.agent-dock.extends=\":read-only\"") ? "EPERM" : "ok", outsideWrite: "EPERM", deniedRead: "EPERM", network: "EACCES" }));
+  else console.error("error: unrecognized subcommand 'sandbox'");
+  process.exit(process.env.FAKE_CODEX_PROBE === "pass" ? 0 : 2);
+}
+// The run-start terminal check (codex -c features.unified_exec_tty=false features list): a current Codex that takes
+// the setting, unless a test asks for one that keeps terminals on. Not counted as a Codex run.
+if (process.argv.slice(-2).join(" ") === "features list") {
+  const tty = process.env.FAKE_CODEX_TTY === "on" || !process.argv.includes("features.unified_exec_tty=false") ? "true" : "false";
+  console.log(`unified_exec                             stable             true\nunified_exec_tty                         stable             ${tty}`);
+  process.exit(0);
+}
 const pidFile = process.argv[2];
 if (process.env.FAKE_CODEX_ARGS_FILE) {
   await writeFile(process.env.FAKE_CODEX_ARGS_FILE, JSON.stringify(process.argv.slice(3)));
@@ -20,5 +34,12 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const output = process.argv[process.argv.indexOf("--output-last-message") + 1];
 await writeFile(output, input);
+// A tool call, with or without the protection hook having logged a decision next to the prompt.
+if (process.env.FAKE_CODEX_TOOL) {
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "ls", status: "completed" } }));
+  if (process.env.FAKE_CODEX_TOOL === "hooked") writeFileSync(output.replace(/result\.json$/, "scope-hook.ndjson"), JSON.stringify({ tool: "Bash", allowed: true, reason: null }) + "\n");
+}
+// A call that never ends (process-bounds.mjs ends it).
+if (process.env.FAKE_CODEX_HANG) await new Promise(() => setInterval(() => {}, 1000));
 // Producing task JSON is not enough: the manager must wait for actual exit.
 await new Promise((resolve) => setTimeout(resolve, 150));

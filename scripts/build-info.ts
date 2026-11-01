@@ -1,6 +1,7 @@
 import {execFileSync} from 'node:child_process';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {hashFiles, MANIFEST_FILE} from '../src/main/lib/integrity';
 
 export function buildInfoPlugin(repo: string, env: NodeJS.ProcessEnv = process.env, now = () => new Date().toISOString()) {
   const git = (...args: string[]) => execFileSync('git', args, {cwd:repo, encoding:'utf8', windowsHide:true, stdio:['ignore','pipe','pipe']}).trim();
@@ -17,6 +18,16 @@ export function buildInfoPlugin(repo: string, env: NodeJS.ProcessEnv = process.e
         source, builtAt:now(),
       };
       writeFileSync(join(repo,'build-info.json'), `${JSON.stringify(info,null,2)}\n`);
+    },
+  };
+}
+
+/** Hashes of the engine files the packaged app runs from outside app.asar (src/main/lib/integrity.ts). */
+export function engineManifestPlugin(repo: string) {
+  return {
+    name: 'agent-dock-engine-manifest',
+    generateBundle(this: { emitFile(file: { type: 'asset'; fileName: string; source: string }): void }) {
+      this.emitFile({ type: 'asset', fileName: MANIFEST_FILE, source: `${JSON.stringify(hashFiles(repo), null, 2)}\n` });
     },
   };
 }

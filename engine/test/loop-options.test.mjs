@@ -52,3 +52,16 @@ test("loop options reject invalid context and timeout instead of silently changi
   assert.throws(() => parseLoopOptions(["--cline-context-tokens", "0"]), /cline-context-tokens/);
   assert.throws(() => parseLoopOptions(["--timeout-seconds", "1.5"]), /timeout-seconds/);
 });
+
+test("a custom provider key variable is hidden in logs even when its name does not look like a key", async (t) => {
+  const { parseLoopOptions } = await import("../src/loop-options.mjs");
+  const { redactText, secretValuesFromEnv, useSecretValues } = await import("../src/redact.mjs");
+  t.after(() => { delete process.env.MY_CRED; useSecretValues(secretValuesFromEnv()); });
+  // A secret read at startup and since removed from the environment (as startup-env.mjs does) stays hidden.
+  useSecretValues(["n0tifySecret9"]);
+  process.env.MY_CRED = "q7Rk2custom";
+  assert.equal(redactText("value q7Rk2custom", { patterns: false }), "value q7Rk2custom");
+  parseLoopOptions(["--provider", "openai", "--provider-base-url", "http://127.0.0.1:1/v1", "--provider-api-key-env", "MY_CRED"]);
+  assert.equal(redactText("value q7Rk2custom", { patterns: false }), "value [redacted:secret]");
+  assert.equal(redactText("token n0tifySecret9", { patterns: false }), "token [redacted:secret]");
+});

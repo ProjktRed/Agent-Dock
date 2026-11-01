@@ -91,9 +91,24 @@ describe("GitHub skill import", () => {
     const dir = await tmp();
     await mkdir(path.join(dir, "references"));
     await writeFile(path.join(dir, "references", "a.md"), "Reference A");
+    // Audit AD-09: the dot was unescaped, so secretxmd (no extension) was attached too.
+    await writeFile(path.join(dir, "references", "secretxmd"), "NOT MARKDOWN");
     const skill = { id: "imported:x", name: "x", description: "", dir, source: "imported" as const, instructions: "Main", warnings: [] };
     expect(await skillDeliveryText(skill)).toEqual({ text: "Main\n\n### File: references/a.md\nReference A", referencesLeftOut: false });
     await writeFile(path.join(dir, "references", "big.md"), "x".repeat(SKILL_MAX_CHARS));
     expect(await skillDeliveryText(skill)).toEqual({ text: "Main", referencesLeftOut: true });
+  });
+});
+
+describe("skill folder names", () => {
+  it("blocks a skill name made only of dots, so an import only ever writes its own folder", async () => {
+    const { fetchImpl } = fakeGitHub({ "skills/a/SKILL.md": skillMd(".."), "skills/b/SKILL.md": skillMd(". ."), "skills/c/SKILL.md": skillMd("ok") });
+    const preview = await previewLibraryImport("https://github.com/anthropics/skills/tree/main/skills", fetchImpl);
+    for (const name of ["..", ". ."]) expect(preview.skills.find((s) => s.name === name)!.findings).toEqual([expect.objectContaining({ level: "block" })]);
+    const root = await tmp();
+    await writeFile(path.join(root, "keep.txt"), "x");
+    await expect(installLibraryImport(preview.token, [".."], root)).rejects.toThrow(/blocking|not in this preview/);
+    await installLibraryImport(preview.token, ["ok"], root);
+    expect((await readdir(root)).sort()).toEqual(["anthropics__skills", "keep.txt"]);
   });
 });

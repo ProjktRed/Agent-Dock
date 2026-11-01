@@ -1,15 +1,26 @@
 import { spawn } from "node:child_process";
 import {installProtection} from './guard/install-protection.mjs';
+import {sweepCodexTemp} from './guard/codex-confinement.mjs';
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson } from "./dashboard-state.mjs";
 import { autoSkillCatalogText, managerHandoffSkill, taskSkillMode } from "./task-handoff-skill.mjs";
 import { TUNING, readFilesText, taskScopeText, workerSizingText } from "./engine-tuning.mjs";
-import { CODEX_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
+import { withoutSecrets } from "./secret-env.mjs";
+import { codexAuthEnv } from "./codex-provider-env.mjs";
+import { launchSpec } from "./cmd-line.mjs";
 import { redactText } from "./redact.mjs";
 import {codexSkillArgs} from './skill-isolation.mjs';
 import { codexUsage, noteUsage } from "./run-budget.mjs";
+import { codexRunArgs } from "./cli-run-settings.mjs";
+import { CODEX_FAIL_CLOSED } from "./guard/reasons.mjs";
+import { appendBounded, CODEX_CALL_TIMEOUT_MS, killProcessTree } from "./process-bounds.mjs";
+
+/** Codex used a tool (patch, shell, MCP) according to its --json events. */
+export function codexUsedTools(stdout) {
+  return /"type"\s*:\s*"(?:file_change|command_execution|mcp_tool_call|patch_apply|exec_command)/.test(stdout);
+}
 
 // Live bindings: importers (node-loop, recovery-loop) read the active orchestrator's labels.
 export let QA_MODEL = "gpt-6.1-sol";
@@ -73,8 +84,8 @@ export function parseRecoveryResult(text) {
 
 const taskSchema = {
   type: "object", additionalProperties: false,
-  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } }, planItems: { type: "array", items: { type: "string" } } },
-  required: ["id", "name", "prompt", "qaCommand", "allowedPaths", "planItems"],
+  properties: { id: { type: "string" }, name: { type: "string" }, prompt: { type: "string" }, qaCommand: { type: "string" }, allowedPaths: { type: "array", items: { type: "string" } }, planItems: { type: "array", items: { type: "string" } }, planItemIds: { type: "array", items: { type: "string" } } },
+  required: ["id", "name", "prompt", "qaCommand", "allowedPaths", "planItems", "planItemIds"],
 };
 export const codexOutputSchema = {
   type: "object", additionalProperties: false,
@@ -122,10 +133,13 @@ export function parseCodexResult(text) {
     if (!value.task || typeof value.task !== "object" || Array.isArray(value.task)) throw new Error("Invalid Codex structured result: task must be an object or null");
     // planItems arrived in 0.20.2; results saved by older versions (or written by hand) have none.
     if (!Object.hasOwn(value.task, "planItems")) value.task.planItems = [];
+    // planItemIds (the Task board keys of those items) arrived after 0.36; earlier results have none.
+    if (!Object.hasOwn(value.task, "planItemIds")) value.task.planItemIds = [];
     const taskKeys = Object.keys(taskSchema.properties);
     for (const key of taskKeys) if (!Object.hasOwn(value.task, key)) throw new Error(`Invalid Codex structured result: task missing ${key}`);
     for (const key of Object.keys(value.task)) if (!taskKeys.includes(key)) throw new Error(`Invalid Codex structured result: unexpected task.${key}`);
     if (!Array.isArray(value.task.planItems) || value.task.planItems.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.planItems must be a string array");
+    if (!Array.isArray(value.task.planItemIds) || value.task.planItemIds.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.planItemIds must be a string array");
     for (const key of ["id", "name", "prompt", "qaCommand"]) if (typeof value.task[key] !== "string") throw new Error(`Invalid Codex structured result: task.${key} must be a string`);
     if (!Array.isArray(value.task.allowedPaths) || value.task.allowedPaths.some((entry) => typeof entry !== "string")) throw new Error("Invalid Codex structured result: task.allowedPaths must be a string array");
   }
@@ -199,7 +213,7 @@ export function buildQaPrompt(qaPacket) {
 export class CodexWorker {
   constructor({
     workspace, stateDir, command = "codex", prefixArgs = [], launcher, additionalWritableDirs = [], windowsSandbox, roleOverrides = {},
-    spawnProcess = spawn, env = process.env,
+    spawnProcess = spawn, env = process.env, callTimeoutMs = CODEX_CALL_TIMEOUT_MS,
     writeProcessState = atomicWriteJson,
     clearProcessState = (file) => rm(file, { force: true }),
     isProcessAlive = async (pid) => {
@@ -222,6 +236,7 @@ export class CodexWorker {
     this.writeProcessState = writeProcessState;
     this.clearProcessState = clearProcessState;
     this.isProcessAlive = isProcessAlive;
+    this.callTimeoutMs = callTimeoutMs;
   }
 
   async assertIdle() {
@@ -238,6 +253,8 @@ export class CodexWorker {
   }
 
   async invoke(prompt, sandbox = "read-only", { model, reasoningEffort, fast = false, schema = codexOutputSchema, parse = parseCodexResult } = {}) {
+    // First: the active provider's key is registered as a secret before the prompt is redacted and written.
+    const keep = codexAuthEnv({ env: this.env });
     prompt = redactText(prompt, { assignments: false });
     await this.assertIdle();
     const invocation = path.join(this.stateDir, "codex", randomUUID());
@@ -255,11 +272,17 @@ export class CodexWorker {
       ...(reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
       // Codex's Fast speed tier (model/list serviceTiers id "priority"); omitted keeps the user's config.
       ...(fast ? ["-c", `service_tier="priority"`] : []),
+      // Per-run settings from CLIs › Codex › Settings (cli-run-settings.mjs: none loosens the sandbox).
+      ...codexRunArgs(),
     ];
-    const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write'});
+    // Read-only and workspace-write calls get Agent Dock's probed permissions profile (or the plain sandbox, stage 2).
+    const codexMode = sandbox === "workspace-write" ? "write" : sandbox === "read-only" ? "read" : null;
+    const protectionArgs=await installProtection({cli:'codex',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:sandbox==='workspace-write',
+      codexMode,launcher:{command:this.command,prefixArgs:this.prefixArgs,env:withoutSecrets(this.env,{keep})},
+      codexExtraArgs:this.windowsSandbox?["-c",`windows.sandbox=${JSON.stringify(this.windowsSandbox)}`]:[],writableDirs:sandbox==="workspace-write"?this.additionalWritableDirs:[]});
     const args = [...this.prefixArgs, "exec", "--ephemeral", "--json", "--color", "never", ...modelArgs, ...extraWritableArgs, ...protectionArgs,
       ...codexSkillArgs({workspace:this.workspace, env:this.env}),
-      ...(sandbox === "workspace-write" ? ["--approve-for-me"] : ["--sandbox", sandbox]),
+      ...(codexMode ? [] : ["--sandbox", sandbox]),
       "--cd", this.workspace, "--output-schema", schemaFile,
       "--output-last-message", outputFile, "-"];
     this.activeCount++;
@@ -268,20 +291,30 @@ export class CodexWorker {
     let output = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep: CODEX_AUTH_ENV }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const launch = launchSpec(this.command, args);
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: withoutSecrets(this.env, { keep }), windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false;
         let closed = false;
         let closeCode = 1;
         let registrationError = null;
         let finished = false;
-        child.stdout.on("data", (chunk) => { stdoutOutput += chunk; });
-        child.stderr.on("data", (chunk) => { stderrOutput += chunk; });
+        // A call that never ends (a hung CLI, a check that never exits) is ended with its process tree.
+        let timedOut = false;
+        const deadline = setTimeout(() => { timedOut = true; killProcessTree(child); }, this.callTimeoutMs);
+        child.stdout.on("data", (chunk) => { stdoutOutput = appendBounded(stdoutOutput, chunk); });
+        child.stderr.on("data", (chunk) => { stderrOutput = appendBounded(stderrOutput, chunk); });
         child.stdin.on("error", () => {}); // Early CLI exit is reported by close.
         child.on("error", reject);
         const finishClosed = async () => {
           if (finished || !closed || (!registered && !registrationError)) return;
           finished = true;
+          clearTimeout(deadline);
           try {
+            if (timedOut) {
+              if (registered) await this.clearProcessState(this.pidFile);
+              reject(new Error(`Codex did not finish within ${Math.round(this.callTimeoutMs / 60_000) || "<1"} minutes and was ended.`));
+              return;
+            }
             if (registered) await this.clearProcessState(this.pidFile);
             if (registrationError) {
               reject(new Error(`Failed to register Codex process: ${registrationError.message}`));
@@ -297,6 +330,7 @@ export class CodexWorker {
         // Never resolve on JSON output, final-message events, or even 'exit':
         // 'close' means the process has exited AND its stdio handles are closed.
         child.on("close", (code) => {
+          sweepCodexTemp();
           closed = true;
           closeCode = code ?? 1;
           void finishClosed();
@@ -325,6 +359,9 @@ export class CodexWorker {
       await writeFile(path.join(invocation, "events.ndjson"), output);
       noteUsage(codexUsage(stdoutOutput), model);
     }
+    // Fail closed, as implementation does: tool use without a single hook decision means the protection hook did not run.
+    const decisions = (await readFile(path.join(invocation, "scope-hook.ndjson"), "utf8").catch(() => "")).trim();
+    if (codexUsedTools(stdoutOutput) && !decisions) throw new Error(CODEX_FAIL_CLOSED);
     return parse(await readFile(outputFile, "utf8"));
   }
 
@@ -334,7 +371,19 @@ export class CodexWorker {
     return { model: override.model, reasoningEffort: override.effort ?? "medium", ...(override.fast ? { fast: true } : {}) };
   }
 
-  async assess({ objective, previous }) {
+  // A task prompt missing its "Task skill:" line is sent back to Assessment once with the reason; a second miss still blocks.
+  async assess(input) {
+    const first = await this.assessOnce(input);
+    if (first.status !== "task" || /^Task skill:/im.test(String(first.task?.prompt ?? ""))) return this.withTaskSkill(first);
+    return this.withTaskSkill(await this.assessOnce(input, 'Your previous answer was rejected: the task prompt must contain a line "Task skill: diagnose", "Task skill: implement" or "Task skill: verify" as the bounded-task-handoff skill requires. Return the task again with that line.'));
+  }
+
+  withTaskSkill(result) {
+    if (result.status === "task") taskSkillMode(result.task, "", { required: true });
+    return result;
+  }
+
+  async assessOnce({ objective, previous }, retryNote = "") {
     const result = await this.invoke([
       "You are Assessment, performing one assessment operation. Inspect this repository and its instructions.",
       managerHandoffSkill("assessment") + autoSkillCatalogText(),
@@ -342,6 +391,7 @@ export class CodexWorker {
       workerSizingText() + ". State CREATE or MODIFY for every file and never ask it to verify that a CREATE file exists. Write into the prompt the exact exported signatures and types, the exact import lines with relative paths correct from the target file, and a minimal skeleton or fixture builder for new tests. " + readFilesText() + " Give one qaCommand that runs only this task's test plus typecheck if needed.",
       "Return status task with exact allowedPaths, a relevant executable qaCommand, and acceptance criteria in prompt.",
       "planItems: the unchecked IMPLEMENTATION_PLAN.md items that will be finished once this task is approved, counting work already committed (for example, a tests task that completes an item whose code an earlier task added, or an item the repository already fully satisfies). Copy each item's text exactly, without the leading \"- [ ] \"; use [] when none. Do not add the plan file to allowedPaths for this: after QA approves the task, the engine checks these items off itself.",
+      "planItemIds: when the objective lists a Task priority, the bracketed id of each item in planItems, in the same order; otherwise [].",
       "qaCommand must use an existing project npm test/run script, or a supported local check (npx tsc, eslint, prettier, vitest or playwright), optionally chained with &&. No arbitrary executables, package installation, interpreters, shell expressions or output redirection. Protected paths cannot be inspected or edited; narrow file searches to public source directories and use git ls-files for discovery.",
       "Before returning a task, verify that allowedPaths are sufficient for every implementation change reasonably required to make qaCommand pass. Do not create a task whose required contract change predictably breaks typed fixtures or callers that the task forbids Cline to update.",
       "If required validation reveals or predictably requires changes outside allowedPaths, return manual-review instead of creating an impossible task or expecting Cline to cross the scope boundary.",
@@ -352,8 +402,8 @@ export class CodexWorker {
       "Do not launch Cline, another Codex, background processes, or wait for development. Return JSON and exit.",
       "User objective: " + objective,
       "Previous completed task: " + JSON.stringify(previous ?? null),
+      ...(retryNote ? [retryNote] : []),
     ].join("\n"), "read-only", this.optionsForRole("assessment"));
-    if (result.status === "task") taskSkillMode(result.task, "", { required: true });
     return result;
   }
 

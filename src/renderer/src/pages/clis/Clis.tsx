@@ -1,13 +1,15 @@
 import { useState } from "react";
 import type { CliConnection } from "@shared/types";
 import { cleanError, useApp } from "../../store";
-import { clock, connectionMeta } from "../../lib/format";
+import { clock, connectionMeta, num } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Dot, Empty, Modal, ProvenanceChip, Spinner, St, Tabs } from "../../components/ui";
 import { AddCliDialog } from "./AddCliDialog";
 import { effortLabel, useModelCatalog } from "../../lib/models";
+import { CAPPED_KEY_HINT } from "@shared/key-limit";
+import { CliSettings, hasCliSettings } from "./CliSettings";
 
-type DetailTab = "connection" | "models" | "caps" | "env" | "logs";
+type DetailTab = "connection" | "models" | "settings" | "caps" | "env" | "logs";
 
 function ConnectionForm({ cli }: { cli: CliConnection }) {
   const { setClis, toast, healths } = useApp();
@@ -38,7 +40,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
         {cli.kind === "openai" ? (
           <label className="field"><span>API key</span>
             <input className="input mono" type="password" autoComplete="off" value={secret ?? ""} placeholder={cli.hasSecret ? "•••••••• stored · type to replace" : "Not set"} onChange={(e) => setSecret(e.target.value)} />
-            <span className="hint">Encrypted with Windows DPAPI. Never displayed.</span>
+            <span className="hint">Encrypted with Windows DPAPI. Never displayed. {CAPPED_KEY_HINT}</span>
           </label>
         ) : (
           <div className="field"><span>Stored credential</span><div className="row" style={{ minHeight: 36 }} ><span className="sub">{exe ? "Managed by the CLI itself" : "None required"}</span></div></div>
@@ -49,7 +51,7 @@ function ConnectionForm({ cli }: { cli: CliConnection }) {
       <div className="well pad stack" style={{ gap: 10 }}>
         <h3 className="h3">Context limits</h3>
         <div className="row wrap" style={{ gap: 24 }}>
-          <div><div className="sub">Provider-defined</div><div className="row">{h?.contextMax.value ? h.contextMax.value.toLocaleString() : "Unknown"}{h && <ProvenanceChip value={h.contextMax.provenance} />}</div><div className="hint">{h?.contextMax.source}</div></div>
+          <div><div className="sub">Provider-defined</div><div className="row">{h?.contextMax.value ? num(h.contextMax.value) : "Unknown"}{h && <ProvenanceChip value={h.contextMax.provenance} />}</div><div className="hint">{h?.contextMax.source}</div></div>
           <div className="sub" style={{ maxWidth: 280 }}>Your limit is set per agent (Agents › Maximum context), because the engine applies it per worker.</div>
         </div>
       </div>
@@ -103,6 +105,7 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
   const { setClis, toast } = useApp();
   const [busy, setBusy] = useState(false);
   const [dir, setDir] = useState(cli.modelsDir ?? "");
+  const [atOnce, setAtOnce] = useState(String(cli.parallelRequests ?? 1));
   const collected = cli.collected;
   const collect = async () => {
     setBusy(true);
@@ -134,6 +137,16 @@ export function LocalModels({ cli }: { cli: CliConnection }) {
             {cli.modelsDir && <button className="btn ghost sm" onClick={() => void saveDir(null)}>Turn off</button>}
           </div>
           <span className="hint">With a folder set, Agent Dock starts llama.cpp itself when it is not running (llama-server from PATH, or the launcher script in Settings › Advanced) with --models-dir: the server lists every model in the folder and loads the one the Implementation agent uses. Each subfolder counts as one model. Applies when the server next starts.</span>
+        </div>
+      )}
+      {cli.kind === "ollama" && (
+        <div className="well pad stack" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8 }}><b style={{ fontWeight: 600 }} className="grow">Requests at once</b><span className="chip">{cli.parallelRequests ?? 1}</span></div>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input tnum" style={{ width: 90 }} inputMode="numeric" value={atOnce} onChange={(e) => setAtOnce(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} aria-label="Requests Ollama answers at once" />
+            <button className="btn sm" disabled={!Number(atOnce) || Number(atOnce) === (cli.parallelRequests ?? 1)} onClick={async () => setClis(await window.api.saveCli({ ...cli, parallelRequests: Math.min(16, Math.max(1, Number(atOnce))) }))}>Save</button>
+          </div>
+          <span className="hint">How many requests your Ollama answers at the same time: its OLLAMA_NUM_PARALLEL setting, which Ollama does not report. Parallel tasks on Ollama run at most this many at once. Keep 1 unless you set OLLAMA_NUM_PARALLEL (the Settings tab shows what Ollama uses).</span>
         </div>
       )}
       <div className="row" style={{ gap: 10 }}>
@@ -256,14 +269,16 @@ export function ClisPage() {
             {h && h.state !== "connected" && (
               <div className="banner errb" role="alert"><Icon name="warn" className="err" /><div className="grow"><div style={{ fontWeight: 600 }}>{connectionMeta[h.state].label}</div><div className="sub">{h.detail}</div></div></div>
             )}
-            <Tabs<DetailTab> label="Connection sections" small value={tab} onChange={setTab} options={[
+            <Tabs<DetailTab> label="Connection sections" small value={tab === "settings" && !hasCliSettings(sel) ? "connection" : tab} onChange={setTab} options={[
               { value: "connection", label: "Connection" },
               { value: "models", label: "Models" },
+              ...(hasCliSettings(sel) ? [{ value: "settings" as const, label: "Settings" }] : []),
               { value: "caps", label: "Capabilities" },
               { value: "env", label: "Environment" },
               { value: "logs", label: "Logs" },
             ]} />
-            {tab === "connection" && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
+            {(tab === "connection" || (tab === "settings" && !hasCliSettings(sel))) && <ConnectionForm cli={sel} key={sel.id + JSON.stringify(sel)} />}
+            {tab === "settings" && hasCliSettings(sel) && <CliSettings key={sel.id} cli={sel} />}
             {tab === "models" && (sel.kind === "llamacpp" || sel.kind === "ollama") && <LocalModels key={sel.id} cli={sel} />}
             {tab === "models" && (sel.kind === "codex" || sel.kind === "claude") && <CloudModels kind={sel.kind} name={sel.name} />}
             {tab === "models" && sel.kind === "cline" && (

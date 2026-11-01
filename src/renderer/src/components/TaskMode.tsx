@@ -4,7 +4,7 @@ import { TASK_MODES, maxLimitsOf, suggestTaskMode, taskModeOf } from "@shared/ta
 import { useApp } from "../store";
 import { useLimits } from "../pages/overview/UsageTab";
 import { Icon } from "./Icon";
-import { Modal, SetRow, Support, Toggle } from "./ui";
+import { Modal, Segmented, SetRow, Support } from "./ui";
 
 /** Asks before Max mode is turned on. */
 export function MaxModeConfirm({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) {
@@ -29,16 +29,14 @@ export function TaskModePicker({ value, onChange, label = "Task size" }: { value
   const [confirm, setConfirm] = useState(false);
   const pick = (mode: TaskMode) => (mode === value ? undefined : mode === "max" ? setConfirm(true) : onChange(mode));
   return (
-    <div className="row wrap" role="radiogroup" aria-label={label} style={{ gap: 6 }}>
-      {TASK_MODES.map((m) => (
-        <button key={m.mode} role="radio" aria-checked={value === m.mode} className={`btn sm${value === m.mode ? " primary" : ""}`} title={m.desc} onClick={() => pick(m.mode)}>{m.label}</button>
-      ))}
+    <>
+      <Segmented label={label} small value={value} onChange={pick} options={TASK_MODES.map((m) => ({ value: m.mode, label: m.label, title: m.desc }))} />
       {confirm && <MaxModeConfirm onConfirm={() => onChange("max")} onClose={() => setConfirm(false)} />}
-    </div>
+    </>
   );
 }
 
-/** Settings › Workflow rules: the default task size, the step-down and a suggestion for the current agents. */
+/** Settings › Workflow rules: the default task size and a suggestion for the current agents. */
 export function TaskModeCard() {
   const { snap, saveSettings } = useApp();
   const limits = useLimits();
@@ -59,10 +57,7 @@ export function TaskModeCard() {
           ? <span className="chip ok">{TASK_MODES.find((m) => m.mode === suggestion.mode)!.label} (current)</span>
           : <button className="btn sm" onClick={() => set({ taskMode: suggestion.mode })}>Use {TASK_MODES.find((m) => m.mode === suggestion.mode)!.label}</button>}
       </SetRow>
-      <SetRow title="Step down on repeated failures" desc="Standard or Max: a task that fails review twice is set aside (its work kept in a git stash) and redone one size smaller, Max to Standard and Standard to Eco, until its plan items are done.">
-        <Toggle on={w.stepDown !== false} disabled={mode === "eco"} onChange={(stepDown) => set({ stepDown })} label="Step down on repeated failures" />
-      </SetRow>
-      <span className="hint">Projects can override the mode in Projects › Workflow. Eco's sizing can be tuned in Context limits with engine guardrails off.</span>
+      <span className="hint">Projects can override the mode in Projects › Workflow.</span>
     </section>
   );
 }
@@ -107,7 +102,7 @@ export function MaxLimitsDialog({ onClose }: { onClose: () => void }) {
         <label className="field" key={f.key}>
           <span>{f.label} <span className="hint">{f.desc}</span></span>
           <span className="row" style={{ gap: 8 }}>
-            <input className="input mono" style={{ width: 120 }} inputMode="numeric" placeholder="No limit" value={draft[f.key]} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} aria-label={f.label} />
+            <input className="input tnum" style={{ width: 120 }} inputMode="numeric" placeholder="No limit" value={draft[f.key]} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} aria-label={f.label} />
             <span className="sub">{f.unit}</span>
           </span>
         </label>

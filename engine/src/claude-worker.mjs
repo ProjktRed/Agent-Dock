@@ -5,10 +5,13 @@ import path from "node:path";
 import { CodexUsageLimitError, CodexWorker, codexOutputSchema, parseCodexResult } from "./codex-worker.mjs";
 import { CLAUDE_AUTH_ENV, withoutSecrets } from "./secret-env.mjs";
 import { redactText } from "./redact.mjs";
-import {installProtection} from './guard/install-protection.mjs';
+import {installProtection,claudeScrubProblem} from './guard/install-protection.mjs';
 import {claudeSkillArgs} from './skill-isolation.mjs';
 import { claudeUsage, noteUsage } from "./run-budget.mjs";
 import { saveClaudeRateLimit } from "./claude-limits.mjs";
+import { cliLauncher, launchSpec } from "./cmd-line.mjs";
+import { claudeRunArgs, claudeRunEnv } from "./cli-run-settings.mjs";
+import { webAccess, CLAUDE_WEB_TOOLS } from "./web-access.mjs";
 
 // Claude Code CLI as the orchestrator: Sonnet assesses/QA/resolves, Opus elevates.
 export const CLAUDE_MODELS = { assessment: "sonnet", qa: "sonnet", resolver: "sonnet", elevate: "opus", reasoning: "medium" };
@@ -22,15 +25,52 @@ const QA_TOOLS = [...READ_ONLY_TOOLS, ...shell([
   "npm test", "npm run test", "npm run typecheck", "npm run lint", "npm run build", "npm run format:check",
   "npx vitest run", "npx playwright test", "npx prettier --check", "git add", "git commit",
 ])];
-const NEVER_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent", "WebFetch", "WebSearch"];
+const NEVER_TOOLS = ["Edit", "Write", "NotebookEdit", "Agent"];
 const limitText = /(usage limit|limit reached|hit your (?:usage )?limit|rate[ -]limit|credit balance is too low|resets? (?:at|in))/i;
 
-/** Child sessions must not inherit the launching Claude session's host/session wiring. */
+/** Every Claude Code session reads the user's own settings only, never the workspace's .claude/ settings (hooks, permissions). */
+export const CLAUDE_SETTING_SOURCES = ["--setting-sources", "user"];
+
+/** Where Claude Code keeps its settings and sign-in: the same folder the app's settings editor opens. */
+const CLAUDE_KEPT_ENV = new Set(["CLAUDE_CONFIG_DIR"]);
+
+/**
+ * Child sessions must not inherit the launching Claude session's host/session wiring. Claude keeps its own key
+ * (ANTHROPIC_API_KEY), but the commands it runs don't get it: Claude Code's subprocess scrub strips Anthropic and
+ * cloud credentials from its commands, hooks and MCP servers (kadono 0.40.0 probe).
+ */
 export function claudeChildEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => !/^CLAUDE(?:CODE$|_)/.test(key)));
+  const kept = Object.fromEntries(Object.entries(withoutSecrets(env, { keep: CLAUDE_AUTH_ENV })).filter(([key]) => CLAUDE_KEPT_ENV.has(key) || !/^CLAUDE(?:CODE$|_)/.test(key)));
+  return { ...kept, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" };
+}
+
+/** One run's environment: the scrub turned off where Claude Code's sandbox can't start (claudeScrubProblem). */
+export function claudeRunEnvironment(env, launcher, workspace) {
+  return claudeScrubProblem(launcher, workspace) ? { ...env, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "0" } : env;
+}
+
+/**
+ * The error Claude Code gave a command because its own sandbox failed to start, or null: none of the run's commands
+ * ran, though the run itself reports success (kadono 0.40.1 probe).
+ */
+export function claudeSandboxFailure(stdout) {
+  for (const line of String(stdout).split(/\r?\n/)) {
+    if (!line.includes("failed to initialize")) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    for (const block of Array.isArray(event?.message?.content) ? event.message.content : []) {
+      if (block?.type !== "tool_result" || block.is_error !== true) continue;
+      const text = typeof block.content === "string" ? block.content : Array.isArray(block.content) ? block.content.map((c) => c?.text ?? "").join("\n") : "";
+      const found = /Sandbox is required but failed to initialize[^\n]*/.exec(text);
+      if (found) return found[0].slice(0, 300);
+    }
+  }
+  return null;
 }
 
 export function extractClaudeResult(stdout) {
+  const sandboxFailure = claudeSandboxFailure(stdout);
+  if (sandboxFailure) throw new Error(`Claude Code's sandbox failed to start, so the run's commands did not run: ${sandboxFailure}`);
   let envelope;
   try { envelope = JSON.parse(String(stdout).trim().split(/\r?\n/).filter(Boolean).at(-1)); }
   catch { throw new Error("Claude returned no JSON result envelope: " + String(stdout).slice(-2000)); }
@@ -47,6 +87,10 @@ export function extractClaudeResult(stdout) {
 export class ClaudeWorker extends CodexWorker {
   constructor({ claudeCommand = "claude", timeoutMs = 45 * 60_000, env = process.env, ...rest }) {
     super({ ...rest, command: claudeCommand });
+    // Windows: `claude` may be only npm's claude.cmd, which a shell-free spawn cannot start.
+    const launcher = cliLauncher(claudeCommand, { env });
+    this.command = launcher.command;
+    this.prefixArgs = [...launcher.prefixArgs, ...this.prefixArgs];
     this.timeoutMs = timeoutMs;
     this.env = claudeChildEnv(env);
     this.pidFile = path.join(this.stateDir, "codex-process.json"); // same single-orchestrator lock as Codex
@@ -65,20 +109,26 @@ export class ClaudeWorker extends CodexWorker {
     // elevation is Opus, every other role Sonnet. Any other model (per-role override) is used as given.
     if (!model || CODEX_DEFAULT_LABELS.has(model)) model = model === "gpt-6-astra" ? CLAUDE_MODELS.elevate : CLAUDE_MODELS.assessment;
     reasoningEffort ||= CLAUDE_MODELS.reasoning;
-    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast});
+    const launcher={command:this.command,prefixArgs:this.prefixArgs,env:this.env};
+    const protectionArgs=await installProtection({cli:'claude',workspace:this.workspace,stateDir:this.stateDir,invocation,allowGitCommit:writable,fast,launcher});
+    const runEnv=claudeRunEnvironment(this.env,launcher,this.workspace);
     const args = [...this.prefixArgs, "-p", "--output-format", "stream-json", "--verbose", "--json-schema", JSON.stringify(schema),
-      "--no-session-persistence", "--strict-mcp-config", ...claudeSkillArgs, "--permission-mode", "dontAsk",
+      "--no-session-persistence", "--strict-mcp-config", ...CLAUDE_SETTING_SOURCES, ...claudeSkillArgs, "--permission-mode", "dontAsk",
       ...(model ? ["--model", model] : []), ...(reasoningEffort ? ["--effort", reasoningEffort] : []),
+      // Per-run settings from CLIs › Claude Code › Settings (cli-run-settings.mjs); the rest go in the environment.
+      ...claudeRunArgs({ model }),
       // Fast mode needs an explicit opt-in outside the interactive CLI (flag settings fastMode).
       ...protectionArgs,
-      "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS),
-      "--disallowedTools", ...NEVER_TOOLS,
+      // Web access (Settings) for the research roles; QA (writable) never gets it.
+      "--allowedTools", ...(writable ? QA_TOOLS : READ_ONLY_TOOLS), ...(!writable && webAccess() ? CLAUDE_WEB_TOOLS : []),
+      "--disallowedTools", ...NEVER_TOOLS, ...(!writable && webAccess() ? [] : CLAUDE_WEB_TOOLS),
       ...(writable ? this.additionalWritableDirs.flatMap((dir) => ["--add-dir", dir]) : [])];
     this.activeCount++;
     let stdout = "", stderr = "";
     try {
       await new Promise((resolve, reject) => {
-        const child = this.spawnProcess(this.command, args, { cwd: this.workspace, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        const launch = launchSpec(this.command, args);
+        const child = this.spawnProcess(launch.command, launch.args, { cwd: this.workspace, env: { ...runEnv, ...claudeRunEnv() }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...launch.options });
         let registered = false, closed = false, closeCode = 1, registrationError = null, finished = false, timedOut = false;
         const timer = setTimeout(() => { timedOut = true; child.kill(); }, this.timeoutMs);
         child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -128,7 +178,9 @@ export class ClaudeWorker extends CodexWorker {
 /** Fails before any loop work if the CLI is missing or not logged in. */
 export function preflightClaude(command = "claude", env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, ["auth", "status"], { env: claudeChildEnv(env), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const launcher = cliLauncher(command, { env });
+    const launch = launchSpec(launcher.command, [...launcher.prefixArgs, "auth", "status"]);
+    const child = spawn(launch.command, launch.args, { ...launch.options, env: claudeChildEnv(env), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (c) => (output += c));
     child.stderr.on("data", (c) => (output += c));

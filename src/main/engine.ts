@@ -1,17 +1,21 @@
 import { spawn } from "node:child_process";
-import { wslEnv, wslLaunch } from "./lib/wsl";
+import { createHash } from "node:crypto";
+import { wslEnv, wslKillTree, wslLaunch } from "./lib/wsl";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EngineInfo, GitInfo, PlanProposal, Project, ProjectStatus, RunReport } from "@shared/types";
+import type { EngineInfo, GitInfo, ParallelRound, Project, ProjectStatus, RunReport, SandboxResult, TaskBoard, TaskBoardUpdate, TaskBoardWriteResult } from "@shared/types";
 import { ENGINE_DEFAULTS } from "./defaults";
 import { lastError } from "./engine-errors";
 import { readJson, writeJson } from "./lib/json-file";
 import { gitInfo, run } from "./lib/git";
 import { readPlan } from "./lib/plan";
-import { buildStatus, type EngineControl, type EngineLive } from "./lib/status";
+import { buildStatus, parallelRound, pendingMissingTools, pendingTaskApproval, type EngineControl, type EngineLive, type EngineParallelRound } from "./lib/status";
+import { decideActionRequest, readActionRequests } from "./lib/action-requests";
 import { readActivity } from "./lib/usage";
+import { buildTaskBoard, writeTaskBoard } from "./lib/task-board";
+import { dropStash, listStashes, popStash, stashChanges } from "./lib/stash";
 
 // Bypass the bundler: engine modules are plain ESM files loaded at runtime from disk.
 const nativeImport = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, any>>;
@@ -28,6 +32,12 @@ interface ProcessRecord {
 const RECORD_FILE = "app-engine.json";
 const GIT_MIN_AGE_MS = 2_000;
 const GIT_MAX_AGE_MS = 10_000;
+const CASE_MAX_AGE_MS = 120_000;
+
+/** Which files are changed and how (not their contents): part of the case cache key. */
+function changedDigest(git: GitInfo): string {
+  return createHash("sha256").update(git.changedFiles.map((f) => `${f.status} ${f.path}`).join("\0")).digest("hex");
+}
 
 /** Launches the vendored engine (engine/src/cli.mjs) per project and reads its .state files. */
 /** Keeps one previous engine log: past 10 MB, app-engine.log becomes app-engine.old.log. */
@@ -43,14 +53,27 @@ export class EngineManager {
   private verifiedPids = new Set<number>();
   /** git state per project, refreshed at most every GIT_MAX_AGE_MS (sooner when the engine logs activity). */
   private gitCache = new Map<string, { at: number; activitySize: number; value: GitInfo }>();
+  /** Case buttons per project (see caseActions). */
+  private caseCache = new Map<string, { key: string; at: number; value: Awaited<ReturnType<EngineManager["readCaseActions"]>> }>();
 
   constructor(
     readonly engineDir: string,
     private resolveNode: () => Promise<{ command: string; env: NodeJS.ProcessEnv }>,
+    /** Installed engine files that differ from the build's list (packaged builds); none = safe to load. */
+    readonly fileProblems: () => string[] = () => [],
   ) {}
 
+  /** Engine code is never loaded or started once its installed files were changed. */
+  private assertIntact() {
+    const problems = this.fileProblems();
+    if (problems.length) throw new Error(`Agent Dock's engine files were changed outside Agent Dock (${problems.slice(0, 3).join("; ")}${problems.length > 3 ? "; …" : ""}). Reinstall or update Agent Dock before running automation.`);
+  }
+
   private load(file: string) {
-    if (!this.modules.has(file)) this.modules.set(file, nativeImport(pathToFileURL(path.join(this.engineDir, "src", file)).href));
+    if (!this.modules.has(file)) {
+      try { this.assertIntact(); } catch (error) { return Promise.reject(error); }
+      this.modules.set(file, nativeImport(pathToFileURL(path.join(this.engineDir, "src", file)).href));
+    }
     return this.modules.get(file)!;
   }
 
@@ -113,6 +136,7 @@ export class EngineManager {
   }
 
   private async spawnEngine(project: Project, script: "cli.mjs" | "elevate-cli.mjs", args: string[], envDelta: NodeJS.ProcessEnv = {}): Promise<ProcessRecord> {
+    this.assertIntact();
     mkdirSync(project.stateDir, { recursive: true });
     // WSL isolation: wsl.exe runs the engine (and every CLI it starts) inside the distro.
     const inWsl = process.platform === "win32" && project.wsl?.enabled && project.wsl.distro.trim();
@@ -159,6 +183,9 @@ export class EngineManager {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     if (!(await this.pidAlive(record.pid))) {
       this.alive.delete(project.id);
+      // A run with nothing to do can finish this fast: its result receipt is not a startup failure.
+      const finished = await stat(path.join(project.stateDir, "loop-result.json")).then((s) => s.mtimeMs >= Date.parse(record.startedAt) - 1000, () => false);
+      if (finished) return;
       const output = (await this.engineLog(project, 10_000_000)).slice(logBefore);
       throw new Error(`The engine exited during startup. ${lastError(output)}`);
     }
@@ -169,13 +196,22 @@ export class EngineManager {
     return new mod.DashboardState({ stateDir: project.stateDir });
   }
 
-  /** Same semantics as the engine dashboard (engine/src/dashboard-cli.mjs onControl). */
+  /** The engine's control file (dashboard-state.mjs setControl). */
   async control(project: Project, action: ControlAction, args: string[], envDelta: NodeJS.ProcessEnv = {}, source = "app"): Promise<void> {
     this.gitCache.delete(project.id);
+    this.caseCache.delete(project.id);
     const running = await this.refreshAlive(project);
     if (action === "start") return this.start(project, args, false, envDelta);
     if (action === "stop-now") {
       if (!running) return;
+      // WSL isolation: the engine and its CLIs live inside the distro, outside wsl.exe's Windows process tree.
+      if (process.platform === "win32" && project.wsl?.enabled && project.wsl.distro.trim()) {
+        const own = await readJson<{ pid?: number; platform?: string; startedAt?: string } | null>(path.join(project.stateDir, "engine-pid.json"), null);
+        if (own?.platform === "linux" && Number.isInteger(own.pid) && Date.parse(own.startedAt ?? "") >= Date.parse(running.startedAt) - 60_000) {
+          const kill = wslKillTree(project.wsl.distro.trim(), own.pid!);
+          await run(kill.command, kill.args, { timeoutMs: 15_000 });
+        }
+      }
       if (process.platform === "win32") await run("taskkill", ["/PID", String(running.pid), "/T", "/F"], { timeoutMs: 10_000 });
       else {
         try { process.kill(-running.pid, "SIGKILL"); } catch { /* already gone */ }
@@ -206,15 +242,102 @@ export class EngineManager {
   }
 
   /** The project's tamper-evident action log, checked entry by entry (engine/src/action-log.mjs). */
-  async verifyActionLog(project: Project): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; brokenAt?: number; reason?: string }> {
-    return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir);
+  /** The action log key: entries the app writes are signed with it, and verification checks signatures. */
+  async useLogKey(hex: string | null): Promise<void> {
+    (await this.load("action-log.mjs")).useActionLogKey(hex);
+  }
+
+  /** With a new key: records, signed, where each log written before it ends, so those entries still verify. */
+  async checkpointLegacyLogs(stateDirs: string[]): Promise<void> {
+    const actionLog = await this.load("action-log.mjs");
+    for (const stateDir of stateDirs) await actionLog.checkpointLegacyLog(stateDir).catch((error: unknown) => console.error("Action log checkpoint failed", stateDir, error));
+  }
+
+  /**
+   * Settings › Experimental sandbox for checks: engine/src/sandbox-cli.mjs in its own process (the sandbox runtime
+   * never loads into the app), its one JSON line back. install can wait on an administrator prompt.
+   */
+  async sandbox(command: "status" | "codex-status" | "install" | "uninstall" | "self-test", args: string[] = []): Promise<SandboxResult> {
+    this.assertIntact();
+    const { command: node, env } = await this.resolveNode();
+    return new Promise((resolve) => {
+      const child = spawn(node, [path.join(this.engineDir, "src", "sandbox-cli.mjs"), command, ...args], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      let out = "", err = "";
+      const timer = setTimeout(() => child.kill(), 10 * 60_000);
+      child.stdout.setEncoding("utf8").on("data", (c: string) => (out += c));
+      child.stderr.setEncoding("utf8").on("data", (c: string) => (err = (err + c).slice(-2000)));
+      child.on("error", (error) => { clearTimeout(timer); resolve({ ok: false, problem: error.message }); });
+      child.on("close", () => {
+        clearTimeout(timer);
+        const line = out.trim().split(/\r?\n/).pop() ?? "";
+        try { resolve(JSON.parse(line) as SandboxResult); } catch { resolve({ ok: false, problem: (err || out || "the sandbox helper gave no answer").trim().slice(-600) }); }
+      });
+    });
+  }
+
+  /** Approve each task: your answer for the task waiting before Implementation; false when it is not the one waiting. */
+  async decideTask(project: Project, taskId: string, decision: "approve" | "reject", source = "app"): Promise<boolean> {
+    if (!(await this.refreshAlive(project))) return false;
+    const events = await readActivity(project.stateDir, 200).catch(() => []);
+    // Approve or set aside a task waiting for approval; set aside a task waiting for a missing tool.
+    if (pendingTaskApproval(events, true)?.taskId !== taskId && !(decision === "reject" && pendingMissingTools(events, true)?.taskId === taskId)) return false;
+    await (await this.state(project)).setControl(decision === "approve" ? "approve-task" : "reject-task", { source, reason: taskId });
+    return true;
+  }
+
+  /** Ask instead of refuse: answers one waiting agent action (first answer wins). */
+  decideAction(project: Project, id: string, decision: "allow" | "deny", by: string, remember = false): Promise<boolean> {
+    return decideActionRequest(project.stateDir, id, decision, by, remember);
+  }
+
+  /** expect: the newest entry the app recorded earlier (kept outside the state folder); the log must still contain it unchanged. */
+  async verifyActionLog(project: Project, expect: { seq: number; head: string } | null = null): Promise<{ ok: boolean; entries: number; head: string; lastAt: string | null; lastSeq?: number; brokenAt?: number; reason?: string; signed?: number; unsigned?: number }> {
+    return (await this.load("action-log.mjs")).verifyActionLog(project.stateDir, { expect });
   }
 
   /** Sets the blocked or waiting task aside (work stashed, task deferred); the next Run starts a fresh Assessment. */
   async setAside(project: Project, source = "app"): Promise<{ id: string; stash: { message: string } | null }> {
     if (await this.refreshAlive(project)) throw new Error("Stop the engine before setting the task aside.");
     this.gitCache.delete(project.id);
+    this.caseCache.delete(project.id);
     return (await this.load("defer-task.mjs")).setAsideTask({ workspace: project.path, stateDir: project.stateDir, state: await this.state(project), source });
+  }
+
+  /** Overview › Stash changes. Only while the engine is stopped: an agent may be writing the files. */
+  async stashChanges(project: Project): Promise<{ message: string }> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before stashing; an agent may be changing files.");
+    this.gitCache.delete(project.id);
+    this.caseCache.delete(project.id);
+    const result = await stashChanges(project.path, project.stateDir);
+    await this.recordEvent(project, { type: "stash-saved", message: result.message, source: "app" });
+    return result;
+  }
+
+  /** Overview › Pop. A set-aside task whose work was in this stash no longer points at it. */
+  async popStash(project: Project, sha: string): Promise<{ conflicts: boolean; output: string }> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before popping a stash.");
+    this.gitCache.delete(project.id);
+    this.caseCache.delete(project.id);
+    const result = await popStash(project.path, project.stateDir, sha);
+    if (!result.conflicts) await (await this.load("defer-task.mjs")).forgetDeferredStash(project.stateDir, sha);
+    await this.recordEvent(project, { type: "stash-popped", sha, conflicts: result.conflicts, source: "app" });
+    return result;
+  }
+
+  /** Overview › Delete beside Pop. A set-aside task whose work was in this stash no longer points at it. */
+  async dropStash(project: Project, sha: string): Promise<void> {
+    if (await this.refreshAlive(project)) throw new Error("Stop the engine before deleting a stash.");
+    const entry = (await listStashes(project.path)).find((s) => s.sha === sha);
+    await dropStash(project.path, sha);
+    await (await this.load("defer-task.mjs")).forgetDeferredStash(project.stateDir, sha);
+    await this.recordEvent(project, { type: "stash-dropped", sha, message: entry?.message ?? null, source: "app" });
+  }
+
+  /** Removes the deferred mark from these tasks: the next Assessment may choose them again. Their stashes are left alone. */
+  async undefer(project: Project, ids: string[]): Promise<number> {
+    const removed = await (await this.load("defer-task.mjs")).undeferTasks(project.stateDir, ids);
+    for (const d of removed) await this.recordEvent(project, { type: "task-undeferred", taskId: d.id, source: "app" });
+    return removed.length;
   }
 
   /** Adds a line to the project's Activity (and its action log). */
@@ -240,23 +363,22 @@ export class EngineManager {
     return (await this.load("run-budget.mjs")).listRuns(project.stateDir);
   }
 
-  /** Supervisor plan proposals (engine/src/plan-stewardship.mjs), checked against today's plan. */
-  async planProposals(project: Project): Promise<PlanProposal[]> {
-    return (await this.load("plan-stewardship.mjs")).listPlanProposals({ stateDir: project.stateDir, workspace: project.path });
-  }
-
-  /** Approving while the engine runs leaves it to the next task boundary; with no engine it is committed now (clean tree only). */
-  async decidePlanProposal(project: Project, id: string, decision: "approve" | "dismiss", source = "app"): Promise<PlanProposal[]> {
-    const mod = await this.load("plan-stewardship.mjs");
-    const state = await this.state(project);
-    await mod.decidePlanProposal({ stateDir: project.stateDir, id, decision, source, state });
-    if (decision === "approve" && !(await this.refreshAlive(project))) await mod.applyApprovedPlanProposals({ stateDir: project.stateDir, workspace: project.path, state });
-    this.gitCache.delete(project.id);
-    return this.planProposals(project);
-  }
 
   isStoppingAfterTask(projectId: string) {
     return this.stopAfterTask.has(projectId);
+  }
+
+  /** The Task board as status() builds it, with what is being worked on now. */
+  async taskBoard(project: Project): Promise<TaskBoard> {
+    const record = await this.refreshAlive(project);
+    const live = await readJson<EngineLive | null>(path.join(project.stateDir, "live.json"), null).catch(() => null);
+    return buildTaskBoard(project.stateDir, await readPlan(project.path, live?.task ?? {}), live, Boolean(record));
+  }
+
+  /** Saves a Task board change (priority order, reset, grouping). A reorder made on a stale board is rejected with the current one. */
+  async setTaskBoard(project: Project, update: TaskBoardUpdate): Promise<TaskBoardWriteResult> {
+    const plan = await readPlan(project.path);
+    return writeTaskBoard(project.stateDir, plan, update, { board: () => this.taskBoard(project) });
   }
 
   async status(project: Project): Promise<ProjectStatus> {
@@ -268,6 +390,30 @@ export class EngineManager {
       this.git(project),
     ]);
     const plan = await readPlan(project.path, live?.task ?? {});
+    const { elevate, resolver, assessmentRetry, qaRetry } = await this.caseActions(project, live, Boolean(record), git);
+    const board = await buildTaskBoard(project.stateDir, plan, live, Boolean(record)).catch(() => undefined);
+    const parallel = await this.parallelRound(project, Boolean(record)).catch(() => null);
+    const actionRequests = record ? await readActionRequests(project.stateDir).catch(() => []) : [];
+    return { ...buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry }), ...(board ? { board } : {}), ...(parallel ? { parallel } : {}), taskApproval: pendingTaskApproval(events, Boolean(record)), missingTools: pendingMissingTools(events, Boolean(record)), actionRequests };
+  }
+
+  /**
+   * Elevate, Resolver and the Retry buttons. Their checks parse the case files (megabytes with a large diff)
+   * and run git status and diff on the workspace, so the answer is reused while those inputs are unchanged,
+   * for up to CASE_MAX_AGE_MS.
+   */
+  private async caseActions(project: Project, live: EngineLive | null, alive: boolean, git: GitInfo) {
+    const files = await Promise.all(["current-task.json", "qa-packet.json", "last-result.json"].map((name) =>
+      stat(path.join(project.stateDir, name)).then((s) => `${s.mtimeMs}:${s.size}`, () => "-")));
+    const key = JSON.stringify([live?.updatedAt, live?.stage, (live as { resolverRequested?: boolean } | null)?.resolverRequested, alive, files, git.head, changedDigest(git)]);
+    const cached = this.caseCache.get(project.id);
+    if (cached && cached.key === key && Date.now() - cached.at < CASE_MAX_AGE_MS) return cached.value;
+    const value = await this.readCaseActions(project, live, alive);
+    this.caseCache.set(project.id, { key, at: Date.now(), value });
+    return value;
+  }
+
+  private async readCaseActions(project: Project, live: EngineLive | null, alive: boolean) {
     let elevate = { available: false, reason: "No manual-review case" as string | null };
     let resolver = { available: false, reason: "No blocked case" as string | null };
     if (live && existsSync(project.stateDir)) {
@@ -295,7 +441,7 @@ export class EngineManager {
     // Blocked with a finished, in-scope attempt (QA could not run, e.g. a tool or permission
     // problem the user has since fixed): Retry QA reviews that attempt again.
     let qaRetry = false;
-    if (live?.stage === "BLOCKED" && !record) {
+    if (live?.stage === "BLOCKED" && !alive) {
       const current = await readJson<{ automation?: { recovery?: { phase?: string } } } | null>(path.join(project.stateDir, "current-task.json"), null).catch(() => null);
       const recovery = current?.automation?.recovery;
       const phase = recovery?.phase;
@@ -307,7 +453,21 @@ export class EngineManager {
         // engine without Retry QA
       }
     }
-    return buildStatus({ projectId: project.id, live, control, processAlive: Boolean(record), pid: record?.pid ?? null, events, git, plan, elevate, resolver, assessmentRetry, qaRetry });
+    return { elevate, resolver, assessmentRetry, qaRetry };
+  }
+
+  /** A parallel round in progress: each task's live state from its engine's folder (<state>/parallel/<task>/live.json). */
+  private async parallelRound(project: Project, processAlive: boolean): Promise<ParallelRound | null> {
+    if (!processAlive) return null;
+    const round = await readJson<EngineParallelRound | null>(path.join(project.stateDir, "parallel-round.json"), null).catch(() => null);
+    if (!round || round.endedAt || !Array.isArray(round.tasks)) return null;
+    const lives: Record<string, EngineLive | null> = {};
+    await Promise.all(round.tasks.map(async (task) => {
+      // Only a folder name: never a path outside the run's parallel folder.
+      if (typeof task?.folder !== "string" || !task.folder || path.basename(task.folder) !== task.folder) return;
+      lives[task.folder] = await readJson<EngineLive | null>(path.join(project.stateDir, "parallel", task.folder, "live.json"), null).catch(() => null);
+    }));
+    return parallelRound(round, lives, processAlive);
   }
 
   /**

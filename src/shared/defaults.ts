@@ -1,5 +1,11 @@
 import type { Agent, CliConnection, Settings } from "@shared/types";
 
+/** Every connection kind Agent Dock knows; anything else (from a file or a window) is refused. */
+export const CLI_KINDS: readonly CliConnection["kind"][] = ["codex", "cline", "claude", "opencode", "ollama", "llamacpp", "openai"];
+export const isCliKind = (kind: unknown): kind is CliConnection["kind"] => typeof kind === "string" && (CLI_KINDS as readonly string[]).includes(kind);
+/** Connection ids are short words (built-in names, or kind-random from the Add dialog). */
+export const isConnectionId = (id: unknown): id is string => typeof id === "string" && /^[\w.-]{1,64}$/.test(id);
+
 // Mirrors engine/src/loop-options.mjs defaults. Local models have none: each agent names its own.
 export const ENGINE_DEFAULTS = {
   contextTokens: 98_304,
@@ -70,13 +76,22 @@ export function defaultAgents(models: { qa: string; assessment: string; elevate:
   ];
 }
 
+/**
+ * Folders and files that configure tools which run code (agent CLI settings and hooks, git hooks, CI
+ * workflows, editor tasks): protected by default, and added to existing settings once (store.ts).
+ * Same list as engine/src/guard/protected-paths.mjs.
+ */
+export const TOOL_CONFIG_PATHS = [".claude/", ".codex/", ".opencode/", ".clinerules", ".husky/", ".github/workflows/", ".vscode/"];
+
 export const DEFAULT_SETTINGS: Settings = {
   general: {
     launchAtStartup: false,
     startMinimized: false,
     keepInTray: true,
+    style: "neumorphic",
     theme: "dark",
     accent: "#82A9E8",
+    styleAccents: { standard: "#5B9DFF", cyberpunk: "#00E5FF" },
     notifyCompleted: true,
     notifyErrors: true,
     notifyInfo: false,
@@ -92,21 +107,34 @@ export const DEFAULT_SETTINGS: Settings = {
     resumeAfterRestart: "ask",
     stopAfterCurrentTask: false,
     unattended: false,
+    approveTasks: false,
     taskMode: "eco",
-    stepDown: true,
     parallelTasks: 1,
     maxLimits: { files: 0, newLines: 0, readFiles: 0, timeoutMinutes: 0 },
     unattendedLimits: { maxTasks: 10, maxHours: 8, maxCorrections: 6, maxElevations: 3, maxMillionTokens: 0, maxCostUsd: 0, maxMillionTokensDay: 0, maxCostUsdDay: 0 },
-    supervisor: { mode: "alert", stallMinutes: 30, repeatFailures: 3, refusals: 5, millionTokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0, review: "off", reviewer: "auto", reviewerModel: "", reviewerBaseUrl: "http://127.0.0.1:8080/v1", mayDefer: false, reviewMax: 6, planProposals: true },
+    supervisor: { mode: "alert", stallMinutes: 30, repeatFailures: 3, refusals: 5, millionTokensPerTask: 0, planDrift: 3, scopePaths: 25, digestHours: 0 },
   },
   attention: { informational: "in-app", recommendPause: "windows", mandatory: "windows", blocker: "windows" },
   context: { warnThresholdPercent: 80 },
-  safety: { protectedPaths: [".git/", ".env*", "secrets/"] },
+  safety: { protectedPaths: [".git/", ".env*", "secrets/", ...TOOL_CONFIG_PATHS], toolConfigPathsAdded: true, checksTrusted: false, sandboxChecks: false, sandboxAgents: false, askMinutes: 10, webAccess: false, webAccessReset: true },
   usage: { manualBudgets: [], codexPollMinutes: 5, claudePollMinutes: 5 },
   advanced: { nodeRuntime: "system", debug: false, llamaCppLauncher: "", engineGuardrails: true },
   skills: { enabled: {}, importedDirs: [] },
-  tuning: { elevationAfter: 3, resolverMaxStrategies: 3, maxCorrections: 0, taskMaxFiles: 1, taskMaxNewLines: 200, taskMaxReadFiles: 3, defaultContextTokens: null, defaultMaxOutputTokens: null },
+  tuning: { defaultContextTokens: null, defaultMaxOutputTokens: null },
   updates: { autoCheck: true, autoInstall: false, checkMinutes: 30, source: "", branch: "", channel: "git", releaseRepo: DEFAULT_RELEASE_REPO },
   onboardingComplete: false,
   activeProjectId: null,
 };
+
+/** Saved safety settings, with TOOL_CONFIG_PATHS added once to settings from before they were defaults. Nothing is removed. */
+export function upgradeSafety(saved: Partial<Settings["safety"]> | undefined): Settings["safety"] {
+  if (!saved) return structuredClone(DEFAULT_SETTINGS.safety);
+  const paths = Array.isArray(saved.protectedPaths) ? saved.protectedPaths : DEFAULT_SETTINGS.safety.protectedPaths;
+  // Settings saved by an older version get each newer field's default (0.39: askMinutes, the sandbox settings).
+  // Web access was on by default in 0.39.0: it is turned off once, and stays as you set it after that.
+  return {
+    ...DEFAULT_SETTINGS.safety, ...saved,
+    protectedPaths: saved.toolConfigPathsAdded ? paths : [...new Set([...paths, ...TOOL_CONFIG_PATHS])], toolConfigPathsAdded: true,
+    webAccess: saved.webAccessReset ? saved.webAccess === true : false, webAccessReset: true,
+  };
+}

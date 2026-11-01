@@ -1,14 +1,17 @@
 import { spawn } from "node:child_process";
 import {clineSkillEnv} from './skill-isolation.mjs';
 import { constants } from "node:fs";
-import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { lockHeld, withBusyLock } from "./busy-lock.mjs";
 import os from "node:os";
 import path from "node:path";
 import { diagnostic as defaultDiagnostic } from "./diagnostics.mjs";
 import { adapter as clineGuard, prepareToolGuard, readGuardOutcome, verifyRestrictedTools } from "./guard/adapters/cline.mjs";
 import { RUNTIME_NOT_READY, ATTEMPT_NOT_COMPLETED, stopMessage } from "./guard/reasons.mjs";
-import { withoutSecrets } from "./secret-env.mjs";
+import { assertNoRepoCliConfig } from "./guard/repo-config.mjs";
+import { checkEnv } from "./secret-env.mjs";
 import { clineUsage, noteUsage } from "./run-budget.mjs";
+import { clineRunOptions } from "./cli-run-settings.mjs";
 
 // The global npm install of the Cline CLI (%APPDATA%\npm on Windows).
 const DEFAULT_CLINE_JS = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", "cline", "bin", "cline");
@@ -425,6 +428,7 @@ export function buildClineArgs({
   guardLaunchArgs,
   prompt,
   thinking = "none",
+  runOptions = clineRunOptions(),
 }) {
   const args = [
     clineJs,
@@ -432,9 +436,9 @@ export function buildClineArgs({
     "--auto-approve",
     "true",
     "--compaction",
-    "agentic",
+    runOptions.compaction,
     "--retries",
-    "6",
+    String(runOptions.retries),
     "--thinking",
     thinking,
     "--provider",
@@ -478,6 +482,8 @@ export async function launchCline({
   thinking,
 }) {
   await access(clineJs, constants.R_OK);
+  // A repository's own Cline hooks (.clinerules/hooks/) would run with no review: never start over them.
+  assertNoRepoCliConfig("cline", workspace);
   const guardLaunch = guardPolicyPath
     ? clineGuard.launchConfiguration({ configDir, hooksDir, dataDir, pluginPath: guardPluginPath })
     : null;
@@ -495,9 +501,12 @@ export async function launchCline({
     prompt,
     thinking,
   });
-  // Cline may need a cloud provider key (launchEnv adds the renamed one; a custom OPENROUTER_API_KEY /
-  // OPENAI_API_KEY is inherited), never the orchestrator CLIs' keys or the app's own variable.
-  const env = { ...withoutSecrets(process.env, { keep: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"] }), ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
+  // No inherited credentials: a cloud provider's variable comes only from launchEnv (the broker's token), so an
+  // OPENROUTER_API_KEY or OPENAI_API_KEY set for something else never reaches Cline. Nor do the indirect ones (an SSH
+  // agent, password helpers, npm's user config), as for check commands (kadono 0.40.1 probe).
+  // OPENCODE_* (key, server password, config) is OpenCode's, as the OpenCode worker strips it too.
+  const inherited = Object.fromEntries(Object.entries(checkEnv(process.env)).filter(([name]) => !name.toUpperCase().startsWith("OPENCODE_")));
+  const env = { ...inherited, ...(launchEnv ?? {}), ...(guardPolicyPath ? (guardEnv ?? guardLaunch.env) : {}) };
   const redactValues = Object.values(launchEnv ?? {}).filter((secret) => typeof secret === "string" && secret.length > 0);
   const isolation = await clineSkillEnv(env, {dataDir, configDir});
   let result;
@@ -571,23 +580,7 @@ export class ClineCliWorker {
   }
 
   async isBusy() {
-    try {
-      const contents = await readFile(this.lockPath, "utf8");
-      const pid = Number(contents.trim());
-      let alive = Number.isInteger(pid) && pid > 0;
-      if (alive) {
-        try {
-          process.kill(pid, 0);
-        } catch (error) {
-          alive = error.code !== "ESRCH";
-        }
-      }
-      if (alive) return true;
-      await rm(this.lockPath, { force: true });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    return this.checkExternalBusy();
+    return (await lockHeld(this.lockPath)) || this.checkExternalBusy();
   }
 
   async run(prompt, hooks = {}) {
@@ -716,22 +709,7 @@ export class ClineCliWorker {
 
   async withExclusive(operation) {
     await mkdir(this.stateDir, { recursive: true });
-    if (await this.isBusy()) return null;
-    let lock;
-    try {
-      lock = await open(this.lockPath, "wx");
-    } catch (error) {
-      if (error.code === "EEXIST") return null;
-      throw error;
-    }
-    try {
-      await lock.writeFile(`${process.pid}\n`);
-      if (await this.checkExternalBusy()) return null;
-      return await operation();
-    } finally {
-      await lock.close();
-      await rm(this.lockPath, { force: true });
-      defaultDiagnostic("BUSY_LOCK_RELEASED", { lockPath: this.lockPath });
-    }
+    if (await this.checkExternalBusy()) return null;
+    return withBusyLock(this.lockPath, operation, { beforeOperation: () => this.checkExternalBusy() });
   }
 }
